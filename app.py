@@ -369,6 +369,26 @@ def _clave_input_contrasena_acceso() -> str:
     return f"input_contrasena_{st.session_state.get('acceso_widget_key', 0)}"
 
 
+def _html_bloquear_guardado_contrasena() -> None:
+    """
+    Campos ocultos señuelo: el navegador suele ofrecer guardar esos
+    en lugar del campo real de acceso a la app.
+    """
+    st.html(
+        """
+        <div
+          aria-hidden="true"
+          style="position:absolute;left:-10000px;height:0;width:0;overflow:hidden;opacity:0"
+        >
+          <form autocomplete="off">
+            <input type="text" name="username" autocomplete="username" tabindex="-1" />
+            <input type="password" name="password" autocomplete="current-password" tabindex="-1" />
+          </form>
+        </div>
+        """,
+    )
+
+
 def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
     """Autofocus, Enter y teclas sin clic previo en el campo de contraseña."""
     clase = f"st-key-{clave_widget}"
@@ -393,11 +413,21 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
           }}
           function configurarCampo(el) {{
             if (!el) return;
-            el.setAttribute("autocomplete", "new-password");
+            el.setAttribute("autocomplete", "off");
+            el.setAttribute("name", "acceso-plan-choque-token");
             el.setAttribute("autocapitalize", "off");
             el.setAttribute("spellcheck", "false");
+            el.setAttribute("data-form-type", "other");
             el.setAttribute("data-lpignore", "true");
             el.setAttribute("data-1p-ignore", "true");
+            el.setAttribute("data-bwignore", "true");
+            if (!el.dataset.pcAntiguardado) {{
+              el.dataset.pcAntiguardado = "1";
+              el.setAttribute("readonly", "readonly");
+              el.addEventListener("focus", function quitarReadonly() {{
+                el.removeAttribute("readonly");
+              }}, {{ once: true }});
+            }}
           }}
           function enfocar() {{
             const el = campo();
@@ -482,6 +512,7 @@ def render_portada_acceso() -> None:
     ver_key = f"ver_{clave_input}"
 
     with st.container(border=True, key="portada_acceso_box"):
+        _html_bloquear_guardado_contrasena()
         mostrar_texto = bool(st.session_state.get(ver_key, False))
         clase_campo = f".st-key-{clave_input}"
         st.markdown(
