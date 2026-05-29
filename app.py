@@ -72,6 +72,12 @@ st.markdown(
     #MainMenu, footer, header { visibility: hidden; }
     .block-container { padding-top: 1.25rem; max-width: 960px; }
 
+    /* Ocultar «Press Enter to submit form» (Enter sigue activo vía script en portada) */
+    [data-testid="stFormSubmitInstruction"],
+    [data-testid="InputInstructions"] {
+        display: none !important;
+    }
+
     .app-title {
         font-size: 2rem;
         font-weight: 700;
@@ -456,7 +462,11 @@ def render_portada_acceso() -> None:
 
     clave_input = _clave_input_contrasena_acceso()
     with st.container(border=True):
-        with st.form("form_contrasena_acceso", clear_on_submit=False):
+        with st.form(
+            "form_contrasena_acceso",
+            clear_on_submit=False,
+            enter_to_submit=False,
+        ):
             ingresado = st.text_input(
                 "Contraseña",
                 type="password",
