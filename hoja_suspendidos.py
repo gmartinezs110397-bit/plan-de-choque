@@ -302,15 +302,20 @@ def _aplicar_titulos_encabezado_mes(
     ws.cell(fila_hdr, col_saldo, value=titulo_saldo)
     ws.cell(fila_hdr, col_estado, value=titulo_estado)
 
-    ref = None
-    if col_prev_estado:
-        ref = ws.cell(fila_hdr, col_prev_estado)
-    elif col_prev_saldo:
-        ref = ws.cell(fila_hdr, col_prev_saldo)
 
-    fill_titulo = _fill_encabezado_alterno(ref) if ref else FILL_ENCABEZADO_AZUL
-    ws.cell(fila_hdr, col_saldo).fill = fill_titulo
-    ws.cell(fila_hdr, col_estado).fill = fill_titulo
+def _aplicar_encabezados_meses_alternos(ws) -> None:
+    """Azul y amarillo alternos en títulos SALDO / ESTADO ACTUAL de cada mes."""
+    fila_hdr = _fila_encabezado_contratos()
+    pares = _listar_pares_mes_seguimiento(ws)
+    if not pares:
+        return
+
+    fill_actual = FILL_ENCABEZADO_AZUL
+    for indice, (col_saldo, col_estado, _) in enumerate(pares):
+        if indice > 0:
+            fill_actual = _fill_encabezado_alterno(ws.cell(fila_hdr, pares[indice - 1][0]))
+        ws.cell(fila_hdr, col_saldo).fill = fill_actual
+        ws.cell(fila_hdr, col_estado).fill = fill_actual
 
 
 def _es_suspendido(valor) -> bool:
