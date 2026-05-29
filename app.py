@@ -72,10 +72,16 @@ st.markdown(
     #MainMenu, footer, header { visibility: hidden; }
     .block-container { padding-top: 1.25rem; max-width: 960px; }
 
-    /* Ocultar «Press Enter to submit form» (Enter sigue activo vía script en portada) */
+    /* Solo ocultar el texto «Press Enter…», no el icono del ojo */
     [data-testid="stFormSubmitInstruction"],
-    [data-testid="InputInstructions"] {
+    div[data-testid="InputInstructions"] > span {
         display: none !important;
+    }
+    /* Icono mostrar / ocultar contraseña (portada de acceso) */
+    .st-key-portada_acceso_box button[title*="password" i] {
+        opacity: 1 !important;
+        visibility: visible !important;
+        cursor: pointer !important;
     }
 
     .app-title {
@@ -374,7 +380,11 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
           const clase = "{clase}";
           function campo() {{
             const root = document.querySelector("." + clase);
-            return root ? root.querySelector('input[type="password"]') : null;
+            if (!root) return null;
+            return (
+              root.querySelector('input[type="password"]')
+              || root.querySelector('input[type="text"]')
+            );
           }}
           function botonEntrar() {{
             const root = document.querySelector("." + clase);
@@ -461,7 +471,7 @@ def render_portada_acceso() -> None:
         st.stop()
 
     clave_input = _clave_input_contrasena_acceso()
-    with st.container(border=True):
+    with st.container(border=True, key="portada_acceso_box"):
         with st.form(
             "form_contrasena_acceso",
             clear_on_submit=False,
