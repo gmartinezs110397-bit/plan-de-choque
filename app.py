@@ -11,7 +11,6 @@ import msoffcrypto
 import msoffcrypto.exceptions as ms_exceptions
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
@@ -355,126 +354,88 @@ def contrasena_acceso_esperada() -> str | None:
         return None
 
 
-def _widget_ingreso_contrasena() -> str | None:
-    """
-    Campo de contraseña con autofocus, Enter y captura de teclas sin clic previo.
-    Devuelve la contraseña enviada o None.
-    """
-    widget_key = f"login_contrasena_{st.session_state.get('acceso_widget_key', 0)}"
-    return components.html(
-        """
-        <!DOCTYPE html>
-        <html>
-        <head>
-        <meta charset="utf-8" />
-        <style>
-          * { box-sizing: border-box; font-family: Inter, system-ui, sans-serif; }
-          body { margin: 0; padding: 0; }
-          .wrap { display: flex; flex-direction: column; gap: 0.75rem; }
-          #pwd {
-            width: 100%;
-            padding: 0.65rem 0.75rem;
-            font-size: 1rem;
-            border: 1px solid #cbd5e1;
-            border-radius: 0.5rem;
-            outline: none;
-          }
-          #pwd:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.15); }
-          #btn {
-            width: 100%;
-            padding: 0.65rem 1rem;
-            font-size: 1rem;
-            font-weight: 600;
-            color: #fff;
-            background: #059669;
-            border: none;
-            border-radius: 0.5rem;
-            cursor: pointer;
-          }
-          #btn:hover { background: #047857; }
-        </style>
-        </head>
-        <body>
-        <div class="wrap">
-          <input
-            id="pwd"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Contraseña"
-            aria-label="Contraseña"
-            autofocus
-          />
-          <button id="btn" type="button">Entrar</button>
-        </div>
+def _clave_input_contrasena_acceso() -> str:
+    return f"input_contrasena_{st.session_state.get('acceso_widget_key', 0)}"
+
+
+def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
+    """Autofocus, Enter y teclas sin clic previo en el campo de contraseña."""
+    clase = f"st-key-{clave_widget}"
+    st.html(
+        f"""
         <script>
-        (function () {
-          const input = document.getElementById("pwd");
-          const btn = document.getElementById("btn");
-
-          function enviar() {
-            const v = input.value;
-            const msg = {
-              isStreamlitMessage: true,
-              type: "streamlit:setComponentValue",
-              value: v,
-            };
-            window.parent.postMessage(msg, "*");
-          }
-
-          btn.addEventListener("click", enviar);
-          input.addEventListener("keydown", function (e) {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              enviar();
-            }
-          });
-
-          input.focus({ preventScroll: true });
-          setTimeout(function () { input.focus({ preventScroll: true }); }, 50);
-          setTimeout(function () { input.focus({ preventScroll: true }); }, 200);
-
-          const doc = window.parent.document;
-          doc.addEventListener("keydown", function (e) {
+        (function () {{
+          const clase = "{clase}";
+          function campo() {{
+            const root = document.querySelector("." + clase);
+            return root ? root.querySelector('input[type="password"]') : null;
+          }}
+          function botonEntrar() {{
+            const root = document.querySelector("." + clase);
+            if (!root) return null;
+            const form = root.closest("form");
+            if (!form) return null;
+            return form.querySelector('button[kind="formSubmit"]')
+              || form.querySelector('button[type="submit"]');
+          }}
+          function enfocar() {{
+            const el = campo();
+            if (!el) return false;
+            el.focus({{ preventScroll: true }});
+            return document.activeElement === el;
+          }}
+          let n = 0;
+          const timer = setInterval(function () {{
+            if (enfocar() || ++n > 60) clearInterval(timer);
+          }}, 80);
+          document.addEventListener("keydown", function (e) {{
+            const el = campo();
+            if (!el) return;
             if (e.ctrlKey || e.metaKey || e.altKey) return;
-            const tag = doc.activeElement && doc.activeElement.tagName;
-            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-            if (e.key === "Enter") {
-              input.focus({ preventScroll: true });
-              enviar();
+            const activo = document.activeElement;
+            const tag = activo && activo.tagName;
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {{
+              if (e.key === "Enter" && activo === el) {{
+                const btn = botonEntrar();
+                if (btn) {{ btn.click(); e.preventDefault(); }}
+              }}
               return;
-            }
-            if (e.key.length === 1 && !e.key.startsWith("F")) {
+            }}
+            if (e.key === "Enter") {{
+              el.focus({{ preventScroll: true }});
+              const btn = botonEntrar();
+              if (btn) btn.click();
               e.preventDefault();
-              input.focus({ preventScroll: true });
-              const start = input.selectionStart || input.value.length;
-              const end = input.selectionEnd || input.value.length;
-              input.value =
-                input.value.slice(0, start) + e.key + input.value.slice(end);
-              input.selectionStart = input.selectionEnd = start + 1;
-            }
-            if (e.key === "Backspace") {
+              return;
+            }}
+            if (e.key.length === 1 && !e.key.startsWith("F")) {{
               e.preventDefault();
-              input.focus({ preventScroll: true });
-              const start = input.selectionStart || 0;
-              const end = input.selectionEnd || 0;
-              if (start === end && start > 0) {
-                input.value =
-                  input.value.slice(0, start - 1) + input.value.slice(end);
-                input.selectionStart = input.selectionEnd = start - 1;
-              } else if (start !== end) {
-                input.value =
-                  input.value.slice(0, start) + input.value.slice(end);
-                input.selectionStart = input.selectionEnd = start;
-              }
-            }
-          }, true);
-        })();
+              el.focus({{ preventScroll: true }});
+              const start = el.selectionStart ?? el.value.length;
+              const end = el.selectionEnd ?? el.value.length;
+              el.value = el.value.slice(0, start) + e.key + el.value.slice(end);
+              el.selectionStart = el.selectionEnd = start + 1;
+              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+            }}
+            if (e.key === "Backspace") {{
+              e.preventDefault();
+              el.focus({{ preventScroll: true }});
+              const start = el.selectionStart ?? 0;
+              const end = el.selectionEnd ?? 0;
+              if (start === end && start > 0) {{
+                el.value = el.value.slice(0, start - 1) + el.value.slice(end);
+                el.selectionStart = el.selectionEnd = start - 1;
+              }} else if (start !== end) {{
+                el.value = el.value.slice(0, start) + el.value.slice(end);
+                el.selectionStart = el.selectionEnd = start;
+              }}
+              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+            }}
+          }}, true);
+        }})();
         </script>
-        </body>
-        </html>
         """,
-        height=118,
-        key=widget_key,
+        unsafe_allow_javascript=True,
     )
 
 
@@ -493,12 +454,23 @@ def render_portada_acceso() -> None:
         )
         st.stop()
 
+    clave_input = _clave_input_contrasena_acceso()
     with st.container(border=True):
-        ingresado = _widget_ingreso_contrasena()
+        with st.form("form_contrasena_acceso", clear_on_submit=False):
+            ingresado = st.text_input(
+                "Contraseña",
+                type="password",
+                placeholder="Contraseña",
+                key=clave_input,
+                label_visibility="collapsed",
+            )
+            enviado = st.form_submit_button(
+                "Entrar", type="primary", use_container_width=True
+            )
+        _script_teclado_contrasena_acceso(clave_input)
 
-    if ingresado is not None:
-        intento = str(ingresado).strip()
-        if intento == contrasena_ok:
+    if enviado:
+        if str(ingresado).strip() == contrasena_ok:
             st.session_state.acceso_autorizado = True
             st.rerun()
         st.session_state.acceso_widget_key = (
