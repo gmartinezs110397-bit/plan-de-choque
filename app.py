@@ -376,6 +376,8 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
             return root ? root.querySelector("input") : null;
           }}
           function botonEntrar() {{
+            const btn = document.querySelector(".st-key-btn_entrar_acceso button");
+            if (btn) return btn;
             const root = document.querySelector("." + clase);
             if (!root) return null;
             const form = root.closest("form");
@@ -461,9 +463,9 @@ def render_portada_acceso() -> None:
 
     clave_input = _clave_input_contrasena_acceso()
     ver_key = f"ver_{clave_input}"
-    mostrar_texto = bool(st.session_state.get(ver_key, False))
 
     with st.container(border=True, key="portada_acceso_box"):
+        mostrar_texto = st.checkbox("Mostrar contraseña", key=ver_key)
         clase_campo = f".st-key-{clave_input}"
         st.markdown(
             f"""
@@ -475,22 +477,19 @@ def render_portada_acceso() -> None:
             """,
             unsafe_allow_html=True,
         )
-        with st.form(
-            "form_contrasena_acceso",
-            clear_on_submit=False,
-            enter_to_submit=False,
-        ):
-            ingresado = st.text_input(
-                "Contraseña",
-                type="default",
-                placeholder="Contraseña",
-                key=clave_input,
-                label_visibility="collapsed",
-            )
-            st.checkbox("Mostrar contraseña", key=ver_key)
-            enviado = st.form_submit_button(
-                "Entrar", type="primary", use_container_width=True
-            )
+        ingresado = st.text_input(
+            "Contraseña",
+            type="default",
+            placeholder="Contraseña",
+            key=clave_input,
+            label_visibility="collapsed",
+        )
+        enviado = st.button(
+            "Entrar",
+            type="primary",
+            use_container_width=True,
+            key="btn_entrar_acceso",
+        )
         _script_teclado_contrasena_acceso(clave_input)
 
     if enviado:
