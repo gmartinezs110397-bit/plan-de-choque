@@ -21,14 +21,13 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
-from constantes import COL_DESEMPATE_MANUAL
+from constantes import COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
 
 MESES_ES = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
 )
 
-SHEET_CONTRATOS = "Cps por depurar"
 HEADER_MATRIZ = 6
 HEADER_CONTRATOS = 2
 FILA_CONTEO_CONTRATOS = 1
@@ -400,15 +399,19 @@ def aplicar_desempate_en_contratos(
     col_saldo_label = _etiqueta_saldo_matriz(titulo_mes)
     pendientes = claves_pendientes_localidad(detalle_filas, localidad)
 
+    libro = pd.ExcelFile(BytesIO(contratos_bytes))
+    nombre_hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
     df_c = pd.read_excel(
-        BytesIO(contratos_bytes), sheet_name=SHEET_CONTRATOS, header=HEADER_CONTRATOS
+        BytesIO(contratos_bytes), sheet_name=nombre_hoja, header=HEADER_CONTRATOS
     )
     col_nombre = _columna(df_c, "NOMBRE CONTRATISTA")
     col_cto = _columna(df_c, "No. de Cto", "Número Contrato")
     col_anio = _columna(df_c, "AÑO SUSCRIPCIÓN", "ANO SUSCRIPCION", "Año Suscripción")
     col_aprop = _columna(df_c, "APROPIACION DISPONIBLE", "Apropiación", "Apropiacion")
     if not all([col_nombre, col_cto, col_anio, col_aprop]):
-        raise ValueError("Contratos: faltan columnas para aplicar el desempate.")
+        raise ValueError(
+            f"Contratos: faltan columnas para aplicar el desempate en «{nombre_hoja}»."
+        )
 
     col_mes_existente = _indice_columna_corte(list(df_c.columns), fecha_analisis)
     col_mes = col_mes_existente or titulo_mes
@@ -473,6 +476,19 @@ def titulo_saldo_corte(fecha: datetime | date) -> str:
 def titulo_columna_mes(fecha: datetime | date) -> str:
     """Alias del título de corte (compatibilidad)."""
     return titulo_saldo_corte(fecha)
+
+
+def resolver_hoja_cruce_cxp(nombres_hojas: list[str]) -> str:
+    """Primera hoja de cruce CXP que exista en el libro (Cps / Caja por depurar)."""
+    for candidato in HOJAS_CRUCE_CXP:
+        if candidato in nombres_hojas:
+            return candidato
+    encontradas = ", ".join(nombres_hojas) if nombres_hojas else "(ninguna)"
+    buscadas = ", ".join(f"«{h}»" for h in HOJAS_CRUCE_CXP)
+    raise ValueError(
+        f"Contratos: falta la hoja de cruce. Se buscó {buscadas}. "
+        f"Hojas en el archivo: {encontradas}."
+    )
 
 
 def _fila_encabezado_contratos() -> int:
@@ -806,9 +822,8 @@ def exportar_contratos_preservando_formato(
     valores_por_fila: fila Excel 1-based -> saldo.
     """
     wb = load_workbook(BytesIO(contratos_bytes))
-    if SHEET_CONTRATOS not in wb.sheetnames:
-        raise ValueError(f"Contratos: falta la hoja «{SHEET_CONTRATOS}».")
-    ws = wb[SHEET_CONTRATOS]
+    nombre_hoja = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+    ws = wb[nombre_hoja]
 
     titulo_corte = titulo_columna or titulo_saldo_corte(fecha_analisis)
     col_corte, titulo_usado = _indice_columna_corte_en_hoja(ws, fecha_analisis)
@@ -872,10 +887,11 @@ def procesar_localidad_cxp(
     _, mapa_k4, grupos_k3 = preparar_indice_matriz(df_matriz, localidad)
 
     libro = pd.ExcelFile(BytesIO(contratos_bytes))
-    if SHEET_CONTRATOS not in libro.sheet_names:
-        raise ValueError(f"Contratos: falta la hoja «{SHEET_CONTRATOS}».")
+    nombre_hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
 
-    df_c = pd.read_excel(BytesIO(contratos_bytes), sheet_name=SHEET_CONTRATOS, header=HEADER_CONTRATOS)
+    df_c = pd.read_excel(
+        BytesIO(contratos_bytes), sheet_name=nombre_hoja, header=HEADER_CONTRATOS
+    )
 
     col_nombre = _columna(df_c, "NOMBRE CONTRATISTA")
     col_cto = _columna(df_c, "No. de Cto", "Número Contrato", "Numero Contrato")
@@ -884,7 +900,9 @@ def procesar_localidad_cxp(
     col_saldo_k = _columna(df_c, "SALDO FINAL", "Saldo Final")
 
     if not all([col_nombre, col_cto, col_anio, col_aprop, col_saldo_k]):
-        raise ValueError("Contratos: faltan columnas para el cruce en «Cps por depurar».")
+        raise ValueError(
+            f"Contratos: faltan columnas para el cruce en «{nombre_hoja}»."
+        )
 
     col_mes_existente = _indice_columna_corte(list(df_c.columns), fecha_analisis)
     if col_mes_existente:
@@ -976,6 +994,7 @@ def procesar_localidad_cxp(
         "localidad": localidad,
         "nombre_contratos": nombre_contratos,
         "nombre_matriz": nombre_matriz,
+        "hoja_cruce": nombre_hoja,
         "columna_mes": col_mes,
         "accion_columna": accion_columna,
         "bytes_contratos": out.getvalue(),

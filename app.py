@@ -1450,7 +1450,7 @@ def ejecutar_consolidacion(cola, password_matriz: str):
         stats.extend([
             {
                 "Localidad": localidad,
-                "Archivo": "Contratos (Cps por depurar)",
+                "Archivo": f"Contratos ({resultado.get('hoja_cruce', 'Cps/Caja por depurar')})",
                 "Nombre": item["contratos"]["name"],
                 "Filas": resultado["total_contratos"],
                 "CXP (suma mes)": resultado["cxp_total"],
