@@ -1018,6 +1018,7 @@ __all__ = [
     "parsear_mapa_desempate",
     "procesar_localidad_cxp",
     "recalcular_estadisticas_localidad",
+    "resolver_hoja_cruce_cxp",
     "titulo_saldo_corte",
     "validar_desempate_completo",
 ]

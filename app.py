@@ -11,6 +11,7 @@ import msoffcrypto
 import msoffcrypto.exceptions as ms_exceptions
 import pandas as pd
 import streamlit as st
+from openpyxl import load_workbook
 
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
@@ -28,6 +29,7 @@ from cxp_cruce import (
     claves_pendientes_localidad,
     procesar_localidad_cxp,
     recalcular_estadisticas_localidad,
+    resolver_hoja_cruce_cxp,
     titulo_saldo_corte,
     validar_desempate_completo,
 )
@@ -297,6 +299,10 @@ st.markdown(
 
 SHEET_MATRIZ = "MATRIZ OXP"
 FILA_INICIO_MATRIZ = 8  # columna A desde fila 8 en hoja MATRIZ OXP
+MSG_ARCHIVO_SIN_FILTRO = (
+    "Guarde el Excel **sin filtro activo** (en Excel: **Datos → Quitar filtro**), "
+    "luego vuelva a guardar y subir el archivo."
+)
 SELECCION_LOCALIDAD = "Seleccione localidad"
 KW_CONTRATOS = "plan de choque"
 KW_MATRIZ = "matriz"
@@ -945,6 +951,55 @@ def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "
     return raw
 
 
+def hojas_con_autofiltro_activo(xlsx_bytes: bytes, nombres_hojas: list[str]) -> list[str]:
+    """Detecta AutoFilter en hojas (.xlsx). La app cruza todo el archivo, no solo lo visible."""
+    try:
+        wb = load_workbook(BytesIO(xlsx_bytes), read_only=True, data_only=True)
+    except Exception:
+        return []
+    con_filtro: list[str] = []
+    try:
+        for nombre in nombres_hojas:
+            if nombre not in wb.sheetnames:
+                continue
+            ws = wb[nombre]
+            af = ws.auto_filter
+            if af is not None and getattr(af, "ref", None):
+                con_filtro.append(nombre)
+    finally:
+        wb.close()
+    return con_filtro
+
+
+def validar_archivos_sin_filtro(
+    contratos_bytes: bytes,
+    nombre_contratos: str,
+    matriz_bytes: bytes,
+    nombre_matriz: str,
+) -> list[str]:
+    """Errores si Contratos o Matriz tienen filtro activo al guardar."""
+    errores: list[str] = []
+    if str(nombre_matriz).lower().endswith((".xlsx", ".xlsm")):
+        if hojas_con_autofiltro_activo(matriz_bytes, [SHEET_MATRIZ]):
+            errores.append(
+                f"Matriz **{nombre_matriz}**, hoja **{SHEET_MATRIZ}**: tiene filtro activo. "
+                f"{MSG_ARCHIVO_SIN_FILTRO}"
+            )
+    if str(nombre_contratos).lower().endswith((".xlsx", ".xlsm")):
+        try:
+            libro = pd.ExcelFile(BytesIO(contratos_bytes))
+            hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
+        except ValueError:
+            pass
+        else:
+            if hojas_con_autofiltro_activo(contratos_bytes, [hoja]):
+                errores.append(
+                    f"Contratos **{nombre_contratos}**, hoja **{hoja}**: tiene filtro activo. "
+                    f"{MSG_ARCHIVO_SIN_FILTRO}"
+                )
+    return errores
+
+
 def leer_hoja_matriz(
     file_bytes: bytes, password: str, nombre_archivo: str = "", **kwargs
 ) -> pd.DataFrame:
@@ -1062,6 +1117,14 @@ def validar_cola_archivos(cola: list, password_matriz: str) -> tuple[bool, list[
             )
             if not ok_m:
                 errores.append(f"**{loc}** — {msg_m}")
+            else:
+                for msg_f in validar_archivos_sin_filtro(
+                    item["contratos"]["bytes"],
+                    nc,
+                    item["matriz"]["bytes"],
+                    nm,
+                ):
+                    errores.append(f"**{loc}** — {msg_f}")
 
     return len(errores) == 0, errores
 
@@ -1575,6 +1638,10 @@ uk = st.session_state.upload_key
 # ── Formulario ─────────────────────────────────────────────────────────────────
 with st.container(border=True):
     st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
+    st.caption(
+        "Antes de subir: en Excel use **Datos → Quitar filtro** en Contratos y Matriz, "
+        "guarde el archivo y luego cárguelo aquí. El cruce usa **todas las filas** del archivo."
+    )
 
     st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
     localidad = st.selectbox(
@@ -1633,6 +1700,14 @@ if add_clicked:
         )
     elif any(item["localidad"] == localidad for item in st.session_state.cola_localidades):
         st.warning(f"**{localidad}** ya está en la cola. Quítela o elija otra localidad.")
+    elif errores_filtro := validar_archivos_sin_filtro(
+        archivo_contratos.getvalue(),
+        archivo_contratos.name,
+        archivo_matriz.getvalue(),
+        archivo_matriz.name,
+    ):
+        for msg_f in errores_filtro:
+            st.error(msg_f)
     else:
         st.session_state.cola_localidades.append(
             entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
