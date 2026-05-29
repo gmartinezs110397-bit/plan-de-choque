@@ -77,6 +77,12 @@ st.markdown(
     div[data-testid="InputInstructions"] > span {
         display: none !important;
     }
+    .st-key-portada_acceso_box [data-testid="stCheckbox"] label {
+        white-space: nowrap !important;
+    }
+    .st-key-portada_acceso_box [data-testid="stCheckbox"] {
+        margin: 0.15rem 0 0.65rem 0 !important;
+    }
     .app-title {
         font-size: 2rem;
         font-weight: 700;
@@ -385,14 +391,25 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
             return form.querySelector('button[kind="formSubmit"]')
               || form.querySelector('button[type="submit"]');
           }}
+          function configurarCampo(el) {{
+            if (!el) return;
+            el.setAttribute("autocomplete", "new-password");
+            el.setAttribute("autocapitalize", "off");
+            el.setAttribute("spellcheck", "false");
+            el.setAttribute("data-lpignore", "true");
+            el.setAttribute("data-1p-ignore", "true");
+          }}
           function enfocar() {{
             const el = campo();
             if (!el) return false;
+            configurarCampo(el);
             el.focus({{ preventScroll: true }});
             return document.activeElement === el;
           }}
           let n = 0;
           const timer = setInterval(function () {{
+            const el = campo();
+            if (el) configurarCampo(el);
             if (enfocar() || ++n > 60) clearInterval(timer);
           }}, 80);
           document.addEventListener("keydown", function (e) {{
@@ -483,6 +500,7 @@ def render_portada_acceso() -> None:
             placeholder="Contraseña",
             key=clave_input,
             label_visibility="collapsed",
+            autocomplete="new-password",
         )
         st.checkbox("Mostrar contraseña", key=ver_key)
         enviado = st.button(
