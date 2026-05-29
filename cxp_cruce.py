@@ -859,7 +859,7 @@ def exportar_contratos_preservando_formato(
 ) -> tuple[bytes, list[str], list[str]]:
     """
     Guarda el libro original intacto (filas 1-2, formatos, otras hojas).
-    Actualiza Cps/Caja por depurar y, si existen, Suspendidos y Próximos a perder.
+    Actualiza Cps/Caja por depurar y hojas de seguimiento mensual si existen.
     valores_por_fila: fila Excel 1-based -> saldo.
     Devuelve (bytes, advertencias_hojas, observaciones).
     """
@@ -870,6 +870,10 @@ def exportar_contratos_preservando_formato(
     from hoja_suspendidos import (
         actualizar_hoja_suspendidos,
         resolver_hoja_suspendidos,
+    )
+    from hoja_tramites_sectores import (
+        actualizar_hoja_tramites_sectores,
+        resolver_hoja_tramites_sectores,
     )
 
     advertencias: list[str] = []
@@ -940,6 +944,27 @@ def exportar_contratos_preservando_formato(
         else:
             observaciones.append(
                 "No se encontró pestaña Próximos a perder en el archivo de Contratos."
+            )
+
+        nombre_tram = resolver_hoja_tramites_sectores(nombres_hojas)
+        if nombre_tram:
+            try:
+                advertencias.extend(
+                    actualizar_hoja_tramites_sectores(
+                        wb[nombre_tram],
+                        mapa_k3_suspendidos,
+                        fecha_analisis,
+                    )
+                )
+            except ValueError as e:
+                observaciones.append(f"Trámites sectores: {e}")
+            except Exception as e:
+                observaciones.append(
+                    f"Trámites sectores: error no previsto ({type(e).__name__}: {e})"
+                )
+        else:
+            observaciones.append(
+                "No se encontró pestaña Trámites sectores en el archivo de Contratos."
             )
 
     _preparar_workbook_antes_guardar(wb)
