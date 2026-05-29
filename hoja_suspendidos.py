@@ -503,6 +503,38 @@ def _conteo_suspendidos_mes_anterior(
     return _conteo_suspendidos_en_columna(ws, col_prev_estado)
 
 
+def _leer_total_reportado_mes_anterior(
+    ws,
+    fila_total: int,
+    col_prev: int | None,
+) -> float | None:
+    """Valor mostrado en fila 1 o 2 del mes anterior (el que se reportó)."""
+    if not col_prev:
+        return None
+    celda = ws.cell(fila_total, col_prev)
+    if celda.value in (None, ""):
+        return None
+    try:
+        return float(celda.value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _aplicar_tope_mes_anterior(
+    valor_real: float | int,
+    valor_anterior: float | None,
+) -> tuple[float | int, float | int]:
+    """
+    No se puede reportar un número mayor al del mes anterior.
+    Devuelve (valor_a_mostrar, valor_real).
+    """
+    if valor_anterior is None:
+        return valor_real, valor_real
+    if float(valor_real) > float(valor_anterior):
+        return valor_anterior, valor_real
+    return valor_real, valor_real
+
+
 def _suma_saldos_columna(ws, col_saldo: int) -> float:
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
     fila_ini = _fila_inicio_datos_contratos()
@@ -527,12 +559,18 @@ def _actualizar_resumen_suspendidos(
     col_prev_saldo: int | None,
     col_prev_estado: int | None,
 ) -> tuple[int, int]:
-    """Fila 1: conteo suspendidos (sin color). Fila 2: suma saldos. Devuelve (real, mostrado)."""
+    """Fila 1: conteo suspendidos (tope vs mes anterior). Fila 2: suma saldos."""
     conteo_real = _conteo_suspendidos_en_columna(ws, col_estado)
     conteo_prev = _conteo_suspendidos_mes_anterior(ws, col_prev_estado)
-    conteo_mostrar = conteo_real
-    if conteo_prev is not None and conteo_real > conteo_prev:
-        conteo_mostrar = conteo_prev
+    if conteo_prev is None and col_prev_estado:
+        conteo_prev = _leer_total_reportado_mes_anterior(
+            ws, FILA_CONTEO_CONTRATOS, col_prev_estado
+        )
+    conteo_mostrar, _ = _aplicar_tope_mes_anterior(
+        conteo_real,
+        float(conteo_prev) if conteo_prev is not None else None,
+    )
+    conteo_mostrar = int(conteo_mostrar)
 
     suma = _suma_saldos_columna(ws, col_saldo)
 

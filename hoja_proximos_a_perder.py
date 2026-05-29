@@ -22,8 +22,10 @@ from cxp_cruce import (
 from hoja_suspendidos import (
     FILL_AMARILLO,
     FILL_VERDE_NEON,
+    _aplicar_tope_mes_anterior,
     _asegurar_columnas_mes,
     _autoajustar_columna_suspendidos,
+    _leer_total_reportado_mes_anterior,
     _suma_saldos_columna,
     preparar_mapa_k3_saldo_estado,
     titulo_estado_suspendidos,
@@ -103,16 +105,18 @@ def _conteo_proximos_mes_anterior(
     ws,
     col_prev_estado: int | None,
     col_prev_saldo: int | None,
-) -> int | None:
-    if not col_prev_estado or not col_prev_saldo:
+) -> float | None:
+    """Total reportado en fila 1 del mes anterior (o recálculo si la celda está vacía)."""
+    if not col_prev_estado:
         return None
-    celda_prev = ws.cell(FILA_CONTEO_CONTRATOS, col_prev_estado)
-    if celda_prev.value not in (None, ""):
-        try:
-            return int(float(celda_prev.value))
-        except (TypeError, ValueError):
-            pass
-    return _conteo_sin_color_proximos(ws, col_prev_estado, col_prev_saldo)
+    reportado = _leer_total_reportado_mes_anterior(
+        ws, FILA_CONTEO_CONTRATOS, col_prev_estado
+    )
+    if reportado is not None:
+        return reportado
+    if col_prev_saldo:
+        return float(_conteo_sin_color_proximos(ws, col_prev_estado, col_prev_saldo))
+    return None
 
 
 def _actualizar_resumen_proximos(
@@ -122,14 +126,13 @@ def _actualizar_resumen_proximos(
     col_prev_saldo: int | None,
     col_prev_estado: int | None,
 ) -> tuple[int, int]:
-    """Fila 1: contratos sin color (no liquidado, saldo ≠ 0). Fila 2: suma de todos los saldos."""
+    """Fila 1: contratos sin color (tope vs mes anterior). Fila 2: suma de todos los saldos."""
     conteo_real = _conteo_sin_color_proximos(ws, col_estado, col_saldo)
     conteo_prev = _conteo_proximos_mes_anterior(
         ws, col_prev_estado, col_prev_saldo
     )
-    conteo_mostrar = conteo_real
-    if conteo_prev is not None and conteo_real > conteo_prev:
-        conteo_mostrar = conteo_prev
+    conteo_mostrar, _ = _aplicar_tope_mes_anterior(conteo_real, conteo_prev)
+    conteo_mostrar = int(conteo_mostrar)
 
     suma = _suma_saldos_columna(ws, col_saldo)
 
@@ -166,7 +169,8 @@ def actualizar_hoja_proximos_a_perder(
     Escribe SALDO MES y ESTADO ACTUAL MES desde Matriz.
     Formato y encabezados de mes copiados del mes anterior (igual que Suspendidos).
     Verde: pasa a LIQUIDADO. Amarillo: no liquidado y saldo cero.
-    Conteo: filas sin color (no liquidado y saldo ≠ 0). Suma: todos los saldos.
+    Conteo: filas sin color (no liquidado y saldo ≠ 0); no puede superar el mes anterior.
+    Suma: todos los saldos.
     """
     advertencias: list[str] = []
     col_saldo, col_estado, col_prev_saldo, col_prev_estado, _ = _asegurar_columnas_mes(
