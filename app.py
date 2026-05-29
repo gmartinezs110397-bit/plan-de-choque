@@ -1603,34 +1603,28 @@ def _agregar_conteo_global(acumulado: dict, conteo: dict) -> None:
 
 
 def _guardar_reporte_en_sesion(reporte: ReporteEjecucion) -> None:
+    if not reporte.tiene_casos():
+        st.session_state.reporte_ejecucion = None
+        return
     df = reporte.a_dataframe()
     st.session_state.reporte_ejecucion = {
         "texto": reporte.generar_texto(),
-        "tabla": df.to_dict("records") if not df.empty else [],
-        "resumen": reporte.resumen_usuario,
-        "requiere_atencion": reporte.requiere_atencion_admin(),
-        "conteo_niveles": reporte.cantidad_por_nivel(),
+        "tabla": df.to_dict("records"),
+        "resumen": reporte.resumen,
         "generado": datetime.now().isoformat(timespec="seconds"),
     }
 
 
 def mostrar_reporte_tecnico_admin() -> None:
-    """Reporte descargable para quien mantiene el sistema."""
+    """Solo casos no previstos del sistema (para quien mantiene el código)."""
     payload = st.session_state.get("reporte_ejecucion")
-    if not payload:
+    if not payload or not payload.get("tabla"):
         return
 
-    requiere = payload.get("requiere_atencion", False)
-    titulo = "Reporte técnico (revisión y ajustes del sistema)"
-    with st.expander(titulo, expanded=requiere):
+    with st.expander("Casos no previstos (para soporte técnico)", expanded=True):
         st.caption(payload.get("resumen", ""))
-        niveles = payload.get("conteo_niveles") or {}
-        if niveles:
-            partes = [f"**{k}**: {v}" for k, v in niveles.items()]
-            st.markdown(" · ".join(partes))
-
         nombre_archivo = (
-            f"reporte_plan_choque_{payload.get('generado', 'ejecucion')}.txt"
+            f"casos_no_previstos_{payload.get('generado', 'ejecucion')}.txt"
         ).replace(":", "-")
 
         st.download_button(
@@ -1640,16 +1634,11 @@ def mostrar_reporte_tecnico_admin() -> None:
             mime="text/plain",
             use_container_width=True,
         )
-
-        tabla = payload.get("tabla") or []
-        if tabla:
-            st.dataframe(
-                pd.DataFrame(tabla),
-                use_container_width=True,
-                hide_index=True,
-            )
-        else:
-            st.info("No se registraron incidencias en esta ejecución.")
+        st.dataframe(
+            pd.DataFrame(payload["tabla"]),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def ejecutar_consolidacion(
@@ -1766,16 +1755,10 @@ def ejecutar_consolidacion(
 
     if errores:
         st.session_state.errores_ejecucion = errores
-        reporte.registrar_textos_error(errores, fase="consolidacion")
         limpiar_resultado_consolidado()
         return False
 
     if len(informe_localidades) != total:
-        reporte.error(
-            "EJECUCION_INCOMPLETA",
-            f"Solo se procesaron {len(informe_localidades)} de {total} localidades.",
-            fase="consolidacion",
-        )
         limpiar_resultado_consolidado()
         return False
 
@@ -1813,16 +1796,13 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
 
     if not nombres_ok:
-        reporte.registrar_textos_error(errores_nombres, fase="validacion_previa")
         reporte.cerrar(False)
-        _guardar_reporte_en_sesion(reporte)
         if any(es_error_contrasena(e) for e in errores_nombres):
             st.error("Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo.")
         else:
             st.error("No se consolidaron las localidades correctamente. Revise los archivos.")
         for detalle in errores_nombres:
             st.markdown(f"- {detalle}")
-        mostrar_reporte_tecnico_admin()
         return
 
     exito = ejecutar_consolidacion(cola_run, pwd, reporte)
