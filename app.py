@@ -11,8 +11,7 @@ import msoffcrypto
 import msoffcrypto.exceptions as ms_exceptions
 import pandas as pd
 import streamlit as st
-from openpyxl import load_workbook
-
+import streamlit.components.v1 as components
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
@@ -28,6 +27,7 @@ from cxp_cruce import (
     clave_desde_detalle,
     claves_pendientes_localidad,
     procesar_localidad_cxp,
+    quitar_autofiltros_xlsx,
     recalcular_estadisticas_localidad,
     resolver_hoja_cruce_cxp,
     titulo_saldo_corte,
@@ -299,10 +299,6 @@ st.markdown(
 
 SHEET_MATRIZ = "MATRIZ OXP"
 FILA_INICIO_MATRIZ = 8  # columna A desde fila 8 en hoja MATRIZ OXP
-MSG_ARCHIVO_SIN_FILTRO = (
-    "Guarde el Excel **sin filtro activo** (en Excel: **Datos → Quitar filtro**), "
-    "luego vuelva a guardar y subir el archivo."
-)
 SELECCION_LOCALIDAD = "Seleccione localidad"
 KW_CONTRATOS = "plan de choque"
 KW_MATRIZ = "matriz"
@@ -338,17 +334,19 @@ def init_session_state():
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
         "acceso_autorizado": False,
-        "codigo_acceso_intentos": 0,
+        "acceso_widget_key": 0,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
 
 
-def codigo_acceso_esperado() -> str | None:
-    """Código en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
+def contrasena_acceso_esperada() -> str | None:
+    """Contraseña en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
     try:
-        valor = st.secrets.get("codigo_acceso")
+        valor = st.secrets.get("contrasena_acceso")
+        if valor is None:
+            valor = st.secrets.get("codigo_acceso")
         if valor is None:
             return None
         texto = str(valor).strip()
@@ -357,36 +355,158 @@ def codigo_acceso_esperado() -> str | None:
         return None
 
 
+def _widget_ingreso_contrasena() -> str | None:
+    """
+    Campo de contraseña con autofocus, Enter y captura de teclas sin clic previo.
+    Devuelve la contraseña enviada o None.
+    """
+    widget_key = f"login_contrasena_{st.session_state.get('acceso_widget_key', 0)}"
+    return components.html(
+        """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8" />
+        <style>
+          * { box-sizing: border-box; font-family: Inter, system-ui, sans-serif; }
+          body { margin: 0; padding: 0; }
+          .wrap { display: flex; flex-direction: column; gap: 0.75rem; }
+          #pwd {
+            width: 100%;
+            padding: 0.65rem 0.75rem;
+            font-size: 1rem;
+            border: 1px solid #cbd5e1;
+            border-radius: 0.5rem;
+            outline: none;
+          }
+          #pwd:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.15); }
+          #btn {
+            width: 100%;
+            padding: 0.65rem 1rem;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #fff;
+            background: #059669;
+            border: none;
+            border-radius: 0.5rem;
+            cursor: pointer;
+          }
+          #btn:hover { background: #047857; }
+        </style>
+        </head>
+        <body>
+        <div class="wrap">
+          <input
+            id="pwd"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Contraseña"
+            aria-label="Contraseña"
+            autofocus
+          />
+          <button id="btn" type="button">Entrar</button>
+        </div>
+        <script>
+        (function () {
+          const input = document.getElementById("pwd");
+          const btn = document.getElementById("btn");
+
+          function enviar() {
+            const v = input.value;
+            const msg = {
+              isStreamlitMessage: true,
+              type: "streamlit:setComponentValue",
+              value: v,
+            };
+            window.parent.postMessage(msg, "*");
+          }
+
+          btn.addEventListener("click", enviar);
+          input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              enviar();
+            }
+          });
+
+          input.focus({ preventScroll: true });
+          setTimeout(function () { input.focus({ preventScroll: true }); }, 50);
+          setTimeout(function () { input.focus({ preventScroll: true }); }, 200);
+
+          const doc = window.parent.document;
+          doc.addEventListener("keydown", function (e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const tag = doc.activeElement && doc.activeElement.tagName;
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+            if (e.key === "Enter") {
+              input.focus({ preventScroll: true });
+              enviar();
+              return;
+            }
+            if (e.key.length === 1 && !e.key.startsWith("F")) {
+              e.preventDefault();
+              input.focus({ preventScroll: true });
+              const start = input.selectionStart || input.value.length;
+              const end = input.selectionEnd || input.value.length;
+              input.value =
+                input.value.slice(0, start) + e.key + input.value.slice(end);
+              input.selectionStart = input.selectionEnd = start + 1;
+            }
+            if (e.key === "Backspace") {
+              e.preventDefault();
+              input.focus({ preventScroll: true });
+              const start = input.selectionStart || 0;
+              const end = input.selectionEnd || 0;
+              if (start === end && start > 0) {
+                input.value =
+                  input.value.slice(0, start - 1) + input.value.slice(end);
+                input.selectionStart = input.selectionEnd = start - 1;
+              } else if (start !== end) {
+                input.value =
+                  input.value.slice(0, start) + input.value.slice(end);
+                input.selectionStart = input.selectionEnd = start;
+              }
+            }
+          }, true);
+        })();
+        </script>
+        </body>
+        </html>
+        """,
+        height=118,
+        key=widget_key,
+    )
+
+
 def render_portada_acceso() -> None:
-    """Pantalla de ingreso; detiene la app hasta código correcto."""
-    codigo_ok = codigo_acceso_esperado()
+    """Pantalla de ingreso; detiene la app hasta contraseña correcta."""
+    contrasena_ok = contrasena_acceso_esperada()
     st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
     st.markdown(
-        '<p class="app-subtitle">Ingrese el código de acceso para continuar</p>',
+        '<p class="app-subtitle">Ingrese la contraseña para continuar</p>',
         unsafe_allow_html=True,
     )
-    if not codigo_ok:
+    if not contrasena_ok:
         st.error(
-            "Falta configurar el código en Streamlit Cloud → **Manage app** → "
-            "**Settings** → **Secrets** (`codigo_acceso = \"1100\"`)."
+            "Falta configurar la contraseña en Streamlit Cloud → **Manage app** → "
+            "**Settings** → **Secrets** (`contrasena_acceso = \"1100\"` o `codigo_acceso`)."
         )
         st.stop()
 
     with st.container(border=True):
-        ingresado = st.text_input(
-            "Código de acceso",
-            type="password",
-            placeholder="Código",
-            key="input_codigo_acceso",
-            label_visibility="collapsed",
+        ingresado = _widget_ingreso_contrasena()
+
+    if ingresado is not None:
+        intento = str(ingresado).strip()
+        if intento == contrasena_ok:
+            st.session_state.acceso_autorizado = True
+            st.rerun()
+        st.session_state.acceso_widget_key = (
+            st.session_state.get("acceso_widget_key", 0) + 1
         )
-        if st.button("Entrar", type="primary", use_container_width=True, key="btn_codigo_acceso"):
-            if str(ingresado).strip() == codigo_ok:
-                st.session_state.acceso_autorizado = True
-                st.session_state.codigo_acceso_intentos = 0
-                st.rerun()
-            st.session_state.codigo_acceso_intentos += 1
-            st.error("Código incorrecto.")
+        st.error("Contraseña incorrecta.")
+        st.rerun()
+
     st.stop()
 
 
@@ -940,7 +1060,7 @@ def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "
         except Exception:
             raise ValueError("Contraseña incorrecta.") from None
         dec.seek(0)
-        return dec
+        return BytesIO(quitar_autofiltros_xlsx(dec.getvalue()))
 
     raw.seek(0)
     try:
@@ -948,56 +1068,14 @@ def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "
     except Exception as e:
         raise ValueError(f"{etiqueta}: no se pudo leer ({e})") from e
     raw.seek(0)
-    return raw
+    return BytesIO(quitar_autofiltros_xlsx(raw.getvalue()))
 
 
-def hojas_con_autofiltro_activo(xlsx_bytes: bytes, nombres_hojas: list[str]) -> list[str]:
-    """Detecta AutoFilter en hojas (.xlsx). La app cruza todo el archivo, no solo lo visible."""
-    try:
-        wb = load_workbook(BytesIO(xlsx_bytes), read_only=True, data_only=True)
-    except Exception:
-        return []
-    con_filtro: list[str] = []
-    try:
-        for nombre in nombres_hojas:
-            if nombre not in wb.sheetnames:
-                continue
-            ws = wb[nombre]
-            af = ws.auto_filter
-            if af is not None and getattr(af, "ref", None):
-                con_filtro.append(nombre)
-    finally:
-        wb.close()
-    return con_filtro
-
-
-def validar_archivos_sin_filtro(
-    contratos_bytes: bytes,
-    nombre_contratos: str,
-    matriz_bytes: bytes,
-    nombre_matriz: str,
-) -> list[str]:
-    """Errores si Contratos o Matriz tienen filtro activo al guardar."""
-    errores: list[str] = []
-    if str(nombre_matriz).lower().endswith((".xlsx", ".xlsm")):
-        if hojas_con_autofiltro_activo(matriz_bytes, [SHEET_MATRIZ]):
-            errores.append(
-                f"Matriz **{nombre_matriz}**, hoja **{SHEET_MATRIZ}**: tiene filtro activo. "
-                f"{MSG_ARCHIVO_SIN_FILTRO}"
-            )
-    if str(nombre_contratos).lower().endswith((".xlsx", ".xlsm")):
-        try:
-            libro = pd.ExcelFile(BytesIO(contratos_bytes))
-            hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
-        except ValueError:
-            pass
-        else:
-            if hojas_con_autofiltro_activo(contratos_bytes, [hoja]):
-                errores.append(
-                    f"Contratos **{nombre_contratos}**, hoja **{hoja}**: tiene filtro activo. "
-                    f"{MSG_ARCHIVO_SIN_FILTRO}"
-                )
-    return errores
+def sanitizar_excel_sin_filtros(data: bytes, nombre_archivo: str) -> bytes:
+    """Quita filtros de Excel .xlsx/.xlsm al subir (Contratos)."""
+    if not str(nombre_archivo).lower().endswith((".xlsx", ".xlsm")):
+        return data
+    return quitar_autofiltros_xlsx(data)
 
 
 def leer_hoja_matriz(
@@ -1117,20 +1195,13 @@ def validar_cola_archivos(cola: list, password_matriz: str) -> tuple[bool, list[
             )
             if not ok_m:
                 errores.append(f"**{loc}** — {msg_m}")
-            else:
-                for msg_f in validar_archivos_sin_filtro(
-                    item["contratos"]["bytes"],
-                    nc,
-                    item["matriz"]["bytes"],
-                    nm,
-                ):
-                    errores.append(f"**{loc}** — {msg_f}")
 
     return len(errores) == 0, errores
 
 
 def file_to_buffer(uploaded_file) -> dict:
     data = uploaded_file.getvalue()
+    data = sanitizar_excel_sin_filtros(data, uploaded_file.name)
     return {"bytes": data, "name": uploaded_file.name}
 
 
@@ -1506,6 +1577,7 @@ def ejecutar_consolidacion(cola, password_matriz: str):
             "cxp_total": resultado["cxp_total"],
             "resumen_metodos": resultado["resumen_metodos"],
             "conteo": resultado["conteo"],
+            "advertencias_suspendidos": resultado.get("advertencias_suspendidos", []),
         })
         detalle_global.extend(resultado["detalle"])
         contratos_actualizados[localidad] = resultado
@@ -1585,11 +1657,14 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         sin_res = sum(i.get("sin_resolver", 0) for i in st.session_state.get("cruce_informe", []))
         msg = (
             f"Se procesaron **{n}** localidad(es). "
-            f"Columna **{titulo_mes}** en Contratos plan de choque."
+            f"Columna **{titulo_mes}** en Cps/Caja por depurar y seguimiento en **Suspendidos**."
         )
         if sin_res:
             msg += f" Revise **{sin_res}** contrato(s) marcados como sin resolver."
         st.success(msg)
+        for item in st.session_state.get("cruce_informe", []):
+            for aviso in item.get("advertencias_suspendidos") or []:
+                st.warning(f"**{item.get('localidad', '')}** — {aviso}")
     else:
         limpiar_resultado_consolidado()
         errores_ej = st.session_state.pop("errores_ejecucion", [])
@@ -1629,7 +1704,7 @@ if not st.session_state.get("acceso_autorizado"):
 # ── Título ─────────────────────────────────────────────────────────────────────
 st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="app-subtitle">Bogotá — cargue Contratos y Matriz, añada cada localidad a la cola y ejecute la consolidación</p>',
+    '<p class="app-subtitle">Bogotá — consolidación por localidad</p>',
     unsafe_allow_html=True,
 )
 
@@ -1639,8 +1714,8 @@ uk = st.session_state.upload_key
 with st.container(border=True):
     st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
     st.caption(
-        "Antes de subir: en Excel use **Datos → Quitar filtro** en Contratos y Matriz, "
-        "guarde el archivo y luego cárguelo aquí. El cruce usa **todas las filas** del archivo."
+        "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
+        "correspondiente por localidad."
     )
 
     st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
@@ -1700,14 +1775,6 @@ if add_clicked:
         )
     elif any(item["localidad"] == localidad for item in st.session_state.cola_localidades):
         st.warning(f"**{localidad}** ya está en la cola. Quítela o elija otra localidad.")
-    elif errores_filtro := validar_archivos_sin_filtro(
-        archivo_contratos.getvalue(),
-        archivo_contratos.name,
-        archivo_matriz.getvalue(),
-        archivo_matriz.name,
-    ):
-        for msg_f in errores_filtro:
-            st.error(msg_f)
     else:
         st.session_state.cola_localidades.append(
             entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)

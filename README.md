@@ -11,11 +11,13 @@ Consolidación **Matriz OXP** + **Contratos plan de choque** por localidad (Bogo
 
 La contraseña de la Matriz se ingresa en la app al consolidar; no se guarda en GitHub.
 
-**Código de acceso a la app** (Streamlit Cloud → Manage app → Settings → Secrets):
+**Contraseña de acceso a la app** (Streamlit Cloud → Manage app → Settings → Secrets):
 
 ```toml
-codigo_acceso = "1100"
+contrasena_acceso = "1100"
 ```
+
+(Sigue funcionando la clave antigua `codigo_acceso`.)
 
 Localmente: copie `.streamlit/secrets.toml.example` a `.streamlit/secrets.toml`.
 

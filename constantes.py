@@ -8,8 +8,12 @@ HOJAS_CRUCE_CXP = (
     "Caja por depurar",
 )
 
+HOJAS_SUSPENDIDOS = (
+    "Suspendidos",
+    "SUSPENDIDOS",
+)
+
 # Otras pestañas del Excel Contratos plan de choque — reglas por definir
-# Clave = nombre exacto de la pestaña en Excel
 HOJAS_CONTRATOS_OTRAS: dict[str, str] = {
-    # "Ejemplo": "pendiente",
+    # "Próximos a perder", "Trámites sectores", …
 }
