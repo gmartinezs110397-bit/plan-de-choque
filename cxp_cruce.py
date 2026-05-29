@@ -495,9 +495,13 @@ def _copiar_estilo_celda(origen, destino) -> None:
 
 
 def _texto_ancho_celda(celda) -> str:
-    """Texto visible aproximado para calcular auto-ancho (como doble clic en Excel)."""
+    """Texto visible aproximado para calcular auto-ancho (no usa la cadena de la fórmula)."""
+    if celda.data_type == "f":
+        return ""
     valor = celda.value
     if valor is None:
+        return ""
+    if isinstance(valor, str) and valor.strip().startswith("="):
         return ""
     if isinstance(valor, float) and not isinstance(valor, bool):
         if abs(valor - round(valor)) < 1e-9:
@@ -509,6 +513,8 @@ def _texto_ancho_celda(celda) -> str:
             pass
         if "." in nf or "0.000" in nf.lower():
             texto = texto.replace(",", ".")
+        if "$" in nf:
+            texto = f"$ {texto}"
         return texto
     return str(valor).strip()
 
@@ -541,18 +547,17 @@ def _ajustar_ancho_columna_corte(
     col_referencia: int,
     titulo: str = "",
 ) -> None:
-    """Auto-ancho por contenido; no menos que SALDO FINAL si ya era más ancha."""
+    """
+    Auto-ancho por valores visibles y título del mes.
+    No copia el ancho de SALDO FINAL (suele estar inflado por fórmulas largas).
+    """
     _autoajustar_ancho_columna(ws, col)
     letra = get_column_letter(col)
-    letra_ref = get_column_letter(col_referencia)
-    dim_ref = ws.column_dimensions.get(letra_ref)
-    if dim_ref and dim_ref.width:
-        actual = ws.column_dimensions[letra].width or 0
-        ws.column_dimensions[letra].width = max(actual, dim_ref.width)
-    elif titulo:
+    if titulo:
+        min_titulo = min(max(len(titulo) * 1.15 + 3, 11), 60)
         ws.column_dimensions[letra].width = max(
             ws.column_dimensions[letra].width or 0,
-            min(max(len(titulo) * 1.15 + 3, 11), 60),
+            min_titulo,
         )
 
 
