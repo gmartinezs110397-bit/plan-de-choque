@@ -77,11 +77,18 @@ st.markdown(
     div[data-testid="InputInstructions"] > span {
         display: none !important;
     }
-    /* Icono mostrar / ocultar contraseña (portada de acceso) */
-    .st-key-portada_acceso_box button[title*="password" i] {
-        opacity: 1 !important;
-        visibility: visible !important;
-        cursor: pointer !important;
+    /* Un solo icono ojo (Streamlit oculta uno con visibility; no forzar ambos) */
+    .st-key-portada_acceso_box:has(input[type="password"])
+        button[title*="Hide password" i],
+    .st-key-portada_acceso_box:has(input[type="password"])
+        button[aria-label*="Hide password" i] {
+        display: none !important;
+    }
+    .st-key-portada_acceso_box:has(input[type="text"])
+        button[title*="Show password" i],
+    .st-key-portada_acceso_box:has(input[type="text"])
+        button[aria-label*="Show password" i] {
+        display: none !important;
     }
 
     .app-title {
