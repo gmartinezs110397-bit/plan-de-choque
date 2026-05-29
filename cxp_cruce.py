@@ -10,6 +10,8 @@ import os
 import re
 import tempfile
 import unicodedata
+import zipfile
+from xml.etree import ElementTree as ET
 from copy import copy
 from datetime import date, datetime
 from io import BytesIO
@@ -704,6 +706,60 @@ def _actualizar_resumen_filas_1_2(ws, col_corte: int) -> None:
         _copiar_estilo_celda(ws.cell(FILA_SUMA_CONTRATOS, col_estilo), celda_suma)
 
 
+def _preparar_workbook_antes_guardar(wb) -> None:
+    """Evita que openpyxl deje enlaces externos rotos al guardar."""
+    if hasattr(wb, "_external_links"):
+        wb._external_links = []
+    if getattr(wb, "calculation", None) is not None:
+        wb.calculation.fullCalcOnLoad = None
+
+
+def _filtrar_xml_relaciones_externas(datos: bytes) -> bytes:
+    root = ET.fromstring(datos)
+    for rel in list(root):
+        if "externalLink" in (rel.get("Type") or ""):
+            root.remove(rel)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _filtrar_content_types_externos(datos: bytes) -> bytes:
+    root = ET.fromstring(datos)
+    for child in list(root):
+        if "/externalLinks/" in (child.get("PartName") or ""):
+            root.remove(child)
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def _quitar_enlaces_externos_xlsx(contenido: bytes) -> bytes:
+    """
+    El Contratos original suele traer fórmulas ligadas a otros Excel.
+    Tras guardar con openpyxl, Excel Mac pide reparar externalLink1.xml.
+    """
+    entrada = BytesIO(contenido)
+    salida = BytesIO()
+    try:
+        with zipfile.ZipFile(entrada, "r") as zin, zipfile.ZipFile(
+            salida, "w", zipfile.ZIP_DEFLATED
+        ) as zout:
+            for info in zin.infolist():
+                nombre = info.filename.replace("\\", "/")
+                if nombre.startswith("xl/externalLinks/"):
+                    continue
+                datos = zin.read(info.filename)
+                if nombre == "xl/_rels/workbook.xml.rels":
+                    datos = _filtrar_xml_relaciones_externas(datos)
+                elif nombre == "[Content_Types].xml":
+                    datos = _filtrar_content_types_externos(datos)
+                zout.writestr(info, datos)
+        return salida.getvalue()
+    except Exception:
+        return contenido
+
+
+def _finalizar_xlsx_contratos(contenido: bytes) -> bytes:
+    return compatibilizar_xlsx_excel_mac(_quitar_enlaces_externos_xlsx(contenido))
+
+
 def compatibilizar_xlsx_excel_mac(contenido: bytes) -> bytes:
     """
     openpyxl genera OOXML que Excel en Mac marca como dañado (inlineStr, calc, etc.).
@@ -769,13 +825,12 @@ def exportar_contratos_preservando_formato(
     _actualizar_resumen_filas_1_2(ws, col_corte)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
 
-    if getattr(wb, "calculation", None) is not None:
-        wb.calculation.fullCalcOnLoad = None
+    _preparar_workbook_antes_guardar(wb)
 
     out = BytesIO()
     wb.save(out)
     out.seek(0)
-    return compatibilizar_xlsx_excel_mac(out.getvalue())
+    return _finalizar_xlsx_contratos(out.getvalue())
 
 
 def _indice_columna_corte(columnas: list, fecha: datetime | date) -> str | None:
