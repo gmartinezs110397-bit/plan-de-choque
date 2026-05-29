@@ -569,12 +569,12 @@ def render_portada_acceso() -> None:
                 label_visibility="collapsed",
                 autocomplete="one-time-code",
             )
+            st.checkbox("Mostrar contraseña", key=CLAVE_VER_CONTRASENA)
             enviado = st.form_submit_button(
                 "Entrar",
                 type="primary",
                 use_container_width=True,
             )
-        st.checkbox("Mostrar contraseña", key=CLAVE_VER_CONTRASENA)
         _componente_teclado_portada_acceso(CLAVE_INPUT_CONTRASENA)
 
     if enviado:
