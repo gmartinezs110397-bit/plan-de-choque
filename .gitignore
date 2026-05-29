@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+
+# Streamlit (no subir contraseñas)
+.streamlit/secrets.toml
+
+# Datos locales / ejemplos (opcional: quítalo si quieres subir Excel de prueba)
+*.xlsx
+*.xls
+*.zip
+
+# IDE / sistema
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

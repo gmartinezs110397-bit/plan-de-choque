@@ -1,0 +1,23 @@
+# Localidades de Bogotá D.C. (20), orden alfabético
+LOCALIDADES = [
+    "Antonio Nariño",
+    "Barrios Unidos",
+    "Bosa",
+    "Chapinero",
+    "Ciudad Bolívar",
+    "Engativá",
+    "Fontibón",
+    "Kennedy",
+    "La Candelaria",
+    "Los Mártires",
+    "Puente Aranda",
+    "Rafael Uribe Uribe",
+    "San Cristóbal",
+    "Santa Fe",
+    "Suba",
+    "Sumapaz",
+    "Teusaquillo",
+    "Tunjuelito",
+    "Usaquén",
+    "Usme",
+]
