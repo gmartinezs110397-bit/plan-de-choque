@@ -536,7 +536,7 @@ def nombre_descarga_contratos_actualizado(
 ) -> str:
     """
     Nombre del Excel de Contratos actualizado por localidad.
-    Conserva el nombre original y añade «— {Mes}» (ej. — Mayo).
+    Conserva el nombre original y añade «- {Mes}» (guión ASCII; mejor en Mac al descargar).
     """
     f = fecha or fecha_referencia_analisis()
     mes = mes_capitalizado(f)
@@ -544,7 +544,8 @@ def nombre_descarga_contratos_actualizado(
         stem = Path(nombre_original).stem
     else:
         stem = f"Contratos plan de choque {localidad}"
-    return sanitizar_nombre_archivo(f"{stem} — {mes}.xlsx")
+    stem = stem.replace("—", "-").replace("–", "-")
+    return sanitizar_nombre_archivo(f"{stem} - {mes}.xlsx")
 
 
 def empaquetar_descarga_contratos(
@@ -552,24 +553,13 @@ def empaquetar_descarga_contratos(
     fecha: datetime | date | None = None,
 ) -> tuple[bytes, str, str]:
     """
-    Un solo archivo de descarga: Excel si hay una localidad, ZIP si hay varias.
-    Cada Excel dentro conserva su nombre original + «— {Mes}».
+    Siempre ZIP: evita archivos .xlsx corruptos al descargar directo en Mac/Safari.
+    Cada Excel dentro conserva su nombre original + «- {Mes}».
     """
     f = fecha or fecha_referencia_analisis()
     items = sorted(contratos_actualizados.items(), key=lambda x: x[0])
     if not items:
         raise ValueError("No hay contratos actualizados para descargar.")
-
-    if len(items) == 1:
-        loc, data = items[0]
-        nombre = nombre_descarga_contratos_actualizado(
-            loc, data.get("nombre_contratos", ""), f
-        )
-        return (
-            data["bytes_contratos"],
-            nombre,
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
 
     localidades = [loc for loc, _ in items]
     buf = BytesIO()
@@ -1845,23 +1835,18 @@ if st.session_state.processed:
             '<p class="section-title">Contratos plan de choque actualizados</p>',
             unsafe_allow_html=True,
         )
-        if n_loc == 1:
-            st.caption(
-                "Un Excel con la localidad procesada. El nombre conserva el archivo "
-                f"original y añade el mes (ej. «— {mes_capitalizado(fecha_dl)}»)."
-            )
-        else:
-            st.caption(
-                f"Un ZIP con {n_loc} archivos Excel (uno por localidad). Cada uno conserva "
-                f"su nombre original + «— {mes_capitalizado(fecha_dl)}»."
-            )
+        st.caption(
+            f"Un ZIP con {n_loc} archivo(s) Excel (uno por localidad). "
+            f"Abra el ZIP y use el .xlsx dentro; nombre original + «- {mes_capitalizado(fecha_dl)}». "
+            "Así evita avisos de reparación en Excel para Mac."
+        )
         if not descargas_ok:
             st.caption(
                 "Disponible cuando **Sin resolver** sea 0 (complete el desempate manual arriba)."
             )
         datos_dl, nombre_dl, mime_dl = empaquetar_descarga_contratos(contratos_act, fecha_dl)
         st.download_button(
-            label="Descargar Contratos Plan de Choque Actualizados",
+            label="Descargar Contratos actualizados (ZIP)",
             data=datos_dl,
             file_name=nombre_dl,
             mime=mime_dl,

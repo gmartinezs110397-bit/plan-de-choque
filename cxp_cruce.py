@@ -6,7 +6,9 @@ Incluye desempate manual: aplicar_desempate_en_contratos (aprox. línea 304).
 from __future__ import annotations
 
 import calendar
+import os
 import re
+import tempfile
 import unicodedata
 from copy import copy
 from datetime import date, datetime
@@ -702,6 +704,34 @@ def _actualizar_resumen_filas_1_2(ws, col_corte: int) -> None:
         _copiar_estilo_celda(ws.cell(FILA_SUMA_CONTRATOS, col_estilo), celda_suma)
 
 
+def compatibilizar_xlsx_excel_mac(contenido: bytes) -> bytes:
+    """
+    openpyxl genera OOXML que Excel en Mac marca como dañado (inlineStr, calc, etc.).
+    xlsx-fixer reescribe el archivo para Excel Mac/Windows.
+    """
+    try:
+        from xlsx_fixer import fix
+    except ImportError:
+        return contenido
+
+    ruta: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
+            tf.write(contenido)
+            ruta = tf.name
+        fix(ruta)
+        with open(ruta, "rb") as archivo:
+            return archivo.read()
+    except Exception:
+        return contenido
+    finally:
+        if ruta:
+            try:
+                os.unlink(ruta)
+            except OSError:
+                pass
+
+
 def exportar_contratos_preservando_formato(
     contratos_bytes: bytes,
     fecha_analisis: datetime,
@@ -739,10 +769,13 @@ def exportar_contratos_preservando_formato(
     _actualizar_resumen_filas_1_2(ws, col_corte)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
 
+    if getattr(wb, "calculation", None) is not None:
+        wb.calculation.fullCalcOnLoad = None
+
     out = BytesIO()
     wb.save(out)
     out.seek(0)
-    return out.getvalue()
+    return compatibilizar_xlsx_excel_mac(out.getvalue())
 
 
 def _indice_columna_corte(columnas: list, fecha: datetime | date) -> str | None:
