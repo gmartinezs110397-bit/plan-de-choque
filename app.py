@@ -529,6 +529,20 @@ def nombre_archivo_salida(
     return sanitizar_nombre_archivo(nombre)
 
 
+def _stem_descarga_contratos(stem: str, mes: str) -> str:
+    """
+    Si el archivo ya trae «… - Mayo», conserva lo anterior al último « - »
+    y sustituye el tramo del mes (p. ej. «… - Junio»).
+    Si no hay « - », añade « - {mes}» al final.
+    """
+    limpio = stem.replace("—", "-").replace("–", "-").strip()
+    sep = " - "
+    if sep in limpio:
+        base, _viejo_mes = limpio.rsplit(sep, 1)
+        return f"{base.strip()}{sep}{mes}"
+    return f"{limpio} - {mes}"
+
+
 def nombre_descarga_contratos_actualizado(
     localidad: str,
     nombre_original: str,
@@ -536,7 +550,7 @@ def nombre_descarga_contratos_actualizado(
 ) -> str:
     """
     Nombre del Excel de Contratos actualizado por localidad.
-    Conserva el nombre original y añade «- {Mes}» (guión ASCII; mejor en Mac al descargar).
+    Ej.: «Contratos plan de choque Suba - Mayo» → «… Suba - Junio» al consolidar junio.
     """
     f = fecha or fecha_referencia_analisis()
     mes = mes_capitalizado(f)
@@ -544,8 +558,8 @@ def nombre_descarga_contratos_actualizado(
         stem = Path(nombre_original).stem
     else:
         stem = f"Contratos plan de choque {localidad}"
-    stem = stem.replace("—", "-").replace("–", "-")
-    return sanitizar_nombre_archivo(f"{stem} - {mes}.xlsx")
+    nombre = _stem_descarga_contratos(stem, mes) + ".xlsx"
+    return sanitizar_nombre_archivo(nombre)
 
 
 def empaquetar_descarga_contratos(
@@ -1837,8 +1851,9 @@ if st.session_state.processed:
         )
         st.caption(
             f"Un ZIP con {n_loc} archivo(s) Excel (uno por localidad). "
-            f"Abra el ZIP y use el .xlsx dentro; nombre original + «- {mes_capitalizado(fecha_dl)}». "
-            "Así evita avisos de reparación en Excel para Mac."
+            f"Abra el ZIP y use el .xlsx dentro. "
+            f"El mes en el nombre se actualiza a «- {mes_capitalizado(fecha_dl)}» "
+            "(conserva el texto antes del guion)."
         )
         if not descargas_ok:
             st.caption(
