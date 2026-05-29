@@ -1834,7 +1834,7 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         for detalle in todos_errores:
             st.markdown(f"- {detalle}")
 
-    mostrar_reporte_tecnico_admin()
+    mostrar_reporte_tecnico_admin()  # solo si hubo casos no previstos
 
 
 @st.dialog("Contraseña Matriz")

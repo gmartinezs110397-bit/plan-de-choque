@@ -149,9 +149,14 @@ class ReporteEjecucion:
         return "\n".join(lineas)
 
 
-def _es_observacion_no_prevista(texto: str) -> bool:
+def _clasificar_observacion_reporte(texto: str) -> tuple[str, str] | None:
+    """Devuelve (código, mensaje) si la observación debe ir al reporte de soporte."""
     norm = str(texto).lower()
-    return "no previsto" in norm or "no contemplad" in norm
+    if "no se encontr" in norm and ("pestaña" in norm or "pestaña" in norm or "hoja" in norm):
+        return "PESTAÑA_NO_ENCONTRADA", str(texto)
+    if "no previsto" in norm or "no contemplad" in norm:
+        return "EXPORTACION_EXCEL", str(texto)
+    return None
 
 
 def registrar_resultado_localidad(
@@ -163,11 +168,12 @@ def registrar_resultado_localidad(
     nc = resultado.get("nombre_contratos", item_cola.get("contratos", {}).get("name", ""))
 
     for obs in resultado.get("observaciones") or []:
-        texto = str(obs)
-        if _es_observacion_no_prevista(texto):
+        clasificado = _clasificar_observacion_reporte(str(obs))
+        if clasificado:
+            codigo, mensaje = clasificado
             reporte.no_previsto(
-                "EXPORTACION_EXCEL",
-                texto,
+                codigo,
+                mensaje,
                 localidad=loc,
                 archivo=nc,
                 fase="exportacion_excel",
