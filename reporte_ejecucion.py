@@ -143,8 +143,8 @@ class ReporteEjecucion:
             lineas.append("")
 
         lineas.append(
-            "Solo aparecen fallos del sistema. Errores de archivos, contraseña "
-            "o contratos sin resolver los ve la operadora en pantalla."
+            "Incluye fallos del sistema y pestañas esperadas no encontradas en Contratos. "
+            "Errores de contraseña o contratos sin resolver los ve la operadora en pantalla."
         )
         return "\n".join(lineas)
 
@@ -152,7 +152,7 @@ class ReporteEjecucion:
 def _clasificar_observacion_reporte(texto: str) -> tuple[str, str] | None:
     """Devuelve (código, mensaje) si la observación debe ir al reporte de soporte."""
     norm = str(texto).lower()
-    if "no se encontr" in norm and ("pestaña" in norm or "pestaña" in norm or "hoja" in norm):
+    if "no se encontr" in norm and ("pestan" in norm or "hoja" in norm):
         return "PESTAÑA_NO_ENCONTRADA", str(texto)
     if "no previsto" in norm or "no contemplad" in norm:
         return "EXPORTACION_EXCEL", str(texto)
