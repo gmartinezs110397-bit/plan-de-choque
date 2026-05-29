@@ -287,6 +287,30 @@ def _copiar_estilo_columna(
         _copiar_estilo_celda(ws.cell(fila, col_origen), ws.cell(fila, col_destino))
 
 
+def _copiar_ancho_columna(ws, col_origen: int, col_destino: int) -> None:
+    letra_origen = get_column_letter(col_origen)
+    letra_destino = get_column_letter(col_destino)
+    ancho = ws.column_dimensions[letra_origen].width
+    if ancho:
+        ws.column_dimensions[letra_destino].width = ancho
+
+
+def _copiar_formato_mes_desde_anterior(
+    ws,
+    col_saldo: int,
+    col_estado: int,
+    col_prev_saldo: int | None,
+    col_prev_estado: int | None,
+) -> None:
+    """Fuente, bordes, alineación, número y ancho desde el par de columnas del mes anterior."""
+    if not col_prev_saldo or not col_prev_estado:
+        return
+    _copiar_estilo_columna(ws, col_prev_saldo, col_saldo)
+    _copiar_estilo_columna(ws, col_prev_estado, col_estado)
+    _copiar_ancho_columna(ws, col_prev_saldo, col_saldo)
+    _copiar_ancho_columna(ws, col_prev_estado, col_estado)
+
+
 def _aplicar_titulos_encabezado_mes(
     ws,
     col_saldo: int,
@@ -304,18 +328,32 @@ def _aplicar_titulos_encabezado_mes(
 
 
 def _aplicar_encabezados_meses_alternos(ws) -> None:
-    """Azul y amarillo alternos en títulos SALDO / ESTADO ACTUAL de cada mes."""
+    """Títulos con formato del mes previo y relleno azul/amarillo alterno."""
     fila_hdr = _fila_encabezado_contratos()
     pares = _listar_pares_mes_seguimiento(ws)
     if not pares:
         return
 
-    fill_actual = FILL_ENCABEZADO_AZUL
+    col_plantilla = _indice_columna_en_hoja(ws, "ESTADO ACTUAL", "SALDO FINAL", "Saldo Final")
+
     for indice, (col_saldo, col_estado, _) in enumerate(pares):
+        celda_saldo = ws.cell(fila_hdr, col_saldo)
+        celda_estado = ws.cell(fila_hdr, col_estado)
+
         if indice > 0:
-            fill_actual = _fill_encabezado_alterno(ws.cell(fila_hdr, pares[indice - 1][0]))
-        ws.cell(fila_hdr, col_saldo).fill = fill_actual
-        ws.cell(fila_hdr, col_estado).fill = fill_actual
+            prev_col_saldo, prev_col_estado, _ = pares[indice - 1]
+            _copiar_estilo_celda(ws.cell(fila_hdr, prev_col_saldo), celda_saldo)
+            _copiar_estilo_celda(ws.cell(fila_hdr, prev_col_estado), celda_estado)
+            fill_titulo = _fill_encabezado_alterno(ws.cell(fila_hdr, prev_col_saldo))
+        elif col_plantilla:
+            _copiar_estilo_celda(ws.cell(fila_hdr, col_plantilla), celda_saldo)
+            _copiar_estilo_celda(ws.cell(fila_hdr, col_plantilla), celda_estado)
+            fill_titulo = FILL_ENCABEZADO_AZUL
+        else:
+            fill_titulo = FILL_ENCABEZADO_AZUL
+
+        celda_saldo.fill = fill_titulo
+        celda_estado.fill = fill_titulo
 
 
 def _es_suspendido(valor) -> bool:
@@ -398,6 +436,11 @@ def _asegurar_columnas_mes(
         col_prev_saldo, col_prev_estado = _par_mes_anterior(
             ws, fecha, col_saldo, col_estado
         )
+
+    _copiar_formato_mes_desde_anterior(
+        ws, col_saldo, col_estado, col_prev_saldo, col_prev_estado
+    )
+    _aplicar_encabezados_meses_alternos(ws)
 
     return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
 

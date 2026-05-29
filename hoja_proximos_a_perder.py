@@ -164,7 +164,7 @@ def actualizar_hoja_proximos_a_perder(
 ) -> list[str]:
     """
     Escribe SALDO MES y ESTADO ACTUAL MES desde Matriz.
-    Encabezados de mes: azul y amarillo alternos (igual que Suspendidos).
+    Formato y encabezados de mes copiados del mes anterior (igual que Suspendidos).
     Verde: pasa a LIQUIDADO. Amarillo: no liquidado y saldo cero.
     Conteo: filas sin color (no liquidado y saldo ≠ 0). Suma: todos los saldos.
     """
