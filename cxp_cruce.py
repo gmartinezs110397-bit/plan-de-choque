@@ -856,6 +856,7 @@ def exportar_contratos_preservando_formato(
     crear_columna: bool,
     titulo_columna: str,
     mapa_k3_suspendidos: dict | None = None,
+    mapa_k4_liquidados: dict[str, float] | None = None,
 ) -> tuple[bytes, list[str], list[str]]:
     """
     Guarda el libro original intacto (filas 1-2, formatos, otras hojas).
@@ -870,6 +871,10 @@ def exportar_contratos_preservando_formato(
     from hoja_suspendidos import (
         actualizar_hoja_suspendidos,
         resolver_hoja_suspendidos,
+    )
+    from hoja_liquidados_con_saldo import (
+        actualizar_hoja_liquidados_con_saldo,
+        resolver_hoja_liquidados_con_saldo,
     )
     from hoja_tramites_sectores import (
         actualizar_hoja_tramites_sectores,
@@ -965,6 +970,29 @@ def exportar_contratos_preservando_formato(
         else:
             observaciones.append(
                 "No se encontró pestaña Trámites sectores en el archivo de Contratos."
+            )
+
+    if mapa_k4_liquidados is not None:
+        nombre_liq = resolver_hoja_liquidados_con_saldo(nombres_hojas)
+        if nombre_liq:
+            try:
+                advertencias.extend(
+                    actualizar_hoja_liquidados_con_saldo(
+                        wb[nombre_liq],
+                        mapa_k4_liquidados,
+                        fecha_analisis,
+                    )
+                )
+            except ValueError as e:
+                observaciones.append(f"Liquidados con saldo: {e}")
+            except Exception as e:
+                observaciones.append(
+                    f"Liquidados con saldo: error no previsto "
+                    f"({type(e).__name__}: {e})"
+                )
+        else:
+            observaciones.append(
+                "No se encontró pestaña Liquidados con saldo en el archivo de Contratos."
             )
 
     _preparar_workbook_antes_guardar(wb)
@@ -1087,9 +1115,11 @@ def procesar_localidad_cxp(
             "candidatos_matriz": candidatos_matriz,
         })
 
+    from hoja_liquidados_con_saldo import preparar_mapa_k4_saldo_matriz
     from hoja_suspendidos import preparar_mapa_k3_saldo_estado
 
     mapa_k3_suspendidos = preparar_mapa_k3_saldo_estado(df_matriz, localidad)
+    mapa_k4_liquidados = preparar_mapa_k4_saldo_matriz(df_matriz, localidad)
 
     bytes_export, advertencias_hojas, observaciones = (
         exportar_contratos_preservando_formato(
@@ -1099,6 +1129,7 @@ def procesar_localidad_cxp(
             crear_columna=crear_columna,
             titulo_columna=titulo_mes,
             mapa_k3_suspendidos=mapa_k3_suspendidos,
+            mapa_k4_liquidados=mapa_k4_liquidados,
         )
     )
 

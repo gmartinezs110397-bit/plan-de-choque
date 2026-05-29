@@ -25,5 +25,11 @@ HOJAS_TRAMITES_SECTORES = (
     "TRAMITES SECTORES",
 )
 
+HOJAS_LIQUIDADOS_CON_SALDO = (
+    "Liquidados con saldo",
+    "Liquidados Con Saldo",
+    "LIQUIDADOS CON SALDO",
+)
+
 # Otras pestañas del Excel Contratos plan de choque — reglas por definir
 HOJAS_CONTRATOS_OTRAS: dict[str, str] = {}
