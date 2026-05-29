@@ -371,8 +371,8 @@ def _clave_input_contrasena_acceso() -> str:
 
 def _html_bloquear_guardado_contrasena() -> None:
     """
-    Campos ocultos señuelo: el navegador suele ofrecer guardar esos
-    en lugar del campo real de acceso a la app.
+    Campos ocultos señuelo (sin type=password ni current-password):
+    evita que el navegador rellene ahí el código guardado.
     """
     st.html(
         """
@@ -381,8 +381,8 @@ def _html_bloquear_guardado_contrasena() -> None:
           style="position:absolute;left:-10000px;height:0;width:0;overflow:hidden;opacity:0"
         >
           <form autocomplete="off">
-            <input type="text" name="username" autocomplete="username" tabindex="-1" />
-            <input type="password" name="password" autocomplete="current-password" tabindex="-1" />
+            <input type="text" name="fake-user" autocomplete="username" tabindex="-1" />
+            <input type="text" name="fake-pass" autocomplete="new-password" tabindex="-1" />
           </form>
         </div>
         """,
@@ -390,7 +390,7 @@ def _html_bloquear_guardado_contrasena() -> None:
 
 
 def _script_autofocus_contrasena_acceso(clave_widget: str) -> None:
-    """Foco inicial y atributos anti-guardado en el campo de contraseña."""
+    """Foco al cargar y teclas que llegan antes del clic en el campo."""
     clase = f"st-key-{clave_widget}"
     st.html(
         f"""
@@ -398,26 +398,113 @@ def _script_autofocus_contrasena_acceso(clave_widget: str) -> None:
         (function () {{
           const doc = window.parent.document || document;
           const selector = ".{clase} input";
+          let teclasVinculadas = false;
+
+          function inputAcceso() {{
+            return doc.querySelector(selector);
+          }}
+
           function configurarCampo(el) {{
-            if (!el) return;
+            if (!el || el.dataset.planChoqueAcceso === "1") return;
+            el.dataset.planChoqueAcceso = "1";
             el.setAttribute("autocomplete", "off");
+            el.setAttribute("autocapitalize", "off");
+            el.setAttribute("spellcheck", "false");
             el.setAttribute("name", "acceso-plan-choque-token");
             el.setAttribute("data-lpignore", "true");
             el.setAttribute("data-1p-ignore", "true");
+            el.setAttribute("autofocus", "autofocus");
           }}
+
           function enfocar() {{
-            const el = doc.querySelector(selector);
+            const el = inputAcceso();
             if (!el) return false;
             configurarCampo(el);
-            el.focus({{ preventScroll: true }});
+            try {{ el.focus({{ preventScroll: true }}); }} catch (err) {{}}
             return doc.activeElement === el;
           }}
-          let n = 0;
-          const timer = setInterval(function () {{
-            const el = doc.querySelector(selector);
-            if (el) configurarCampo(el);
-            if (enfocar() || ++n > 60) clearInterval(timer);
-          }}, 80);
+
+          function escribirCaracter(el, ch) {{
+            const proto = window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, "value");
+            if (desc && desc.set) {{
+              desc.set.call(el, el.value + ch);
+            }} else {{
+              el.value = el.value + ch;
+            }}
+            el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+          }}
+
+          function focoEnOtroCampo() {{
+            const ae = doc.activeElement;
+            if (!ae) return false;
+            const tag = ae.tagName;
+            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {{
+              return ae !== inputAcceso();
+            }}
+            return !!ae.isContentEditable;
+          }}
+
+          function vincularTeclas() {{
+            if (teclasVinculadas) return;
+            teclasVinculadas = true;
+            doc.addEventListener("keydown", function (e) {{
+              const el = inputAcceso();
+              if (!el) return;
+              if (doc.activeElement === el) return;
+              if (focoEnOtroCampo()) return;
+              if (e.ctrlKey || e.metaKey || e.altKey) return;
+              if (e.key === "Tab" || e.key === "Escape" || e.key.startsWith("Arrow")) return;
+
+              if (e.key === "Enter") {{
+                e.preventDefault();
+                enfocar();
+                const form = el.closest("form");
+                const btn = form && (
+                  form.querySelector('button[kind="primaryFormSubmit"]') ||
+                  form.querySelector('button[type="submit"]') ||
+                  form.querySelector("button")
+                );
+                if (btn) btn.click();
+                return;
+              }}
+
+              if (e.key.length !== 1) return;
+              e.preventDefault();
+              enfocar();
+              escribirCaracter(el, e.key);
+            }}, true);
+          }}
+
+          function iniciar() {{
+            vincularTeclas();
+            const obs = new MutationObserver(function () {{
+              const el = inputAcceso();
+              if (el) {{
+                configurarCampo(el);
+                enfocar();
+              }}
+            }});
+            if (doc.body) {{
+              obs.observe(doc.body, {{ childList: true, subtree: true }});
+            }}
+            let intentos = 0;
+            const timer = setInterval(function () {{
+              const el = inputAcceso();
+              if (el) configurarCampo(el);
+              enfocar();
+              if (++intentos > 150) {{
+                clearInterval(timer);
+                obs.disconnect();
+              }}
+            }}, 40);
+          }}
+
+          if (doc.readyState === "loading") {{
+            doc.addEventListener("DOMContentLoaded", iniciar);
+          }} else {{
+            iniciar();
+          }}
         }})();
         </script>
         """,
@@ -444,7 +531,6 @@ def render_portada_acceso() -> None:
     ver_key = f"ver_{clave_input}"
 
     with st.container(border=True, key="portada_acceso_box"):
-        _html_bloquear_guardado_contrasena()
         mostrar_texto = bool(st.session_state.get(ver_key, False))
         clase_campo = f".st-key-{clave_input}"
         st.markdown(
@@ -476,6 +562,7 @@ def render_portada_acceso() -> None:
                 type="primary",
                 use_container_width=True,
             )
+        _html_bloquear_guardado_contrasena()
         _script_autofocus_contrasena_acceso(clave_input)
 
     if enviado:
