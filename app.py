@@ -465,7 +465,7 @@ def render_portada_acceso() -> None:
     ver_key = f"ver_{clave_input}"
 
     with st.container(border=True, key="portada_acceso_box"):
-        mostrar_texto = st.checkbox("Mostrar contraseña", key=ver_key)
+        mostrar_texto = bool(st.session_state.get(ver_key, False))
         clase_campo = f".st-key-{clave_input}"
         st.markdown(
             f"""
@@ -484,6 +484,7 @@ def render_portada_acceso() -> None:
             key=clave_input,
             label_visibility="collapsed",
         )
+        st.checkbox("Mostrar contraseña", key=ver_key)
         enviado = st.button(
             "Entrar",
             type="primary",
