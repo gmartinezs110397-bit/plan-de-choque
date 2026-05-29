@@ -859,9 +859,13 @@ def exportar_contratos_preservando_formato(
 ) -> tuple[bytes, list[str]]:
     """
     Guarda el libro original intacto (filas 1-2, formatos, otras hojas).
-    Actualiza Cps/Caja por depurar y, si existe, la pestaña Suspendidos.
+    Actualiza Cps/Caja por depurar y, si existen, Suspendidos y Próximos a perder.
     valores_por_fila: fila Excel 1-based -> saldo.
     """
+    from hoja_proximos_a_perder import (
+        actualizar_hoja_proximos_a_perder,
+        resolver_hoja_proximos_a_perder,
+    )
     from hoja_suspendidos import (
         actualizar_hoja_suspendidos,
         resolver_hoja_suspendidos,
@@ -892,15 +896,25 @@ def exportar_contratos_preservando_formato(
     _actualizar_resumen_filas_1_2(ws, col_corte)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
 
-    nombre_susp = resolver_hoja_suspendidos(list(wb.sheetnames))
-    if nombre_susp and mapa_k3_suspendidos is not None:
-        advertencias.extend(
-            actualizar_hoja_suspendidos(
-                wb[nombre_susp],
-                mapa_k3_suspendidos,
-                fecha_analisis,
+    if mapa_k3_suspendidos is not None:
+        nombre_susp = resolver_hoja_suspendidos(list(wb.sheetnames))
+        if nombre_susp:
+            advertencias.extend(
+                actualizar_hoja_suspendidos(
+                    wb[nombre_susp],
+                    mapa_k3_suspendidos,
+                    fecha_analisis,
+                )
             )
-        )
+        nombre_prox = resolver_hoja_proximos_a_perder(list(wb.sheetnames))
+        if nombre_prox:
+            advertencias.extend(
+                actualizar_hoja_proximos_a_perder(
+                    wb[nombre_prox],
+                    mapa_k3_suspendidos,
+                    fecha_analisis,
+                )
+            )
 
     _preparar_workbook_antes_guardar(wb)
 

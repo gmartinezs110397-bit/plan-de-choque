@@ -13,7 +13,13 @@ HOJAS_SUSPENDIDOS = (
     "SUSPENDIDOS",
 )
 
+HOJAS_PROXIMOS_A_PERDER = (
+    "Próximos a perder",
+    "Proximos a perder",
+    "PROXIMOS A PERDER",
+)
+
 # Otras pestañas del Excel Contratos plan de choque — reglas por definir
 HOJAS_CONTRATOS_OTRAS: dict[str, str] = {
-    # "Próximos a perder", "Trámites sectores", …
+    # "Trámites sectores", …
 }
