@@ -33,6 +33,10 @@ from cxp_cruce import (
     titulo_saldo_corte,
     validar_desempate_completo,
 )
+from reporte_ejecucion import (
+    ReporteEjecucion,
+    registrar_resultado_localidad,
+)
 
 # Localidades de Bogotá D.C. (20), orden alfabético
 LOCALIDADES = [
@@ -345,6 +349,7 @@ def init_session_state():
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
         "acceso_autorizado": False,
+        "reporte_ejecucion": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -1597,7 +1602,61 @@ def _agregar_conteo_global(acumulado: dict, conteo: dict) -> None:
         acumulado[codigo] = acumulado.get(codigo, 0) + cantidad
 
 
-def ejecutar_consolidacion(cola, password_matriz: str):
+def _guardar_reporte_en_sesion(reporte: ReporteEjecucion) -> None:
+    df = reporte.a_dataframe()
+    st.session_state.reporte_ejecucion = {
+        "texto": reporte.generar_texto(),
+        "tabla": df.to_dict("records") if not df.empty else [],
+        "resumen": reporte.resumen_usuario,
+        "requiere_atencion": reporte.requiere_atencion_admin(),
+        "conteo_niveles": reporte.cantidad_por_nivel(),
+        "generado": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
+def mostrar_reporte_tecnico_admin() -> None:
+    """Reporte descargable para quien mantiene el sistema."""
+    payload = st.session_state.get("reporte_ejecucion")
+    if not payload:
+        return
+
+    requiere = payload.get("requiere_atencion", False)
+    titulo = "Reporte técnico (revisión y ajustes del sistema)"
+    with st.expander(titulo, expanded=requiere):
+        st.caption(payload.get("resumen", ""))
+        niveles = payload.get("conteo_niveles") or {}
+        if niveles:
+            partes = [f"**{k}**: {v}" for k, v in niveles.items()]
+            st.markdown(" · ".join(partes))
+
+        nombre_archivo = (
+            f"reporte_plan_choque_{payload.get('generado', 'ejecucion')}.txt"
+        ).replace(":", "-")
+
+        st.download_button(
+            "Descargar reporte (.txt)",
+            data=payload.get("texto", ""),
+            file_name=nombre_archivo,
+            mime="text/plain",
+            use_container_width=True,
+        )
+
+        tabla = payload.get("tabla") or []
+        if tabla:
+            st.dataframe(
+                pd.DataFrame(tabla),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No se registraron incidencias en esta ejecución.")
+
+
+def ejecutar_consolidacion(
+    cola,
+    password_matriz: str,
+    reporte: ReporteEjecucion,
+):
     stats, errores = [], []
     informe_localidades = []
     detalle_global = []
@@ -1624,9 +1683,21 @@ def ejecutar_consolidacion(cola, password_matriz: str):
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Matriz: {e}")
+            reporte.desde_excepcion(
+                e,
+                localidad=localidad,
+                archivo=item["matriz"]["name"],
+                fase="lectura_matriz",
+            )
             continue
         except Exception as e:
             errores.append(f"**{localidad}** — Matriz: no se pudo leer ({e})")
+            reporte.desde_excepcion(
+                e,
+                localidad=localidad,
+                archivo=item["matriz"]["name"],
+                fase="lectura_matriz",
+            )
             continue
 
         try:
@@ -1640,11 +1711,24 @@ def ejecutar_consolidacion(cola, password_matriz: str):
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Contratos: {e}")
+            reporte.desde_excepcion(
+                e,
+                localidad=localidad,
+                archivo=item["contratos"]["name"],
+                fase="procesamiento_contratos",
+            )
             continue
         except Exception as e:
             errores.append(f"**{localidad}** — Contratos: no se pudo procesar ({e})")
+            reporte.desde_excepcion(
+                e,
+                localidad=localidad,
+                archivo=item["contratos"]["name"],
+                fase="procesamiento_contratos",
+            )
             continue
 
+        registrar_resultado_localidad(reporte, item, resultado)
         _agregar_conteo_global(conteo_global, resultado["conteo"])
         informe_localidades.append({
             "localidad": localidad,
@@ -1682,10 +1766,16 @@ def ejecutar_consolidacion(cola, password_matriz: str):
 
     if errores:
         st.session_state.errores_ejecucion = errores
+        reporte.registrar_textos_error(errores, fase="consolidacion")
         limpiar_resultado_consolidado()
         return False
 
     if len(informe_localidades) != total:
+        reporte.error(
+            "EJECUCION_INCOMPLETA",
+            f"Solo se procesaron {len(informe_localidades)} de {total} localidades.",
+            fase="consolidacion",
+        )
         limpiar_resultado_consolidado()
         return False
 
@@ -1717,20 +1807,29 @@ def ejecutar_consolidacion(cola, password_matriz: str):
 def procesar_consolidacion(cola_run: list, pwd: str):
     n = len(cola_run)
     limpiar_resultado_consolidado()
+    reporte = ReporteEjecucion()
 
     with st.spinner("Chequeando archivos…"):
         nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
 
     if not nombres_ok:
+        reporte.registrar_textos_error(errores_nombres, fase="validacion_previa")
+        reporte.cerrar(False)
+        _guardar_reporte_en_sesion(reporte)
         if any(es_error_contrasena(e) for e in errores_nombres):
             st.error("Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo.")
         else:
             st.error("No se consolidaron las localidades correctamente. Revise los archivos.")
         for detalle in errores_nombres:
             st.markdown(f"- {detalle}")
+        mostrar_reporte_tecnico_admin()
         return
 
-    exito = ejecutar_consolidacion(cola_run, pwd)
+    exito = ejecutar_consolidacion(cola_run, pwd, reporte)
+    localidades_ok = len(st.session_state.get("cruce_informe", []))
+    reporte.cerrar(exito, localidades_ok, n)
+    _guardar_reporte_en_sesion(reporte)
+
     if exito and st.session_state.processed:
         titulo_mes = st.session_state.get("titulo_saldo_corte", "")
         sin_res = sum(i.get("sin_resolver", 0) for i in st.session_state.get("cruce_informe", []))
@@ -1754,6 +1853,8 @@ def procesar_consolidacion(cola_run: list, pwd: str):
             st.error("No se consolidaron las localidades correctamente.")
         for detalle in todos_errores:
             st.markdown(f"- {detalle}")
+
+    mostrar_reporte_tecnico_admin()
 
 
 @st.dialog("Contraseña Matriz")
@@ -1946,6 +2047,7 @@ if st.session_state.processed:
     etiqueta_cxp = titulo_mes or "Saldo de corte"
 
     st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
+    mostrar_reporte_tecnico_admin()
 
     total_contratos = sum(i.get("total_contratos", 0) for i in informe)
     total_ok = sum(i.get("contratos_ok", 0) for i in informe)

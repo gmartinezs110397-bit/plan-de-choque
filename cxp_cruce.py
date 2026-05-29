@@ -856,11 +856,12 @@ def exportar_contratos_preservando_formato(
     crear_columna: bool,
     titulo_columna: str,
     mapa_k3_suspendidos: dict | None = None,
-) -> tuple[bytes, list[str]]:
+) -> tuple[bytes, list[str], list[str]]:
     """
     Guarda el libro original intacto (filas 1-2, formatos, otras hojas).
     Actualiza Cps/Caja por depurar y, si existen, Suspendidos y Próximos a perder.
     valores_por_fila: fila Excel 1-based -> saldo.
+    Devuelve (bytes, advertencias_hojas, observaciones).
     """
     from hoja_proximos_a_perder import (
         actualizar_hoja_proximos_a_perder,
@@ -872,8 +873,10 @@ def exportar_contratos_preservando_formato(
     )
 
     advertencias: list[str] = []
+    observaciones: list[str] = []
     wb = load_workbook(BytesIO(contratos_bytes))
-    nombre_hoja = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+    nombres_hojas = list(wb.sheetnames)
+    nombre_hoja = resolver_hoja_cruce_cxp(nombres_hojas)
     ws = wb[nombre_hoja]
 
     titulo_corte = titulo_columna or titulo_saldo_corte(fecha_analisis)
@@ -897,23 +900,46 @@ def exportar_contratos_preservando_formato(
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
 
     if mapa_k3_suspendidos is not None:
-        nombre_susp = resolver_hoja_suspendidos(list(wb.sheetnames))
+        nombre_susp = resolver_hoja_suspendidos(nombres_hojas)
         if nombre_susp:
-            advertencias.extend(
-                actualizar_hoja_suspendidos(
-                    wb[nombre_susp],
-                    mapa_k3_suspendidos,
-                    fecha_analisis,
+            try:
+                advertencias.extend(
+                    actualizar_hoja_suspendidos(
+                        wb[nombre_susp],
+                        mapa_k3_suspendidos,
+                        fecha_analisis,
+                    )
                 )
+            except ValueError as e:
+                observaciones.append(f"Suspendidos: {e}")
+            except Exception as e:
+                observaciones.append(
+                    f"Suspendidos: error no previsto ({type(e).__name__}: {e})"
+                )
+        else:
+            observaciones.append(
+                "No se encontró pestaña Suspendidos en el archivo de Contratos."
             )
-        nombre_prox = resolver_hoja_proximos_a_perder(list(wb.sheetnames))
+
+        nombre_prox = resolver_hoja_proximos_a_perder(nombres_hojas)
         if nombre_prox:
-            advertencias.extend(
-                actualizar_hoja_proximos_a_perder(
-                    wb[nombre_prox],
-                    mapa_k3_suspendidos,
-                    fecha_analisis,
+            try:
+                advertencias.extend(
+                    actualizar_hoja_proximos_a_perder(
+                        wb[nombre_prox],
+                        mapa_k3_suspendidos,
+                        fecha_analisis,
+                    )
                 )
+            except ValueError as e:
+                observaciones.append(f"Próximos a perder: {e}")
+            except Exception as e:
+                observaciones.append(
+                    f"Próximos a perder: error no previsto ({type(e).__name__}: {e})"
+                )
+        else:
+            observaciones.append(
+                "No se encontró pestaña Próximos a perder en el archivo de Contratos."
             )
 
     _preparar_workbook_antes_guardar(wb)
@@ -921,7 +947,7 @@ def exportar_contratos_preservando_formato(
     out = BytesIO()
     wb.save(out)
     out.seek(0)
-    return _finalizar_xlsx_contratos(out.getvalue()), advertencias
+    return _finalizar_xlsx_contratos(out.getvalue()), advertencias, observaciones
 
 
 def _indice_columna_corte(columnas: list, fecha: datetime | date) -> str | None:
@@ -1040,13 +1066,15 @@ def procesar_localidad_cxp(
 
     mapa_k3_suspendidos = preparar_mapa_k3_saldo_estado(df_matriz, localidad)
 
-    bytes_export, advertencias_suspendidos = exportar_contratos_preservando_formato(
-        contratos_bytes,
-        fecha_analisis,
-        valores_excel,
-        crear_columna=crear_columna,
-        titulo_columna=titulo_mes,
-        mapa_k3_suspendidos=mapa_k3_suspendidos,
+    bytes_export, advertencias_hojas, observaciones = (
+        exportar_contratos_preservando_formato(
+            contratos_bytes,
+            fecha_analisis,
+            valores_excel,
+            crear_columna=crear_columna,
+            titulo_columna=titulo_mes,
+            mapa_k3_suspendidos=mapa_k3_suspendidos,
+        )
     )
 
     out = BytesIO()
@@ -1081,7 +1109,9 @@ def procesar_localidad_cxp(
         "conteo": conteo,
         "resumen_metodos": resumen_metodos,
         "detalle": detalle_filas,
-        "advertencias_suspendidos": advertencias_suspendidos,
+        "advertencias_hojas": advertencias_hojas,
+        "advertencias_suspendidos": advertencias_hojas,
+        "observaciones": observaciones,
     }
 
 
