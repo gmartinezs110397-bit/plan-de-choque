@@ -1638,6 +1638,7 @@ if add_clicked:
             entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
         )
         st.session_state.upload_key += 1
+        st.session_state.select_localidad = SELECCION_LOCALIDAD
         st.toast(f"{localidad} añadido a la cola", icon="➕")
         st.rerun()
 
