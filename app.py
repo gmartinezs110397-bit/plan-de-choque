@@ -389,103 +389,35 @@ def _html_bloquear_guardado_contrasena() -> None:
     )
 
 
-def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
-    """Autofocus, Enter y teclas sin clic previo en el campo de contraseña."""
+def _script_autofocus_contrasena_acceso(clave_widget: str) -> None:
+    """Foco inicial y atributos anti-guardado en el campo de contraseña."""
     clase = f"st-key-{clave_widget}"
     st.html(
         f"""
         <script>
         (function () {{
-          const clase = "{clase}";
-          function campo() {{
-            const root = document.querySelector("." + clase);
-            return root ? root.querySelector("input") : null;
-          }}
-          function botonEntrar() {{
-            const btn = document.querySelector(".st-key-btn_entrar_acceso button");
-            if (btn) return btn;
-            const root = document.querySelector("." + clase);
-            if (!root) return null;
-            const form = root.closest("form");
-            if (!form) return null;
-            return form.querySelector('button[kind="formSubmit"]')
-              || form.querySelector('button[type="submit"]');
-          }}
+          const doc = window.parent.document || document;
+          const selector = ".{clase} input";
           function configurarCampo(el) {{
             if (!el) return;
             el.setAttribute("autocomplete", "off");
             el.setAttribute("name", "acceso-plan-choque-token");
-            el.setAttribute("autocapitalize", "off");
-            el.setAttribute("spellcheck", "false");
-            el.setAttribute("data-form-type", "other");
             el.setAttribute("data-lpignore", "true");
             el.setAttribute("data-1p-ignore", "true");
-            el.setAttribute("data-bwignore", "true");
-            if (!el.dataset.pcAntiguardado) {{
-              el.dataset.pcAntiguardado = "1";
-              el.setAttribute("readonly", "readonly");
-              el.addEventListener("focus", function quitarReadonly() {{
-                el.removeAttribute("readonly");
-              }}, {{ once: true }});
-            }}
           }}
           function enfocar() {{
-            const el = campo();
+            const el = doc.querySelector(selector);
             if (!el) return false;
             configurarCampo(el);
             el.focus({{ preventScroll: true }});
-            return document.activeElement === el;
+            return doc.activeElement === el;
           }}
           let n = 0;
           const timer = setInterval(function () {{
-            const el = campo();
+            const el = doc.querySelector(selector);
             if (el) configurarCampo(el);
             if (enfocar() || ++n > 60) clearInterval(timer);
           }}, 80);
-          document.addEventListener("keydown", function (e) {{
-            const el = campo();
-            if (!el) return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            const activo = document.activeElement;
-            const tag = activo && activo.tagName;
-            if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {{
-              if (e.key === "Enter" && activo === el) {{
-                const btn = botonEntrar();
-                if (btn) {{ btn.click(); e.preventDefault(); }}
-              }}
-              return;
-            }}
-            if (e.key === "Enter") {{
-              el.focus({{ preventScroll: true }});
-              const btn = botonEntrar();
-              if (btn) btn.click();
-              e.preventDefault();
-              return;
-            }}
-            if (e.key.length === 1 && !e.key.startsWith("F")) {{
-              e.preventDefault();
-              el.focus({{ preventScroll: true }});
-              const start = el.selectionStart ?? el.value.length;
-              const end = el.selectionEnd ?? el.value.length;
-              el.value = el.value.slice(0, start) + e.key + el.value.slice(end);
-              el.selectionStart = el.selectionEnd = start + 1;
-              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-            }}
-            if (e.key === "Backspace") {{
-              e.preventDefault();
-              el.focus({{ preventScroll: true }});
-              const start = el.selectionStart ?? 0;
-              const end = el.selectionEnd ?? 0;
-              if (start === end && start > 0) {{
-                el.value = el.value.slice(0, start - 1) + el.value.slice(end);
-                el.selectionStart = el.selectionEnd = start - 1;
-              }} else if (start !== end) {{
-                el.value = el.value.slice(0, start) + el.value.slice(end);
-                el.selectionStart = el.selectionEnd = start;
-              }}
-              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-            }}
-          }}, true);
         }})();
         </script>
         """,
@@ -525,22 +457,26 @@ def render_portada_acceso() -> None:
             """,
             unsafe_allow_html=True,
         )
-        ingresado = st.text_input(
-            "Contraseña",
-            type="default",
-            placeholder="Contraseña",
-            key=clave_input,
-            label_visibility="collapsed",
-            autocomplete="new-password",
-        )
-        st.checkbox("Mostrar contraseña", key=ver_key)
-        enviado = st.button(
-            "Entrar",
-            type="primary",
-            use_container_width=True,
-            key="btn_entrar_acceso",
-        )
-        _script_teclado_contrasena_acceso(clave_input)
+        with st.form(
+            "form_contrasena_acceso",
+            clear_on_submit=False,
+            enter_to_submit=True,
+        ):
+            ingresado = st.text_input(
+                "Contraseña",
+                type="default",
+                placeholder="Contraseña",
+                key=clave_input,
+                label_visibility="collapsed",
+                autocomplete="off",
+            )
+            st.checkbox("Mostrar contraseña", key=ver_key)
+            enviado = st.form_submit_button(
+                "Entrar",
+                type="primary",
+                use_container_width=True,
+            )
+        _script_autofocus_contrasena_acceso(clave_input)
 
     if enviado:
         if str(ingresado).strip() == contrasena_ok:
