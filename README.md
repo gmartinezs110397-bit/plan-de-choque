@@ -11,6 +11,15 @@ Consolidación **Matriz OXP** + **Contratos plan de choque** por localidad (Bogo
 
 La contraseña de la Matriz se ingresa en la app al consolidar; no se guarda en GitHub.
 
+## Actualizar el link publico (despues de cambios en Cursor)
+
+```powershell
+cd "C:\Users\f1rac\OneDrive\Documents\Plan de choque"
+.\subir-cambios.ps1 "Descripcion del cambio"
+```
+
+GitHub se actualiza y Streamlit Cloud redeploya en 1-2 min (mismo enlace `.streamlit.app`).
+
 ## Uso local
 
 ```powershell
