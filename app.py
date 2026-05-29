@@ -77,24 +77,6 @@ st.markdown(
     div[data-testid="InputInstructions"] > span {
         display: none !important;
     }
-    /* Un solo icono ojo (refuerzo CSS; el script también lo corrige al escribir) */
-    .st-key-portada_acceso_box:has(input[type="password"])
-        button[title*="Hide password" i],
-    .st-key-portada_acceso_box:has(input[type="password"])
-        button[aria-label*="Hide password" i] {
-        display: none !important;
-    }
-    .st-key-portada_acceso_box:has(input[type="text"])
-        button[title*="Show password" i],
-    .st-key-portada_acceso_box:has(input[type="text"])
-        button[aria-label*="Show password" i] {
-        display: none !important;
-    }
-    .st-key-portada_acceso_box [data-testid="stTextInput"]
-        button[title*="password" i] + button[title*="password" i] {
-        display: none !important;
-    }
-
     .app-title {
         font-size: 2rem;
         font-weight: 700;
@@ -391,11 +373,7 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
           const clase = "{clase}";
           function campo() {{
             const root = document.querySelector("." + clase);
-            if (!root) return null;
-            return (
-              root.querySelector('input[type="password"]')
-              || root.querySelector('input[type="text"]')
-            );
+            return root ? root.querySelector("input") : null;
           }}
           function botonEntrar() {{
             const root = document.querySelector("." + clase);
@@ -411,63 +389,9 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
             el.focus({{ preventScroll: true }});
             return document.activeElement === el;
           }}
-          function unSoloOjo() {{
-            const root = document.querySelector("." + clase);
-            if (!root) return;
-            const input = campo();
-            const botones = Array.from(
-              root.querySelectorAll(
-                'button[title*="password" i], button[aria-label*="password" i]'
-              )
-            );
-            if (!botones.length) return;
-            const oculta = !input || input.type === "password";
-            botones.forEach((btn) => {{
-              const txt = (
-                (btn.title || "") + " " + (btn.getAttribute("aria-label") || "")
-              ).toLowerCase();
-              const esOcultar = txt.includes("hide");
-              const esMostrar = txt.includes("show");
-              if (oculta && esOcultar) {{
-                btn.style.setProperty("display", "none", "important");
-              }} else if (!oculta && esMostrar) {{
-                btn.style.setProperty("display", "none", "important");
-              }} else {{
-                btn.style.removeProperty("display");
-              }}
-            }});
-            const visibles = botones.filter(
-              (b) => getComputedStyle(b).display !== "none"
-            );
-            if (visibles.length > 1) {{
-              for (let i = 0; i < visibles.length - 1; i++) {{
-                visibles[i].style.setProperty("display", "none", "important");
-              }}
-            }}
-          }}
-          function observarOjo() {{
-            const root = document.querySelector("." + clase);
-            if (!root) return;
-            unSoloOjo();
-            const obs = new MutationObserver(unSoloOjo);
-            obs.observe(root, {{
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ["style", "class", "type", "title"],
-            }});
-            const input = campo();
-            if (input) {{
-              input.addEventListener("input", unSoloOjo);
-              input.addEventListener("keyup", unSoloOjo);
-            }}
-          }}
           let n = 0;
           const timer = setInterval(function () {{
-            const ok = enfocar();
-            if (ok && n === 0) observarOjo();
-            unSoloOjo();
-            if (ok || ++n > 60) clearInterval(timer);
+            if (enfocar() || ++n > 60) clearInterval(timer);
           }}, 80);
           document.addEventListener("keydown", function (e) {{
             const el = campo();
@@ -479,9 +403,6 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
               if (e.key === "Enter" && activo === el) {{
                 const btn = botonEntrar();
                 if (btn) {{ btn.click(); e.preventDefault(); }}
-              }}
-              if (activo === el) {{
-                requestAnimationFrame(unSoloOjo);
               }}
               return;
             }}
@@ -500,7 +421,6 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
               el.value = el.value.slice(0, start) + e.key + el.value.slice(end);
               el.selectionStart = el.selectionEnd = start + 1;
               el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-              unSoloOjo();
             }}
             if (e.key === "Backspace") {{
               e.preventDefault();
@@ -515,7 +435,6 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
                 el.selectionStart = el.selectionEnd = start;
               }}
               el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-              unSoloOjo();
             }}
           }}, true);
         }})();
@@ -541,7 +460,21 @@ def render_portada_acceso() -> None:
         st.stop()
 
     clave_input = _clave_input_contrasena_acceso()
+    ver_key = f"ver_{clave_input}"
+    mostrar_texto = bool(st.session_state.get(ver_key, False))
+
     with st.container(border=True, key="portada_acceso_box"):
+        clase_campo = f".st-key-{clave_input}"
+        st.markdown(
+            f"""
+            <style>
+            .st-key-portada_acceso_box {clase_campo} input {{
+                -webkit-text-security: {"none" if mostrar_texto else "disc"};
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         with st.form(
             "form_contrasena_acceso",
             clear_on_submit=False,
@@ -549,11 +482,12 @@ def render_portada_acceso() -> None:
         ):
             ingresado = st.text_input(
                 "Contraseña",
-                type="password",
+                type="default",
                 placeholder="Contraseña",
                 key=clave_input,
                 label_visibility="collapsed",
             )
+            st.checkbox("Mostrar contraseña", key=ver_key)
             enviado = st.form_submit_button(
                 "Entrar", type="primary", use_container_width=True
             )
