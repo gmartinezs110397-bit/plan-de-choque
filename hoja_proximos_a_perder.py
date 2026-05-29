@@ -20,6 +20,7 @@ from cxp_cruce import (
     clave_tres,
 )
 from hoja_suspendidos import (
+    FILL_AMARILLO,
     FILL_VERDE_NEON,
     _asegurar_columnas_mes,
     _autoajustar_columna_suspendidos,
@@ -45,33 +46,65 @@ def _es_liquidado(valor) -> bool:
     return _normalizar(str(valor or "")) == "liquidado"
 
 
-def _resolver_relleno_estado_proximos(prev_estado, prev_celda, curr_estado) -> PatternFill | None:
-    """Verde neón solo cuando el estado pasa a LIQUIDADO (antes no lo era)."""
-    del prev_celda  # sin amarillo ni otras reglas de Suspendidos
+def _saldo_es_cero(valor) -> bool:
+    if valor is None or valor == "":
+        return True
+    try:
+        return abs(float(valor)) < 1e-9
+    except (TypeError, ValueError):
+        return True
+
+
+def _resolver_relleno_estado_proximos(
+    prev_estado,
+    prev_celda,
+    curr_estado,
+    saldo,
+) -> PatternFill | None:
+    """
+    Verde: pasa a LIQUIDADO.
+    Amarillo: no liquidado y saldo cero.
+    Sin color: el resto (cuenta para el total de contratos).
+    """
+    del prev_celda
     prev_txt = _normalizar(str(prev_estado or ""))
     curr_txt = _normalizar(str(curr_estado or ""))
     if curr_txt == "liquidado" and prev_txt != "liquidado":
         return FILL_VERDE_NEON
+    if curr_txt != "liquidado" and _saldo_es_cero(saldo):
+        return FILL_AMARILLO
     return None
 
 
-def _conteo_no_liquidado_en_columna(ws, col_estado: int) -> int:
+def _cuenta_para_total_proximos(estado, saldo) -> bool:
+    """Sin color en estado: no liquidado y saldo distinto de cero."""
+    if _es_liquidado(estado):
+        return False
+    if _saldo_es_cero(saldo):
+        return False
+    return True
+
+
+def _conteo_sin_color_proximos(ws, col_estado: int, col_saldo: int) -> int:
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
     fila_ini = _fila_inicio_datos_contratos()
     total = 0
     for fila in range(fila_ini, ws.max_row + 1):
         if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
             continue
-        if not _es_liquidado(ws.cell(fila, col_estado).value):
+        estado = ws.cell(fila, col_estado).value
+        saldo = ws.cell(fila, col_saldo).value
+        if _cuenta_para_total_proximos(estado, saldo):
             total += 1
     return total
 
 
-def _conteo_no_liquidado_mes_anterior(
+def _conteo_proximos_mes_anterior(
     ws,
     col_prev_estado: int | None,
+    col_prev_saldo: int | None,
 ) -> int | None:
-    if not col_prev_estado:
+    if not col_prev_estado or not col_prev_saldo:
         return None
     celda_prev = ws.cell(FILA_CONTEO_CONTRATOS, col_prev_estado)
     if celda_prev.value not in (None, ""):
@@ -79,7 +112,7 @@ def _conteo_no_liquidado_mes_anterior(
             return int(float(celda_prev.value))
         except (TypeError, ValueError):
             pass
-    return _conteo_no_liquidado_en_columna(ws, col_prev_estado)
+    return _conteo_sin_color_proximos(ws, col_prev_estado, col_prev_saldo)
 
 
 def _actualizar_resumen_proximos(
@@ -89,9 +122,11 @@ def _actualizar_resumen_proximos(
     col_prev_saldo: int | None,
     col_prev_estado: int | None,
 ) -> tuple[int, int]:
-    """Fila 1: contratos con estado distinto de LIQUIDADO. Fila 2: suma de todos los saldos."""
-    conteo_real = _conteo_no_liquidado_en_columna(ws, col_estado)
-    conteo_prev = _conteo_no_liquidado_mes_anterior(ws, col_prev_estado)
+    """Fila 1: contratos sin color (no liquidado, saldo ≠ 0). Fila 2: suma de todos los saldos."""
+    conteo_real = _conteo_sin_color_proximos(ws, col_estado, col_saldo)
+    conteo_prev = _conteo_proximos_mes_anterior(
+        ws, col_prev_estado, col_prev_saldo
+    )
     conteo_mostrar = conteo_real
     if conteo_prev is not None and conteo_real > conteo_prev:
         conteo_mostrar = conteo_prev
@@ -129,8 +164,8 @@ def actualizar_hoja_proximos_a_perder(
 ) -> list[str]:
     """
     Escribe SALDO MES y ESTADO ACTUAL MES desde Matriz.
-    Verde neón solo si el estado pasa a LIQUIDADO.
-    Conteo: contratos que no están en LIQUIDADO. Suma: todos los saldos.
+    Verde: pasa a LIQUIDADO. Amarillo: no liquidado y saldo cero.
+    Conteo: filas sin color (no liquidado y saldo ≠ 0). Suma: todos los saldos.
     """
     advertencias: list[str] = []
     col_saldo, col_estado, col_prev_saldo, col_prev_estado, _ = _asegurar_columnas_mes(
@@ -182,7 +217,10 @@ def actualizar_hoja_proximos_a_perder(
 
         celda_estado.value = estado or None
 
-        relleno = _resolver_relleno_estado_proximos(prev_estado, prev_celda, estado)
+        saldo = datos["saldo"]
+        relleno = _resolver_relleno_estado_proximos(
+            prev_estado, prev_celda, estado, saldo
+        )
         if relleno:
             celda_estado.fill = relleno
 
