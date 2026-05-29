@@ -77,7 +77,7 @@ st.markdown(
     div[data-testid="InputInstructions"] > span {
         display: none !important;
     }
-    /* Un solo icono ojo (Streamlit oculta uno con visibility; no forzar ambos) */
+    /* Un solo icono ojo (refuerzo CSS; el script también lo corrige al escribir) */
     .st-key-portada_acceso_box:has(input[type="password"])
         button[title*="Hide password" i],
     .st-key-portada_acceso_box:has(input[type="password"])
@@ -88,6 +88,10 @@ st.markdown(
         button[title*="Show password" i],
     .st-key-portada_acceso_box:has(input[type="text"])
         button[aria-label*="Show password" i] {
+        display: none !important;
+    }
+    .st-key-portada_acceso_box [data-testid="stTextInput"]
+        button[title*="password" i] + button[title*="password" i] {
         display: none !important;
     }
 
@@ -407,9 +411,63 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
             el.focus({{ preventScroll: true }});
             return document.activeElement === el;
           }}
+          function unSoloOjo() {{
+            const root = document.querySelector("." + clase);
+            if (!root) return;
+            const input = campo();
+            const botones = Array.from(
+              root.querySelectorAll(
+                'button[title*="password" i], button[aria-label*="password" i]'
+              )
+            );
+            if (!botones.length) return;
+            const oculta = !input || input.type === "password";
+            botones.forEach((btn) => {{
+              const txt = (
+                (btn.title || "") + " " + (btn.getAttribute("aria-label") || "")
+              ).toLowerCase();
+              const esOcultar = txt.includes("hide");
+              const esMostrar = txt.includes("show");
+              if (oculta && esOcultar) {{
+                btn.style.setProperty("display", "none", "important");
+              }} else if (!oculta && esMostrar) {{
+                btn.style.setProperty("display", "none", "important");
+              }} else {{
+                btn.style.removeProperty("display");
+              }}
+            }});
+            const visibles = botones.filter(
+              (b) => getComputedStyle(b).display !== "none"
+            );
+            if (visibles.length > 1) {{
+              for (let i = 0; i < visibles.length - 1; i++) {{
+                visibles[i].style.setProperty("display", "none", "important");
+              }}
+            }}
+          }}
+          function observarOjo() {{
+            const root = document.querySelector("." + clase);
+            if (!root) return;
+            unSoloOjo();
+            const obs = new MutationObserver(unSoloOjo);
+            obs.observe(root, {{
+              childList: true,
+              subtree: true,
+              attributes: true,
+              attributeFilter: ["style", "class", "type", "title"],
+            }});
+            const input = campo();
+            if (input) {{
+              input.addEventListener("input", unSoloOjo);
+              input.addEventListener("keyup", unSoloOjo);
+            }}
+          }}
           let n = 0;
           const timer = setInterval(function () {{
-            if (enfocar() || ++n > 60) clearInterval(timer);
+            const ok = enfocar();
+            if (ok && n === 0) observarOjo();
+            unSoloOjo();
+            if (ok || ++n > 60) clearInterval(timer);
           }}, 80);
           document.addEventListener("keydown", function (e) {{
             const el = campo();
@@ -421,6 +479,9 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
               if (e.key === "Enter" && activo === el) {{
                 const btn = botonEntrar();
                 if (btn) {{ btn.click(); e.preventDefault(); }}
+              }}
+              if (activo === el) {{
+                requestAnimationFrame(unSoloOjo);
               }}
               return;
             }}
@@ -439,6 +500,7 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
               el.value = el.value.slice(0, start) + e.key + el.value.slice(end);
               el.selectionStart = el.selectionEnd = start + 1;
               el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+              unSoloOjo();
             }}
             if (e.key === "Backspace") {{
               e.preventDefault();
@@ -453,6 +515,7 @@ def _script_teclado_contrasena_acceso(clave_widget: str) -> None:
                 el.selectionStart = el.selectionEnd = start;
               }}
               el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+              unSoloOjo();
             }}
           }}, true);
         }})();
