@@ -331,10 +331,57 @@ def init_session_state():
         "titulo_saldo_corte": "",
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
+        "acceso_autorizado": False,
+        "codigo_acceso_intentos": 0,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
+
+
+def codigo_acceso_esperado() -> str | None:
+    """Código en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
+    try:
+        valor = st.secrets.get("codigo_acceso")
+        if valor is None:
+            return None
+        texto = str(valor).strip()
+        return texto if texto else None
+    except Exception:
+        return None
+
+
+def render_portada_acceso() -> None:
+    """Pantalla de ingreso; detiene la app hasta código correcto."""
+    codigo_ok = codigo_acceso_esperado()
+    st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="app-subtitle">Ingrese el código de acceso para continuar</p>',
+        unsafe_allow_html=True,
+    )
+    if not codigo_ok:
+        st.error(
+            "Falta configurar el código en Streamlit Cloud → **Manage app** → "
+            "**Settings** → **Secrets** (`codigo_acceso = \"1100\"`)."
+        )
+        st.stop()
+
+    with st.container(border=True):
+        ingresado = st.text_input(
+            "Código de acceso",
+            type="password",
+            placeholder="Código",
+            key="input_codigo_acceso",
+            label_visibility="collapsed",
+        )
+        if st.button("Entrar", type="primary", use_container_width=True, key="btn_codigo_acceso"):
+            if str(ingresado).strip() == codigo_ok:
+                st.session_state.acceso_autorizado = True
+                st.session_state.codigo_acceso_intentos = 0
+                st.rerun()
+            st.session_state.codigo_acceso_intentos += 1
+            st.error("Código incorrecto.")
+    st.stop()
 
 
 init_session_state()
@@ -1508,6 +1555,9 @@ def dialogo_contrasena_matriz():
             st.session_state.abrir_dialogo = False
             st.rerun()
 
+
+if not st.session_state.get("acceso_autorizado"):
+    render_portada_acceso()
 
 # ── Título ─────────────────────────────────────────────────────────────────────
 st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
