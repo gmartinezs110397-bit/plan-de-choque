@@ -462,14 +462,26 @@ def _fecha_datetime(fecha: datetime | date) -> datetime:
     return datetime(fecha.year, fecha.month, fecha.day)
 
 
+def dia_fin_mes_corte(fecha: datetime | date) -> int:
+    """
+    Último día del mes de la fecha de ejecución del consolidado.
+    Ej.: si se ejecuta el 29-mayo-2026 → 31 (no usa el día 29 del calendario).
+    """
+    f = _fecha_datetime(fecha)
+    return calendar.monthrange(f.year, f.month)[1]
+
+
+def mes_nombre_corte(fecha: datetime | date) -> str:
+    return MESES_ES[_fecha_datetime(fecha).month - 1]
+
+
 def titulo_saldo_corte(fecha: datetime | date) -> str:
     """
     Título de columna según fecha de ejecución.
     Ej.: Saldo a 31 de mayo, Saldo a 30 de abril (último día del mes).
     """
-    f = _fecha_datetime(fecha)
-    dia = calendar.monthrange(f.year, f.month)[1]
-    mes = MESES_ES[f.month - 1]
+    dia = dia_fin_mes_corte(fecha)
+    mes = mes_nombre_corte(fecha)
     return f"Saldo a {dia} de {mes}"
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import calendar
 import re
 from datetime import date, datetime
 
@@ -10,10 +9,10 @@ from constantes import HOJAS_ESTRATEGIAS
 from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
-    MESES_ES,
     _celda_tiene_formula,
-    _fecha_datetime,
     _normalizar,
+    dia_fin_mes_corte,
+    mes_nombre_corte,
 )
 from hoja_liquidados_con_saldo import (
     FILA_CONTEO_LIQUIDADOS,
@@ -47,16 +46,15 @@ def resolver_hoja_estrategias(nombres_hojas: list[str]) -> str | None:
 
 
 def titulo_contratos_estrategias(fecha: datetime | date) -> str:
-    f = _fecha_datetime(fecha)
-    dia = calendar.monthrange(f.year, f.month)[1]
-    mes = MESES_ES[f.month - 1]
+    """Siempre último día del mes de ejecución (ej. 29-may → 31 de mayo)."""
+    dia = dia_fin_mes_corte(fecha)
+    mes = mes_nombre_corte(fecha)
     return f"No. de contratos {dia} de {mes}"
 
 
 def titulo_monto_total_estrategias(fecha: datetime | date) -> str:
-    f = _fecha_datetime(fecha)
-    dia = calendar.monthrange(f.year, f.month)[1]
-    mes = MESES_ES[f.month - 1]
+    dia = dia_fin_mes_corte(fecha)
+    mes = mes_nombre_corte(fecha)
     return f"Monto Total {dia} de {mes}"
 
 
@@ -157,8 +155,9 @@ def actualizar_hoja_estrategias(
     """
     advertencias: list[str] = []
 
-    _escribir_valor(ws.cell(FILA_TITULOS, COL_CONTRATOS), titulo_contratos_estrategias(fecha))
-    _escribir_valor(ws.cell(FILA_TITULOS, COL_MONTO), titulo_monto_total_estrategias(fecha))
+    # Títulos: siempre actualizar (aunque la celda tenga fórmula heredada del Excel)
+    ws.cell(FILA_TITULOS, COL_CONTRATOS, value=titulo_contratos_estrategias(fecha))
+    ws.cell(FILA_TITULOS, COL_MONTO, value=titulo_monto_total_estrategias(fecha))
 
     filas_datos: list[int] = []
     fila_total: int | None = None
