@@ -2,33 +2,48 @@
 
 Consolidación **Matriz OXP** + **Contratos plan de choque** por localidad (Bogotá).
 
-## Publicar para compartir un enlace (Streamlit Cloud)
+**App publicada:** [plan-de-choque.streamlit.app](https://plan-de-choque.streamlit.app/)
 
-1. Suba este proyecto a GitHub (repositorio **público**).
-2. Entre en [share.streamlit.io](https://share.streamlit.io) con su cuenta de GitHub.
-3. **Create app** → elija el repositorio → archivo principal: `app.py` → **Deploy**.
-4. Copie el enlace que termina en `.streamlit.app` y envíelo; quien lo abra solo necesita el navegador.
+## Qué hace
 
-La contraseña de la Matriz se ingresa en la app al consolidar; no se guarda en GitHub.
+1. Valida nombres de archivos y que la localidad coincida con la Matriz.
+2. Cruza cada contrato con la Matriz y escribe el saldo del mes en Contratos y hojas de seguimiento.
+3. Bloquea descargas si quedan contratos **sin resolver** (desempate manual obligatorio).
 
-**Contraseña de acceso a la app** (Streamlit Cloud → Manage app → Settings → Secrets):
+## Reglas de saldo (resumen)
 
-```toml
-contrasena_acceso = "1100"
-```
+| Situación | Comportamiento |
+|-----------|----------------|
+| Saldo del mes | Columna **Saldo Final (V)** en Matriz |
+| Sin fila o saldo vacío en Matriz | Celda vacía (no 0) |
+| Pestaña vacía / «NO TIENE» | No se modifica |
+| Cruce principal | Nombre + contrato + año + apropiación |
+| Si falla | Desempate por **Saldo Final** |
 
-(Sigue funcionando la clave antigua `codigo_acceso`.)
+## Pantalla de resultados
 
-Localmente: copie `.streamlit/secrets.toml.example` a `.streamlit/secrets.toml`.
+- **Tarjetas:** localidades, contratos cruzados, CXP del mes, sin resolver.
+- **Tabla por localidad:** una fila por localidad (asignados, pendientes, CXP).
+- **Detalle:** solo localidades con sin resolver, fallback por Saldo Final o avisos en Suspendidos.
+- **Desempate:** tabla y asistente cuando hay pendientes.
 
-## Actualizar el link publico (despues de cambios en Cursor)
+## Archivos de salida
+
+- **Contratos actualizados** (ZIP, uno por localidad).
+- **Globales:** consolidado, avance, tabla de resumen (cuando sin resolver = 0).
+
+## Publicar (Streamlit Cloud)
+
+1. Repositorio público en GitHub → [share.streamlit.io](https://share.streamlit.io) → `app.py` → Deploy.
+2. Secrets → `contrasena_acceso = "1100"` (o `codigo_acceso` legacy).
+3. La contraseña de la **Matriz** se ingresa al consolidar; no va en GitHub.
+
+## Actualizar el link publicado
 
 ```powershell
 cd "C:\Users\f1rac\OneDrive\Documents\Plan de choque"
 .\subir-cambios.ps1 "Descripcion del cambio"
 ```
-
-GitHub se actualiza y Streamlit Cloud redeploya en 1-2 min (mismo enlace `.streamlit.app`).
 
 ## Uso local
 
@@ -37,4 +52,4 @@ cd "ruta\al\proyecto"
 .\iniciar.ps1
 ```
 
-Abre `http://localhost:8501` en su PC.
+Abre `http://localhost:8501`.

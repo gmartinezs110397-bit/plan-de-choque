@@ -830,6 +830,141 @@ def _reset_estado_desempate_wizard() -> None:
     st.session_state.desempate_wizard_mapa = {}
 
 
+def dataframe_resumen_localidades(informe: list) -> pd.DataFrame:
+    """Vista compacta: una fila por localidad."""
+    if not informe:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "Localidad": loc["localidad"],
+                "Asignados": f"{loc.get('contratos_ok', 0)}/{loc.get('total_contratos', 0)}",
+                "Sin resolver": loc.get("sin_resolver", 0),
+                "CXP (mes)": loc.get("cxp_total", 0),
+                "Columna": loc.get("columna_mes", ""),
+            }
+            for loc in informe
+        ]
+    )
+
+
+def _localidad_requiere_detalle_cruce(loc_info: dict) -> bool:
+    """Detalle por localidad solo si hay excepciones o avisos."""
+    return (
+        loc_info.get("sin_resolver", 0) > 0
+        or loc_info.get("conteo", {}).get("match_saldo_contrato", 0) > 0
+        or bool(loc_info.get("advertencias_suspendidos"))
+    )
+
+
+def mostrar_informe_cruce_consolidado(
+    informe: list,
+    titulo_mes: str,
+    detalle_todo: list,
+) -> None:
+    """Resumen conciso del cruce; detalle bajo demanda."""
+    total_contratos = sum(i.get("total_contratos", 0) for i in informe)
+    total_ok = sum(i.get("contratos_ok", 0) for i in informe)
+
+    st.markdown(
+        '<p class="section-title">Resumen del cruce</p>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        f"Saldo del mes desde **Saldo Final (V)** en Matriz → columna **{titulo_mes}** "
+        f"en Contratos y hojas de seguimiento."
+    )
+
+    resumen_global = st.session_state.get("cruce_resumen_global", [])
+    if resumen_global:
+        df_rg = pd.DataFrame(resumen_global)
+        total_rg = int(df_rg["Contratos"].sum())
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            st.dataframe(df_rg, use_container_width=True, hide_index=True)
+        with c2:
+            st.markdown(
+                f"**{total_rg}** de **{total_contratos}** contratos "
+                f"con saldo asignado en **{titulo_mes}**."
+            )
+            if total_ok != total_rg:
+                st.caption(
+                    f"({total_ok} filas actualizadas en Contratos; "
+                    f"incluye verificaciones y vacíos en matriz.)"
+                )
+
+    df_loc = dataframe_resumen_localidades(informe)
+    if len(df_loc):
+        st.dataframe(df_loc, use_container_width=True, hide_index=True)
+
+    with st.expander("Reglas de cruce (referencia)", expanded=False):
+        st.markdown(
+            "- **Clave principal:** nombre + contrato + año + apropiación (k4).\n"
+            "- **Si falla k4:** nombre + contrato + año; desempate por **Saldo Final** "
+            "(columna junto a liberaciones/fenecimientos).\n"
+            "- **Sin fila o saldo vacío en Matriz:** celda vacía (no cero).\n"
+            "- **Pestañas vacías / «NO TIENE»:** no se modifican."
+        )
+
+    detalle_por_loc = {
+        loc: [
+            d
+            for d in detalle_todo
+            if d.get("Localidad") == loc
+            and d.get("Método") == METODOS_LABEL["match_saldo_contrato"]
+        ]
+        for loc in {i["localidad"] for i in informe}
+    }
+
+    locales_detalle = [loc for loc in informe if _localidad_requiere_detalle_cruce(loc)]
+    if locales_detalle:
+        st.markdown("**Detalle por localidad**")
+    for loc_info in locales_detalle:
+        loc = loc_info["localidad"]
+        sin_loc = loc_info.get("sin_resolver", 0)
+        fallback = loc_info.get("conteo", {}).get("match_saldo_contrato", 0)
+        avisos = loc_info.get("advertencias_suspendidos") or []
+        etiqueta = (
+            f"{loc} — {sin_loc} sin resolver"
+            if sin_loc
+            else f"{loc} — {fallback} por Saldo Final"
+            if fallback
+            else loc
+        )
+        with st.expander(etiqueta, expanded=sin_loc > 0):
+            if avisos:
+                for aviso in avisos:
+                    st.warning(aviso)
+            st.caption(
+                f"Columna «{loc_info['columna_mes']}» — {loc_info['accion_columna']}"
+            )
+            if loc_info.get("resumen_metodos"):
+                st.dataframe(
+                    pd.DataFrame(loc_info["resumen_metodos"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            detalle_loc = detalle_por_loc.get(loc, [])
+            if detalle_loc:
+                st.markdown(
+                    "**Fallback por Saldo Final** — la apropiación en Contratos no coincide "
+                    "con la Matriz; se tomó la fila cuyo saldo coincide."
+                )
+                cols = [
+                    "NOMBRE CONTRATISTA",
+                    "No. de Cto",
+                    "APROPIACION DISPONIBLE",
+                    "SALDO FINAL (Contratos)",
+                    f"Saldo Matriz ({titulo_mes})",
+                    "Detalle",
+                ]
+                st.dataframe(
+                    pd.DataFrame(detalle_loc)[cols],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
 def resumen_sin_resolver_por_localidad(detalle: list) -> pd.DataFrame:
     """Conteo de pendientes por localidad."""
     conteo: dict[str, int] = {}
@@ -1481,13 +1616,35 @@ def construir_tabla_resumen(
         ],
     })
     partes = [meta]
+    informe = st.session_state.get("cruce_informe") or []
+    if informe:
+        partes.append(
+            pd.DataFrame([{"Campo": "— Localidades (resumen) —", "Valor": ""}])
+        )
+        df_loc = dataframe_resumen_localidades(informe)
+        partes.append(
+            pd.DataFrame(
+                [
+                    {
+                        "Campo": row["Localidad"],
+                        "Valor": (
+                            f"{row['Asignados']} asignados · "
+                            f"sin resolver {row['Sin resolver']} · "
+                            f"CXP {row['CXP (mes)']:,.0f} · {row['Columna']}"
+                        ),
+                    }
+                    for _, row in df_loc.iterrows()
+                ]
+            )
+        )
     resumen_global = st.session_state.get("cruce_resumen_global") or []
     if resumen_global:
-        partes.append(pd.DataFrame([{"Campo": "— Resumen cruce (todas las localidades) —", "Valor": ""}]))
+        partes.append(
+            pd.DataFrame([{"Campo": "— Métodos de cruce (global) —", "Valor": ""}])
+        )
         rg = pd.DataFrame(resumen_global)
-        rg.columns = ["Método", "Contratos"]
+        rg.columns = ["Campo", "Valor"]
         partes.append(rg)
-    informe = st.session_state.get("cruce_informe") or []
     contratos_act = st.session_state.get("contratos_actualizados") or {}
     stats_por_loc = {}
     for s in stats:
@@ -1498,6 +1655,8 @@ def construir_tabla_resumen(
 
     for loc_info in informe:
         loc = loc_info["localidad"]
+        if not _localidad_requiere_detalle_cruce(loc_info):
+            continue
         filas_loc = stats_por_loc.get(loc, [])
         matriz_nombre = next(
             (s.get("Nombre") for s in filas_loc if s.get("Archivo") == "Matriz"), ""
@@ -1515,24 +1674,42 @@ def construir_tabla_resumen(
         partes.append(
             pd.DataFrame([
                 {
-                    "Campo": f"— {loc} —",
+                    "Campo": f"— Detalle {loc} —",
                     "Valor": (
-                        f"CXP {loc_info['cxp_total']:,.0f} | "
-                        f"Sin resolver {loc_info['sin_resolver']}"
+                        f"{loc_info['contratos_ok']}/{loc_info['total_contratos']} asignados · "
+                        f"sin resolver {loc_info['sin_resolver']}"
                     ),
                 },
                 {"Campo": "Matriz (origen)", "Valor": matriz_nombre or "—"},
-                {"Campo": "Contratos plan de choque (origen)", "Valor": contratos_orig or "—"},
-                {
-                    "Campo": "Contratos plan de choque (actualizado)",
-                    "Valor": contratos_gen,
-                },
+                {"Campo": "Contratos (origen)", "Valor": contratos_orig or "—"},
+                {"Campo": "Contratos (actualizado)", "Valor": contratos_gen},
             ])
         )
         if loc_info.get("resumen_metodos"):
             lm = pd.DataFrame(loc_info["resumen_metodos"])
-            lm.columns = ["Método", "Contratos"]
+            lm.columns = ["Campo", "Valor"]
             partes.append(lm)
+
+    if informe and stats_por_loc:
+        partes.append(pd.DataFrame([{"Campo": "— Archivos origen —", "Valor": ""}]))
+        for loc_info in informe:
+            loc = loc_info["localidad"]
+            filas_loc = stats_por_loc.get(loc, [])
+            matriz_nombre = next(
+                (s.get("Nombre") for s in filas_loc if s.get("Archivo") == "Matriz"), "—"
+            )
+            contratos_orig = next(
+                (s.get("Nombre") for s in filas_loc if "Contratos" in str(s.get("Archivo", ""))),
+                "—",
+            )
+            partes.append(
+                pd.DataFrame([
+                    {
+                        "Campo": loc,
+                        "Valor": f"Matriz: {matriz_nombre} | Contratos: {contratos_orig}",
+                    }
+                ])
+            )
     detalle = st.session_state.get("cruce_detalle") or []
     filas_sr = filas_sin_resolver(detalle)
     if filas_sr and consolidacion_lista_para_descarga():
@@ -1898,16 +2075,12 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         titulo_mes = st.session_state.get("titulo_saldo_corte", "")
         sin_res = sum(i.get("sin_resolver", 0) for i in st.session_state.get("cruce_informe", []))
         msg = (
-            f"Se procesaron **{n}** localidad(es). "
-            f"Columna **{titulo_mes}** en Cps/Caja por depurar y seguimiento mensual "
-            "(Suspendidos, Próximos a perder, Trámites sectores, Liquidados con saldo, Estrategias)."
+            f"**{n}** localidad(es) consolidadas · columna **{titulo_mes}** "
+            f"(Cps, Suspendidos, Próximos, Trámites, Liquidados, Estrategias)."
         )
         if sin_res:
-            msg += f" Revise **{sin_res}** contrato(s) marcados como sin resolver."
+            msg += f" Pendiente: **{sin_res}** desempate(s) manual(es)."
         st.success(msg)
-        for item in st.session_state.get("cruce_informe", []):
-            for aviso in item.get("advertencias_suspendidos") or []:
-                st.warning(f"**{item.get('localidad', '')}** — {aviso}")
     else:
         limpiar_resultado_consolidado()
         errores_ej = st.session_state.pop("errores_ejecucion", [])
@@ -2113,7 +2286,19 @@ if st.session_state.processed:
     titulo_mes = st.session_state.get("titulo_saldo_corte", "")
     etiqueta_cxp = titulo_mes or "Saldo de corte"
 
+    fecha_analisis = st.session_state.get("fecha_analisis")
+    procesado_en = st.session_state.get("last_processed_at", "")
+
     st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
+    if titulo_mes or procesado_en or fecha_analisis:
+        partes_fecha = []
+        if titulo_mes:
+            partes_fecha.append(f"Columna **{titulo_mes}**")
+        if fecha_analisis:
+            partes_fecha.append(formato_fecha_colombia(fecha_analisis))
+        if procesado_en:
+            partes_fecha.append(f"Procesado {procesado_en}")
+        st.caption(" · ".join(partes_fecha))
     mostrar_reporte_tecnico_admin()
 
     total_contratos = sum(i.get("total_contratos", 0) for i in informe)
@@ -2148,66 +2333,8 @@ if st.session_state.processed:
             unsafe_allow_html=True,
         )
 
-    st.markdown(
-        '<p class="section-title">Informe de cruce Matriz → Contratos</p>',
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Clave principal: nombre + contrato + año + apropiación. "
-        "Si falla, se busca por nombre + contrato + año y se desempata con SALDO FINAL "
-        "(columna junto a MONTO LIBERACIONES O FENECICMIENTOS). Si todos los duplicados "
-        "en Matriz tienen saldo 0, se asigna 0."
-    )
-
-    resumen_global = st.session_state.get("cruce_resumen_global", [])
-    if resumen_global:
-        st.markdown("**Resumen global**")
-        df_rg = pd.DataFrame(resumen_global)
-        total_rg = df_rg["Contratos"].sum()
-        st.dataframe(df_rg, use_container_width=True, hide_index=True)
-        st.markdown(
-            f"**Total: {int(total_rg)}/{int(total_contratos)}** contratos con saldo asignado "
-            f"en la columna **{titulo_mes}**."
-        )
-
-    for loc_info in informe:
-        loc = loc_info["localidad"]
-        st.markdown(f"**{loc}** — columna «{loc_info['columna_mes']}» ({loc_info['accion_columna']})")
-        if loc_info.get("resumen_metodos"):
-            st.dataframe(
-                pd.DataFrame(loc_info["resumen_metodos"]),
-                use_container_width=True,
-                hide_index=True,
-            )
-        fallback = loc_info.get("conteo", {}).get("match_saldo_contrato", 0)
-        if fallback:
-            detalle_loc = [
-                d for d in st.session_state.get("cruce_detalle", [])
-                if d.get("Localidad") == loc
-                and d.get("Método") == METODOS_LABEL["match_saldo_contrato"]
-            ]
-            if detalle_loc:
-                with st.expander(f"Fallback por Saldo Final ({fallback}) — {loc}"):
-                    st.markdown(
-                        "La apropiación en Contratos no coincide con la Matriz actualizada; "
-                        "se tomó la fila cuyo **Saldo Final** en Matriz coincide con "
-                        "**SALDO FINAL** del contrato."
-                    )
-                    cols = [
-                        "NOMBRE CONTRATISTA",
-                        "No. de Cto",
-                        "APROPIACION DISPONIBLE",
-                        "SALDO FINAL (Contratos)",
-                        f"Saldo Matriz ({titulo_mes})",
-                        "Detalle",
-                    ]
-                    st.dataframe(
-                        pd.DataFrame(detalle_loc)[cols],
-                        use_container_width=True,
-                        hide_index=True,
-                    )
-
     detalle_todo = st.session_state.get("cruce_detalle", [])
+    mostrar_informe_cruce_consolidado(informe, titulo_mes, detalle_todo)
     descargas_ok = consolidacion_lista_para_descarga()
 
     if sin_resolver > 0 and detalle_todo:
@@ -2228,9 +2355,24 @@ if st.session_state.processed:
         render_asistente_desempate(detalle_todo, titulo_mes)
 
     if stats:
-        st.markdown('<p class="section-title">Archivos procesados</p>', unsafe_allow_html=True)
-        cols_show = [c for c in ["Localidad", "Archivo", "Nombre", "Filas", "CXP (suma mes)", f"Columna {titulo_mes}"] if c in pd.DataFrame(stats).columns]
-        st.dataframe(pd.DataFrame(stats)[cols_show], use_container_width=True, hide_index=True)
+        with st.expander("Archivos de entrada (Matriz y Contratos)", expanded=False):
+            cols_show = [
+                c
+                for c in [
+                    "Localidad",
+                    "Archivo",
+                    "Nombre",
+                    "Filas",
+                    "CXP (suma mes)",
+                    f"Columna {titulo_mes}",
+                ]
+                if c in pd.DataFrame(stats).columns
+            ]
+            st.dataframe(
+                pd.DataFrame(stats)[cols_show],
+                use_container_width=True,
+                hide_index=True,
+            )
 
     contratos_act = st.session_state.get("contratos_actualizados", {})
     if contratos_act:
