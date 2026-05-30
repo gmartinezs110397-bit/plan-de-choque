@@ -1816,7 +1816,7 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         msg = (
             f"Se procesaron **{n}** localidad(es). "
             f"Columna **{titulo_mes}** en Cps/Caja por depurar y seguimiento mensual "
-            "(Suspendidos, Próximos a perder, Trámites sectores, Liquidados con saldo)."
+            "(Suspendidos, Próximos a perder, Trámites sectores, Liquidados con saldo, Estrategias)."
         )
         if sin_res:
             msg += f" Revise **{sin_res}** contrato(s) marcados como sin resolver."

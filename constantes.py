@@ -31,5 +31,10 @@ HOJAS_LIQUIDADOS_CON_SALDO = (
     "LIQUIDADOS CON SALDO",
 )
 
+HOJAS_ESTRATEGIAS = (
+    "Estrategias",
+    "ESTRATEGIAS",
+)
+
 # Otras pestañas del Excel Contratos plan de choque — reglas por definir
 HOJAS_CONTRATOS_OTRAS: dict[str, str] = {}

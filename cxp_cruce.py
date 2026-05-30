@@ -872,6 +872,7 @@ def exportar_contratos_preservando_formato(
         actualizar_hoja_suspendidos,
         resolver_hoja_suspendidos,
     )
+    from hoja_estrategias import actualizar_estrategias_en_libro
     from hoja_liquidados_con_saldo import (
         actualizar_hoja_liquidados_con_saldo,
         resolver_hoja_liquidados_con_saldo,
@@ -994,6 +995,15 @@ def exportar_contratos_preservando_formato(
             observaciones.append(
                 "No se encontró pestaña Liquidados con saldo en el archivo de Contratos."
             )
+
+    try:
+        advertencias.extend(actualizar_estrategias_en_libro(wb, fecha_analisis))
+    except ValueError as e:
+        observaciones.append(f"Estrategias: {e}")
+    except Exception as e:
+        observaciones.append(
+            f"Estrategias: error no previsto ({type(e).__name__}: {e})"
+        )
 
     _preparar_workbook_antes_guardar(wb)
 
