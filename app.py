@@ -1381,7 +1381,7 @@ def read_contratos(file_like, name: str, localidad: str):
         return df
     except Exception as e:
         st.error(f"No se pudo leer Contratos (**{name}**): {e}")
-            return None
+        return None
 
 
 def read_matriz(file_bytes: bytes, password: str, name: str, localidad: str):
@@ -1705,7 +1705,7 @@ def mostrar_reporte_tecnico_admin() -> None:
             f"casos_no_previstos_{payload.get('generado', 'ejecucion')}.txt"
         ).replace(":", "-")
 
-            st.download_button(
+        st.download_button(
             "Descargar reporte (.txt)",
             data=payload.get("texto", ""),
             file_name=nombre_archivo,
@@ -1902,7 +1902,7 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         for item in st.session_state.get("cruce_informe", []):
             for aviso in item.get("advertencias_suspendidos") or []:
                 st.warning(f"**{item.get('localidad', '')}** — {aviso}")
-else:
+    else:
         limpiar_resultado_consolidado()
         errores_ej = st.session_state.pop("errores_ejecucion", [])
         todos_errores = errores_ej
