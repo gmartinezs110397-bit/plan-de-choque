@@ -1246,10 +1246,10 @@ def leer_hoja_matriz(
                     )
                 df = df.copy()
                 df[col_df] = serie
-            return df
+        return df
     except ValueError:
         raise
-        except Exception as e:
+    except Exception as e:
         err = str(e).lower()
         if "zip" in err or "bad magic" in err or "not a zip" in err:
             raise ValueError("Contraseña incorrecta.") from e
