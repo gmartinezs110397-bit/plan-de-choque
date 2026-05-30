@@ -313,6 +313,7 @@ st.markdown(
 )
 
 SHEET_MATRIZ = "MATRIZ OXP"
+MATRIZ_HEADER_FILA = 6  # fila de encabezados en pandas (Excel fila 7)
 FILA_INICIO_MATRIZ = 8  # columna A desde fila 8 en hoja MATRIZ OXP
 SELECCION_LOCALIDAD = "Seleccione localidad"
 KW_CONTRATOS = "plan de choque"
@@ -1193,11 +1194,14 @@ def _columna_matriz_data_only(
     """
     from openpyxl import load_workbook
 
+    if header is None:
+        return []
+
     libro.seek(0)
     wb = load_workbook(libro, read_only=True, data_only=True)
     try:
         ws = wb[SHEET_MATRIZ]
-        fila_hdr = header + 1
+        fila_hdr = int(header) + 1
         col_idx = None
         objetivo = normalizar(nombre_columna)
         for c in range(1, (ws.max_column or 0) + 1):
@@ -1220,12 +1224,14 @@ def leer_hoja_matriz(
 ) -> pd.DataFrame:
     """Lee la hoja MATRIZ OXP; detecta contraseña incorrecta."""
     try:
-        header = kwargs.get("header", 6)
+        header_pd = kwargs.get("header", MATRIZ_HEADER_FILA)
         # Saldo Final (col. V) suele ser fórmula; leer caché ANTES de quitar_autofiltros (openpyxl.save lo borra).
-        libro_cache = _bytes_matriz_sin_reguardar(file_bytes, password)
-        valores_saldo = _columna_matriz_data_only(
-            libro_cache, header, "Saldo Final"
-        )
+        valores_saldo: list = []
+        if header_pd is not None:
+            libro_cache = _bytes_matriz_sin_reguardar(file_bytes, password)
+            valores_saldo = _columna_matriz_data_only(
+                libro_cache, header_pd, "Saldo Final"
+            )
         libro = abrir_matriz_excel(file_bytes, password, nombre_archivo)
         df = pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
@@ -1746,7 +1752,7 @@ def ejecutar_consolidacion(
                 item["matriz"]["bytes"],
                 password_matriz,
                 item["matriz"]["name"],
-                header=6,
+                header=MATRIZ_HEADER_FILA,
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Matriz: {e}")
