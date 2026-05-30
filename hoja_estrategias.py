@@ -25,10 +25,9 @@ from hoja_liquidados_con_saldo import (
 )
 from hoja_proximos_a_perder import resolver_hoja_proximos_a_perder
 from hoja_suspendidos import (
+    _columna_estado_mes_en_hoja,
     _columna_saldo_mes_en_hoja,
     _fila_totales_seguimiento,
-    _indice_columna_titulos,
-    _titulos_estado_equivalentes,
     resolver_hoja_suspendidos,
 )
 from hoja_tramites_sectores import resolver_hoja_tramites_sectores
@@ -99,7 +98,7 @@ def _aplicar_relleno_datos_estrategias(ws, filas: list[int], fila_total: int | N
 def _leer_totales_hoja_par(ws, fecha: datetime | date) -> tuple[float | int | None, float | int | None]:
     """Conteo y suma en la última fila de cada columna del mes (Suspendidos, Próximos, Trámites)."""
     col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
-    col_estado = _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
+    col_estado = _columna_estado_mes_en_hoja(ws, fecha)
     if not col_saldo or not col_estado:
         return None, None
     fila_tot = _fila_totales_seguimiento(ws)

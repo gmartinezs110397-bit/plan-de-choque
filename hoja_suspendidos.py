@@ -35,7 +35,10 @@ from cxp_cruce import (
     preparar_indice_matriz,
     titulo_saldo_corte,
     titulo_saldo_corte_para_mes,
+    titulo_estado_corte,
+    titulo_estado_corte_para_mes,
     titulos_columna_saldo_mes,
+    titulos_columna_estado_mes,
 )
 
 FILL_VERDE_NEON = PatternFill(fill_type="solid", fgColor="CCFF00")
@@ -153,7 +156,7 @@ def _mes_desde_titulo(titulo: str) -> int | None:
     if norm in _MESES_POR_NOMBRE:
         return _MESES_POR_NOMBRE[norm]
 
-    if norm.startswith("saldo a "):
+    if norm.startswith("saldo a ") or norm.startswith("estado a "):
         for mes_nombre, num in _MESES_POR_NOMBRE.items():
             if mes_nombre in norm:
                 return num
@@ -243,8 +246,18 @@ def _columna_saldo_mes_en_hoja(ws, fecha: datetime | date) -> int | None:
     return _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
 
 
-def _titulo_estado_mes_numero(mes_num: int) -> str:
-    return f"ESTADO ACTUAL {MESES_ES[mes_num - 1].upper()}"
+def _titulo_estado_mes_numero(mes_num: int, anio: int | None = None) -> str:
+    year = anio if anio is not None else datetime.now().year
+    return titulo_estado_corte_para_mes(year, mes_num)
+
+
+def _columna_estado_mes_en_hoja(ws, fecha: datetime | date) -> int | None:
+    """Columna ESTADO del mes en curso (reconoce «Estado a 31 de mayo», etc.)."""
+    mes_actual = _fecha_datetime(fecha).month
+    for _, col_estado, mes in _listar_pares_mes_seguimiento(ws):
+        if mes == mes_actual:
+            return col_estado
+    return _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
 
 
 def _reforzar_titulos_pares_mes_seguimiento(ws, anio: int) -> None:
@@ -255,7 +268,7 @@ def _reforzar_titulos_pares_mes_seguimiento(ws, anio: int) -> None:
             mes_num, anio
         )
         _celda_para_escribir(ws, fila_hdr, col_estado).value = _titulo_estado_mes_numero(
-            mes_num
+            mes_num, anio
         )
 
 
@@ -536,7 +549,7 @@ def _asegurar_columnas_mes(
     """
     _normalizar_titulos_mes_cortos(ws, fecha)
     col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
-    col_estado = _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
+    col_estado = _columna_estado_mes_en_hoja(ws, fecha)
     columnas_nuevas = col_saldo is None or col_estado is None
 
     col_prev_saldo, col_prev_estado = _par_mes_anterior(

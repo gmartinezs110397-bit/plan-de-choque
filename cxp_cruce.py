@@ -568,6 +568,33 @@ def titulos_columna_saldo_mes(fecha: datetime | date) -> tuple[str, ...]:
     )
 
 
+def titulo_estado_corte(fecha: datetime | date) -> str:
+    """Ej.: Estado a 31 de mayo, Estado a 30 de abril."""
+    dia = dia_fin_mes_corte(fecha)
+    mes = mes_nombre_corte(fecha)
+    return f"Estado a {dia} de {mes}"
+
+
+def titulo_estado_corte_para_mes(anio: int, mes_num: int) -> str:
+    dia = calendar.monthrange(anio, mes_num)[1]
+    mes = MESES_ES[mes_num - 1]
+    return f"Estado a {dia} de {mes}"
+
+
+def titulos_columna_estado_mes(fecha: datetime | date) -> tuple[str, ...]:
+    f = _fecha_datetime(fecha)
+    mes = MESES_ES[f.month - 1]
+    mes_up = mes.upper()
+    titulo = titulo_estado_corte(f)
+    return (
+        titulo,
+        titulo.upper(),
+        f"ESTADO ACTUAL {mes_up}",
+        f"ESTADO ACTUAL ({mes_up})",
+        f"ESTADO ACTUAL A {mes_up}",
+    )
+
+
 def titulo_columna_mes(fecha: datetime | date) -> str:
     """Alias del título de corte (compatibilidad)."""
     return titulo_saldo_corte(fecha)
