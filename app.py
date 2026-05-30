@@ -1318,14 +1318,64 @@ def _bytes_matriz_sin_reguardar(file_bytes: bytes, password: str) -> BytesIO:
     return BytesIO(file_bytes)
 
 
+def _cuenta_celdas_numericas(valores: list) -> int:
+    n = 0
+    for v in valores:
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            continue
+        try:
+            float(v)
+            n += 1
+        except (TypeError, ValueError):
+            continue
+    return n
+
+
+def _indices_saldo_final_calculado(ws, fila_hdr: int) -> tuple[int, int, int] | None:
+    """Columnas Apropiación − Giros − Liberación/Fenecimiento (= fórmula Saldo Final)."""
+    col_a = col_g = col_l = None
+    for c in range(1, (ws.max_column or 0) + 1):
+        titulo = ws.cell(fila_hdr, c).value
+        if titulo is None:
+            continue
+        n = normalizar(str(titulo))
+        if n == "apropiacion":
+            col_a = c
+        elif n == "giros":
+            col_g = c
+        elif "liberacion" in n or "fenecimiento" in n:
+            col_l = c
+    if col_a and col_g and col_l:
+        return col_a, col_g, col_l
+    return None
+
+
+def _calcular_saldo_final_matriz_ws(ws, fila_hdr: int) -> list:
+    cols = _indices_saldo_final_calculado(ws, fila_hdr)
+    if not cols:
+        return []
+    col_a, col_g, col_l = cols
+    filas = []
+    for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1):
+        try:
+            a = float(ws.cell(r, col_a).value or 0)
+            g = float(ws.cell(r, col_g).value or 0)
+            lib = float(ws.cell(r, col_l).value or 0)
+            filas.append(a - g - lib)
+        except (TypeError, ValueError):
+            filas.append(None)
+    return filas
+
+
 def _columna_matriz_data_only(
     libro: BytesIO,
     header: int,
     nombre_columna: str,
 ) -> list:
     """
-    Valores cacheados de una columna en MATRIZ OXP (p. ej. col. V «Saldo Final» con fórmulas).
-    data_only=True devuelve el resultado visible en Excel, no la fórmula.
+    Valores de «Saldo Final» en MATRIZ OXP (data_only).
+    Si la caché de fórmulas está vacía (p. ej. tras guardar sin abrir en Excel),
+    calcula Apropiación − Giros − Liberación/Fenecimiento.
     """
     from openpyxl import load_workbook
 
@@ -1344,12 +1394,18 @@ def _columna_matriz_data_only(
             if titulo is not None and normalizar(str(titulo)) == objetivo:
                 col_idx = c
                 break
-        if col_idx is None:
-            return []
-        return [
-            ws.cell(r, col_idx).value
-            for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1)
-        ]
+        valores: list = []
+        if col_idx is not None:
+            valores = [
+                ws.cell(r, col_idx).value
+                for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1)
+            ]
+        umbral = max(3, int(len(valores) * 0.01)) if valores else 3
+        if _cuenta_celdas_numericas(valores) < umbral:
+            calculados = _calcular_saldo_final_matriz_ws(ws, fila_hdr)
+            if _cuenta_celdas_numericas(calculados) > _cuenta_celdas_numericas(valores):
+                return calculados
+        return valores
     finally:
         wb.close()
 
@@ -1362,19 +1418,26 @@ def leer_hoja_matriz(
         header_pd = kwargs.get("header", MATRIZ_HEADER_FILA)
         # Saldo Final (col. V) suele ser fórmula; leer caché ANTES de quitar_autofiltros (openpyxl.save lo borra).
         valores_saldo: list = []
-        if header_pd is not None:
-            libro_cache = _bytes_matriz_sin_reguardar(file_bytes, password)
-            valores_saldo = _columna_matriz_data_only(
-                libro_cache, header_pd, "Saldo Final"
-            )
         libro = abrir_matriz_excel(file_bytes, password, nombre_archivo)
         df = pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
         )
-        if valores_saldo:
+        if header_pd is not None:
             candidatos = ("Saldo Final", "SALDO FINAL", "Saldo final")
             col_df = next((c for c in candidatos if c in df.columns), None)
             if col_df:
+                valores_saldo = _columna_matriz_data_only(
+                    _bytes_matriz_sin_reguardar(file_bytes, password),
+                    header_pd,
+                    "Saldo Final",
+                )
+                if _cuenta_celdas_numericas(valores_saldo) < max(
+                    3, int(len(df) * 0.01)
+                ):
+                    libro.seek(0)
+                    valores_saldo = _columna_matriz_data_only(
+                        libro, header_pd, "Saldo Final"
+                    )
                 n = len(df)
                 serie = pd.to_numeric(pd.Series(valores_saldo[:n]), errors="coerce")
                 if len(valores_saldo) < n:
