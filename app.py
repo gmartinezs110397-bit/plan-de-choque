@@ -1162,16 +1162,94 @@ def sanitizar_excel_sin_filtros(data: bytes, nombre_archivo: str) -> bytes:
     return quitar_autofiltros_xlsx(data)
 
 
+def _bytes_matriz_sin_reguardar(file_bytes: bytes, password: str) -> BytesIO:
+    """Abre la Matriz sin pasar por openpyxl.save (preserva caché de fórmulas en col. V)."""
+    raw = BytesIO(file_bytes)
+    office = msoffcrypto.OfficeFile(raw)
+    if office.is_encrypted():
+        pwd = str(password).strip() if password else ""
+        if not pwd:
+            raise ValueError("Ingrese la contraseña de la Matriz.")
+        dec = BytesIO()
+        raw.seek(0)
+        try:
+            office.load_key(password=pwd)
+            office.decrypt(dec)
+        except (ms_exceptions.InvalidKeyError, ms_exceptions.DecryptionError):
+            raise ValueError("Contraseña incorrecta.") from None
+        dec.seek(0)
+        return dec
+    return BytesIO(file_bytes)
+
+
+def _columna_matriz_data_only(
+    libro: BytesIO,
+    header: int,
+    nombre_columna: str,
+) -> list:
+    """
+    Valores cacheados de una columna en MATRIZ OXP (p. ej. col. V «Saldo Final» con fórmulas).
+    data_only=True devuelve el resultado visible en Excel, no la fórmula.
+    """
+    from openpyxl import load_workbook
+
+    libro.seek(0)
+    wb = load_workbook(libro, read_only=True, data_only=True)
+    try:
+        ws = wb[SHEET_MATRIZ]
+        fila_hdr = header + 1
+        col_idx = None
+        objetivo = normalizar(nombre_columna)
+        for c in range(1, (ws.max_column or 0) + 1):
+            titulo = ws.cell(fila_hdr, c).value
+            if titulo is not None and normalizar(str(titulo)) == objetivo:
+                col_idx = c
+                break
+        if col_idx is None:
+            return []
+        return [
+            ws.cell(r, col_idx).value
+            for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1)
+        ]
+    finally:
+        wb.close()
+
+
 def leer_hoja_matriz(
     file_bytes: bytes, password: str, nombre_archivo: str = "", **kwargs
 ) -> pd.DataFrame:
     """Lee la hoja MATRIZ OXP; detecta contraseña incorrecta."""
     try:
+        header = kwargs.get("header", 6)
+        # Saldo Final (col. V) suele ser fórmula; leer caché ANTES de quitar_autofiltros (openpyxl.save lo borra).
+        libro_cache = _bytes_matriz_sin_reguardar(file_bytes, password)
+        valores_saldo = _columna_matriz_data_only(
+            libro_cache, header, "Saldo Final"
+        )
         libro = abrir_matriz_excel(file_bytes, password, nombre_archivo)
-        return pd.read_excel(libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs)
+        df = pd.read_excel(
+            libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
+        )
+        if valores_saldo:
+            candidatos = ("Saldo Final", "SALDO FINAL", "Saldo final")
+            col_df = next((c for c in candidatos if c in df.columns), None)
+            if col_df:
+                n = len(df)
+                serie = pd.to_numeric(pd.Series(valores_saldo[:n]), errors="coerce")
+                if len(valores_saldo) < n:
+                    serie = pd.concat(
+                        [
+                            serie,
+                            pd.Series([pd.NA] * (n - len(valores_saldo))),
+                        ],
+                        ignore_index=True,
+                    )
+                df = df.copy()
+                df[col_df] = serie
+            return df
     except ValueError:
         raise
-    except Exception as e:
+        except Exception as e:
         err = str(e).lower()
         if "zip" in err or "bad magic" in err or "not a zip" in err:
             raise ValueError("Contraseña incorrecta.") from e
@@ -1303,7 +1381,7 @@ def read_contratos(file_like, name: str, localidad: str):
         return df
     except Exception as e:
         st.error(f"No se pudo leer Contratos (**{name}**): {e}")
-        return None
+            return None
 
 
 def read_matriz(file_bytes: bytes, password: str, name: str, localidad: str):
@@ -1627,7 +1705,7 @@ def mostrar_reporte_tecnico_admin() -> None:
             f"casos_no_previstos_{payload.get('generado', 'ejecucion')}.txt"
         ).replace(":", "-")
 
-        st.download_button(
+            st.download_button(
             "Descargar reporte (.txt)",
             data=payload.get("texto", ""),
             file_name=nombre_archivo,
@@ -1824,7 +1902,7 @@ def procesar_consolidacion(cola_run: list, pwd: str):
         for item in st.session_state.get("cruce_informe", []):
             for aviso in item.get("advertencias_suspendidos") or []:
                 st.warning(f"**{item.get('localidad', '')}** — {aviso}")
-    else:
+else:
         limpiar_resultado_consolidado()
         errores_ej = st.session_state.pop("errores_ejecucion", [])
         todos_errores = errores_ej
@@ -1941,7 +2019,9 @@ if add_clicked:
             entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
         )
         st.session_state.upload_key += 1
-        st.session_state.select_localidad = SELECCION_LOCALIDAD
+        # No asignar a key de widget: borrar para que el selectbox vuelva al índice 0.
+        if "select_localidad" in st.session_state:
+            del st.session_state["select_localidad"]
         st.toast(f"{localidad} añadido a la cola", icon="➕")
         st.rerun()
 

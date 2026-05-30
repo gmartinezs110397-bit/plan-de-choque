@@ -19,6 +19,7 @@ from typing import Any
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 
 from constantes import COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
@@ -40,6 +41,7 @@ METODOS_LABEL = {
     "k3_unico": "Match por contrato (sin apropiación)",
     "verificar": "Sin resolver",
     "sin_matriz": "Sin fila en matriz",
+    "sin_saldo_matriz": "Saldo vacío en matriz",
     "desempate_manual": "Desempate manual",
 }
 
@@ -64,6 +66,29 @@ def _norm_num(valor) -> str:
     if isinstance(valor, float) and valor == int(valor):
         return str(int(valor))
     return str(valor).strip()
+
+
+def _saldo_numerico_matriz(valor) -> float | None:
+    """None si Saldo Final en Matriz está vacío; 0.0 solo si es cero explícito."""
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+    try:
+        n = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(n):
+        return None
+    return n
+
+
+def _suma_saldos_grupo_matriz(serie: pd.Series) -> float | None:
+    """Suma de saldos del grupo; None si todas las filas vienen sin saldo en Matriz."""
+    if serie.isna().all():
+        return None
+    total = serie.sum(skipna=True)
+    if pd.isna(total):
+        return None
+    return float(total)
 
 
 def clave_cuatro(nombre, contrato, anio, apropiacion) -> str:
@@ -118,7 +143,7 @@ def preparar_indice_matriz(df_matriz: pd.DataFrame, localidad: str) -> tuple[pd.
         lambda r: clave_tres(r[col_nombre], r[col_cto], r[col_anio]),
         axis=1,
     )
-    df_loc["_saldo"] = pd.to_numeric(df_loc[col_saldo], errors="coerce").fillna(0)
+    df_loc["_saldo"] = pd.to_numeric(df_loc[col_saldo], errors="coerce")
 
     mapa_k4 = df_loc.drop_duplicates("_k4", keep="first").set_index("_k4")["_saldo"].to_dict()
     grupos_k3 = {k: g for k, g in df_loc.groupby("_k3", sort=False)}
@@ -139,7 +164,14 @@ def buscar_saldo_matriz(
     """
     k4 = clave_cuatro(nombre, contrato, anio, apropiacion)
     if k4 in mapa_k4:
-        return float(mapa_k4[k4]), "k4_exacto", ""
+        saldo_k4 = _saldo_numerico_matriz(mapa_k4[k4])
+        if saldo_k4 is not None:
+            return saldo_k4, "k4_exacto", ""
+        return (
+            None,
+            "sin_saldo_matriz",
+            "Hay fila en la Matriz pero Saldo Final vacío.",
+        )
 
     k3 = clave_tres(nombre, contrato, anio)
     if k3 not in grupos_k3:
@@ -147,22 +179,49 @@ def buscar_saldo_matriz(
 
     g = grupos_k3[k3]
     if len(g) == 1:
-        return float(g.iloc[0]["_saldo"]), "k3_unico", "Apropiación en Matriz distinta; una sola fila."
+        saldo_unico = _saldo_numerico_matriz(g.iloc[0]["_saldo"])
+        if saldo_unico is None:
+            return (
+                None,
+                "sin_saldo_matriz",
+                "Hay fila en la Matriz pero Saldo Final vacío.",
+            )
+        return saldo_unico, "k3_unico", "Apropiación en Matriz distinta; una sola fila."
 
     sf = g["_saldo"]
-    if (sf > 0).sum() == 0:
+    if sf.notna().sum() == 0:
+        return (
+            None,
+            "sin_saldo_matriz",
+            "Hay fila en la Matriz pero Saldo Final vacío.",
+        )
+    if (sf.fillna(0) > 0).sum() == 0:
         return 0.0, "todos_cero_matriz", "Varias filas en Matriz, todas con saldo 0."
 
     sk = float(pd.to_numeric(saldo_final_contrato, errors="coerce") or 0)
     coinciden = g[sf == sk]
     if len(coinciden) == 1:
+        saldo_match = _saldo_numerico_matriz(coinciden.iloc[0]["_saldo"])
+        if saldo_match is None:
+            return (
+                None,
+                "sin_saldo_matriz",
+                "Hay fila en la Matriz pero Saldo Final vacío.",
+            )
         detalle = (
             f"Apropiación en Contratos ({_norm_num(apropiacion)}) distinta a la Matriz; "
             f"se usó SALDO FINAL del contrato ({sk:,.0f})."
         )
-        return float(coinciden.iloc[0]["_saldo"]), "match_saldo_contrato", detalle
+        return saldo_match, "match_saldo_contrato", detalle
     if len(coinciden) > 1:
-        return float(coinciden.iloc[0]["_saldo"]), "match_saldo_contrato", "Varias filas con el mismo saldo."
+        saldo_match = _saldo_numerico_matriz(coinciden.iloc[0]["_saldo"])
+        if saldo_match is None:
+            return (
+                None,
+                "sin_saldo_matriz",
+                "Hay fila en la Matriz pero Saldo Final vacío.",
+            )
+        return saldo_match, "match_saldo_contrato", "Varias filas con el mismo saldo."
 
     return (
         None,
@@ -513,13 +572,42 @@ def _fila_inicio_datos_contratos() -> int:
     return HEADER_CONTRATOS + 2
 
 
-def _copiar_estilo_celda(origen, destino) -> None:
+def _copiar_estilo_celda(origen, destino, *, copiar_relleno: bool = True) -> None:
     if origen.has_style:
         destino.font = copy(origen.font)
-        destino.fill = copy(origen.fill)
+        if copiar_relleno:
+            destino.fill = copy(origen.fill)
         destino.border = copy(origen.border)
         destino.alignment = copy(origen.alignment)
         destino.number_format = origen.number_format
+
+
+def _copiar_estilo_celda_sin_relleno(origen, destino) -> None:
+    """Fuente, bordes, alineación y número — sin color de fondo (evita arrastrar verde/amarillo)."""
+    _copiar_estilo_celda(origen, destino, copiar_relleno=False)
+
+
+_ALIGNMENT_CENTRO_TOTAL = Alignment(horizontal="center", vertical="center")
+
+
+def _centrar_celdas_total(*celdas) -> None:
+    """Centra totales en filas de resumen (no usar en Estrategias)."""
+    for celda in celdas:
+        celda.alignment = _ALIGNMENT_CENTRO_TOTAL
+
+
+def _celda_para_escribir(ws, fila: int, col: int):
+    """Devuelve la celda superior-izquierda si (fila, col) está dentro de un rango combinado."""
+    from openpyxl.cell.cell import MergedCell
+
+    celda = ws.cell(fila, col)
+    if not isinstance(celda, MergedCell):
+        return celda
+    coord = celda.coordinate
+    for rango in ws.merged_cells.ranges:
+        if coord in rango:
+            return ws.cell(rango.min_row, rango.min_col)
+    return celda
 
 
 def _texto_ancho_celda(celda) -> str:
@@ -601,8 +689,39 @@ def _titulos_columnas_hoja(ws) -> list[str]:
     return titulos
 
 
-def _indice_columna_en_hoja(ws, *candidatos: str) -> int | None:
-    fila = _fila_encabezado_contratos()
+def _filas_candidatas_encabezado() -> tuple[int, ...]:
+    """Fila 3 (plantilla estándar) y fila 1 (algunos archivos editados a mano)."""
+    return (_fila_encabezado_contratos(), 1)
+
+
+def _fila_encabezado_hoja_datos(ws) -> int:
+    """Primera fila que contiene el encabezado NOMBRE CONTRATISTA."""
+    for fila in _filas_candidatas_encabezado():
+        for col in range(1, ws.max_column + 1):
+            val = ws.cell(fila, col).value
+            if val is not None and _normalizar(str(val)) == "nombre contratista":
+                return fila
+    return _fila_encabezado_contratos()
+
+
+def _fila_inicio_datos_hoja(ws) -> int:
+    """Primera fila de contratista tras el encabezado (salta filas vacías o «NO TIENE»)."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    col_nombre = _indice_columna_en_fila(ws, fila_hdr, "NOMBRE CONTRATISTA")
+    if not col_nombre:
+        return _fila_inicio_datos_contratos()
+    for fila in range(fila_hdr + 1, ws.max_row + 1):
+        val = ws.cell(fila, col_nombre).value
+        if val is None or not str(val).strip():
+            continue
+        norm = _normalizar(str(val))
+        if norm in ("nombre contratista", "no tiene"):
+            continue
+        return fila
+    return fila_hdr + 1
+
+
+def _indice_columna_en_fila(ws, fila: int, *candidatos: str) -> int | None:
     for col in range(1, ws.max_column + 1):
         val = ws.cell(fila, col).value
         if val is None or not str(val).strip():
@@ -611,6 +730,14 @@ def _indice_columna_en_hoja(ws, *candidatos: str) -> int | None:
         for cand in candidatos:
             if _normalizar(cand) == norm:
                 return col
+    return None
+
+
+def _indice_columna_en_hoja(ws, *candidatos: str) -> int | None:
+    for fila in _filas_candidatas_encabezado():
+        col = _indice_columna_en_fila(ws, fila, *candidatos)
+        if col is not None:
+            return col
     return None
 
 
@@ -639,12 +766,13 @@ def _columna_estilo_saldo_final(ws) -> int:
     )
     if col_monto:
         return col_monto + 1
-    return _ultima_columna_con_datos(ws)
+    # Evitar recursión con _ultima_columna_con_datos (columna base fija si no hay encabezado en fila 3).
+    return 10
 
 
 def _columna_tiene_contenido(ws, col: int) -> bool:
     """True si la columna tiene encabezado, resumen (1-2) o dato de contrato."""
-    fila_hdr = _fila_encabezado_contratos()
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     hdr = ws.cell(fila_hdr, col).value
     if hdr is not None and str(hdr).strip():
         return True
@@ -653,7 +781,7 @@ def _columna_tiene_contenido(ws, col: int) -> bool:
             return True
 
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini = _fila_inicio_datos_hoja(ws)
     for fila in range(fila_ini, ws.max_row + 1):
         if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
             continue
@@ -695,7 +823,22 @@ def _agregar_columna_corte_en_hoja(ws, titulo: str) -> int:
 
 def _fila_tiene_contratista(ws, fila: int, col_nombre: int) -> bool:
     val = ws.cell(fila, col_nombre).value
-    return val is not None and str(val).strip() != ""
+    if val is None or not str(val).strip():
+        return False
+    norm = _normalizar(str(val))
+    return norm not in ("no tiene", "nombre contratista")
+
+
+def _hoja_tiene_filas_contratista(ws) -> bool:
+    """True si la pestaña tiene al menos un contratista real (no vacía ni «NO TIENE»)."""
+    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
+    if not col_nombre:
+        return False
+    fila_ini = _fila_inicio_datos_hoja(ws)
+    for fila in range(fila_ini, ws.max_row + 1):
+        if _fila_tiene_contratista(ws, fila, col_nombre):
+            return True
+    return False
 
 
 def _celda_tiene_formula(celda) -> bool:
@@ -737,6 +880,7 @@ def _actualizar_resumen_filas_1_2(ws, col_corte: int) -> None:
     if not _celda_tiene_formula(celda_suma):
         celda_suma.value = suma
         _copiar_estilo_celda(ws.cell(FILA_SUMA_CONTRATOS, col_estilo), celda_suma)
+    _centrar_celdas_total(celda_conteo, celda_suma)
 
 
 def quitar_autofiltros_xlsx(
@@ -925,13 +1069,15 @@ def exportar_contratos_preservando_formato(
         nombre_susp = resolver_hoja_suspendidos(nombres_hojas)
         if nombre_susp:
             try:
-                advertencias.extend(
-                    actualizar_hoja_suspendidos(
-                        wb[nombre_susp],
-                        mapa_k3_suspendidos,
-                        fecha_analisis,
+                ws_susp = wb[nombre_susp]
+                if _hoja_tiene_filas_contratista(ws_susp):
+                    advertencias.extend(
+                        actualizar_hoja_suspendidos(
+                            ws_susp,
+                            mapa_k3_suspendidos,
+                            fecha_analisis,
+                        )
                     )
-                )
             except ValueError as e:
                 observaciones.append(f"Suspendidos: {e}")
             except Exception as e:
@@ -946,13 +1092,15 @@ def exportar_contratos_preservando_formato(
         nombre_prox = resolver_hoja_proximos_a_perder(nombres_hojas)
         if nombre_prox:
             try:
-                advertencias.extend(
-                    actualizar_hoja_proximos_a_perder(
-                        wb[nombre_prox],
-                        mapa_k3_suspendidos,
-                        fecha_analisis,
+                ws_prox = wb[nombre_prox]
+                if _hoja_tiene_filas_contratista(ws_prox):
+                    advertencias.extend(
+                        actualizar_hoja_proximos_a_perder(
+                            ws_prox,
+                            mapa_k3_suspendidos,
+                            fecha_analisis,
+                        )
                     )
-                )
             except ValueError as e:
                 observaciones.append(f"Próximos a perder: {e}")
             except Exception as e:
@@ -967,13 +1115,15 @@ def exportar_contratos_preservando_formato(
         nombre_tram = resolver_hoja_tramites_sectores(nombres_hojas)
         if nombre_tram:
             try:
-                advertencias.extend(
-                    actualizar_hoja_tramites_sectores(
-                        wb[nombre_tram],
-                        mapa_k3_suspendidos,
-                        fecha_analisis,
+                ws_tram = wb[nombre_tram]
+                if _hoja_tiene_filas_contratista(ws_tram):
+                    advertencias.extend(
+                        actualizar_hoja_tramites_sectores(
+                            ws_tram,
+                            mapa_k3_suspendidos,
+                            fecha_analisis,
+                        )
                     )
-                )
             except ValueError as e:
                 observaciones.append(f"Trámites sectores: {e}")
             except Exception as e:
@@ -989,13 +1139,15 @@ def exportar_contratos_preservando_formato(
         nombre_liq = resolver_hoja_liquidados_con_saldo(nombres_hojas)
         if nombre_liq:
             try:
-                advertencias.extend(
-                    actualizar_hoja_liquidados_con_saldo(
-                        wb[nombre_liq],
-                        mapa_k4_liquidados,
-                        fecha_analisis,
+                ws_liq = wb[nombre_liq]
+                if _hoja_tiene_filas_contratista(ws_liq):
+                    advertencias.extend(
+                        actualizar_hoja_liquidados_con_saldo(
+                            ws_liq,
+                            mapa_k4_liquidados,
+                            fecha_analisis,
+                        )
                     )
-                )
             except ValueError as e:
                 observaciones.append(f"Liquidados con saldo: {e}")
             except Exception as e:

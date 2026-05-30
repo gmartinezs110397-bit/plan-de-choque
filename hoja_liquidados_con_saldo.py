@@ -8,11 +8,15 @@ from openpyxl.styles import PatternFill
 
 from constantes import HOJAS_LIQUIDADOS_CON_SALDO
 from cxp_cruce import (
+    _celda_para_escribir,
     _celda_tiene_formula,
+    _centrar_celdas_total,
     _copiar_estilo_celda,
-    _fila_encabezado_contratos,
-    _fila_inicio_datos_contratos,
+    _copiar_estilo_celda_sin_relleno,
+    _fila_encabezado_hoja_datos,
+    _fila_inicio_datos_hoja,
     _fila_tiene_contratista,
+    _hoja_tiene_filas_contratista,
     _indice_columna_en_hoja,
     _normalizar,
     _ultima_columna_con_datos,
@@ -21,22 +25,43 @@ from cxp_cruce import (
     preparar_indice_matriz,
 )
 from hoja_suspendidos import (
-    FILL_ENCABEZADO_AZUL,
-    FILL_ENCABEZADO_AMARILLO,
+    _aplicar_encabezados_saldo_mes_alternos,
+    _normalizar_titulos_mes_cortos,
+    _rango_filas_datos_seguimiento,
+    _ultima_fila_contratista,
     _autoajustar_columna_suspendidos,
     _copiar_ancho_columna,
     _copiar_estilo_columna,
-    _es_columna_saldo_mes,
-    _fill_encabezado_alterno,
     _indice_columna_titulos,
-    _mes_desde_titulo,
+    _titulo_saldo_mes_numero,
     _titulos_saldo_equivalentes,
     titulo_saldo_suspendidos,
 )
 
-# En esta hoja: fila 1 = suma de saldos, fila 2 = conteo (sin saldo $0)
-FILA_SUMA_LIQUIDADOS = 1
-FILA_CONTEO_LIQUIDADOS = 2
+
+def _fila_suma_liquidados(ws) -> int:
+    """Primera fila de totales al pie: suma de todos los saldos del mes."""
+    ultima = _ultima_fila_contratista(ws)
+    if ultima is not None:
+        return ultima + 1
+    return _fila_inicio_datos_hoja(ws)
+
+
+def _fila_conteo_liquidados(ws) -> int:
+    """Debajo de la suma: cantidad de contratos con saldo distinto de $0."""
+    return _fila_suma_liquidados(ws) + 1
+
+
+def _limpiar_totales_legacy_arriba(ws, col_saldo: int) -> None:
+    """Quita suma/conteo antiguos en filas 1-2 si la plantilla los tenía arriba."""
+    from cxp_cruce import FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS
+
+    for fila in (FILA_SUMA_CONTRATOS, FILA_CONTEO_CONTRATOS):
+        celda = _celda_para_escribir(ws, fila, col_saldo)
+        if _celda_tiene_formula(celda):
+            continue
+        celda.value = None
+        celda.fill = PatternFill(fill_type=None)
 
 
 def resolver_hoja_liquidados_con_saldo(nombres_hojas: list[str]) -> str | None:
@@ -50,30 +75,15 @@ def resolver_hoja_liquidados_con_saldo(nombres_hojas: list[str]) -> str | None:
     return None
 
 
-def preparar_mapa_k4_saldo_matriz(df_matriz, localidad: str) -> dict[str, float]:
+def preparar_mapa_k4_saldo_matriz(df_matriz, localidad: str) -> dict[str, float | None]:
     """Saldo por nombre+contrato+año+apropiación (suma si hay varias filas k4 en Matriz)."""
+    from cxp_cruce import _suma_saldos_grupo_matriz
+
     df_loc, _, _ = preparar_indice_matriz(df_matriz, localidad)
-    mapa: dict[str, float] = {}
+    mapa: dict[str, float | None] = {}
     for k4, grupo in df_loc.groupby("_k4", sort=False):
-        mapa[k4] = float(grupo["_saldo"].sum())
+        mapa[k4] = _suma_saldos_grupo_matriz(grupo["_saldo"])
     return mapa
-
-
-def _listar_columnas_saldo_mes(ws) -> list[tuple[int, int]]:
-    """(columna, número de mes) ordenados por mes."""
-    fila_hdr = _fila_encabezado_contratos()
-    columnas: dict[int, int] = {}
-    for col in range(1, ws.max_column + 1):
-        val = ws.cell(fila_hdr, col).value
-        if val is None or not str(val).strip():
-            continue
-        titulo = str(val).strip()
-        if not _es_columna_saldo_mes(titulo):
-            continue
-        mes = _mes_desde_titulo(titulo)
-        if mes is not None:
-            columnas[mes] = col
-    return [(columnas[m], m) for m in sorted(columnas)]
 
 
 def _columna_saldo_mes_anterior(
@@ -82,6 +92,8 @@ def _columna_saldo_mes_anterior(
     col_saldo: int,
 ) -> int | None:
     mes_actual = _fecha_datetime(fecha).month
+    from hoja_suspendidos import _listar_columnas_saldo_mes
+
     cols = _listar_columnas_saldo_mes(ws)
     previas = [c for c in cols if c[1] < mes_actual]
     if previas:
@@ -97,31 +109,12 @@ def _columna_saldo_mes_anterior(
     return None
 
 
-def _aplicar_encabezados_saldo_alternos(ws) -> None:
-    fila_hdr = _fila_encabezado_contratos()
-    cols = _listar_columnas_saldo_mes(ws)
-    if not cols:
-        return
-    col_plantilla = _indice_columna_en_hoja(ws, "SALDO FINAL", "Saldo Final")
-    for indice, (col, _) in enumerate(cols):
-        celda = ws.cell(fila_hdr, col)
-        if indice > 0:
-            col_prev = cols[indice - 1][0]
-            _copiar_estilo_celda(ws.cell(fila_hdr, col_prev), celda)
-            fill_titulo = _fill_encabezado_alterno(ws.cell(fila_hdr, col_prev))
-        elif col_plantilla:
-            _copiar_estilo_celda(ws.cell(fila_hdr, col_plantilla), celda)
-            fill_titulo = FILL_ENCABEZADO_AZUL
-        else:
-            fill_titulo = FILL_ENCABEZADO_AZUL
-        celda.fill = fill_titulo
-
-
 def _asegurar_columna_saldo_mes(
     ws,
     fecha: datetime | date,
 ) -> tuple[int, int | None]:
     """Devuelve (col_saldo_actual, col_saldo_mes_anterior)."""
+    _normalizar_titulos_mes_cortos(ws, fecha)
     col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
     col_prev = None
     if col_saldo is not None:
@@ -132,26 +125,48 @@ def _asegurar_columna_saldo_mes(
         col_saldo = siguiente
         col_prev = _columna_saldo_mes_anterior(ws, fecha, col_saldo)
 
-    fila_hdr = _fila_encabezado_contratos()
-    titulo = titulo_saldo_suspendidos(fecha)
-    if _normalizar(str(ws.cell(fila_hdr, col_saldo).value or "")) != _normalizar(titulo):
-        ws.cell(fila_hdr, col_saldo, value=titulo)
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    mes_num = _fecha_datetime(fecha).month
+
+    fila_suma = _fila_suma_liquidados(ws)
+    fila_conteo = _fila_conteo_liquidados(ws)
 
     if col_prev:
-        _copiar_estilo_columna(ws, col_prev, col_saldo)
-        for fila in (FILA_SUMA_LIQUIDADOS, FILA_CONTEO_LIQUIDADOS):
-            _copiar_estilo_celda(ws.cell(fila, col_prev), ws.cell(fila, col_saldo))
+        _copiar_estilo_columna(
+            ws,
+            col_prev,
+            col_saldo,
+            sin_relleno_desde_fila=_fila_inicio_datos_hoja(ws),
+        )
+        _copiar_estilo_celda(
+            ws.cell(fila_suma, col_prev),
+            _celda_para_escribir(ws, fila_suma, col_saldo),
+        )
+        _copiar_estilo_celda(
+            ws.cell(fila_conteo, col_prev),
+            _celda_para_escribir(ws, fila_conteo, col_saldo),
+        )
     else:
         col_sf = _indice_columna_en_hoja(ws, "SALDO FINAL", "Saldo Final")
         if col_sf:
             _copiar_estilo_columna(ws, col_sf, col_saldo)
-            for fila in (FILA_SUMA_LIQUIDADOS, FILA_CONTEO_LIQUIDADOS):
-                _copiar_estilo_celda(ws.cell(fila, col_sf), ws.cell(fila, col_saldo))
+            _copiar_estilo_celda(
+                ws.cell(fila_suma, col_sf),
+                _celda_para_escribir(ws, fila_suma, col_saldo),
+            )
+            _copiar_estilo_celda(
+                ws.cell(fila_conteo, col_sf),
+                _celda_para_escribir(ws, fila_conteo, col_saldo),
+            )
+
+    _limpiar_totales_legacy_arriba(ws, col_saldo)
 
     if col_prev:
         _copiar_ancho_columna(ws, col_prev, col_saldo)
 
-    _aplicar_encabezados_saldo_alternos(ws)
+    _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(mes_num)
+    _aplicar_encabezados_saldo_mes_alternos(ws)
+    _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(mes_num)
     return col_saldo, col_prev
 
 
@@ -165,12 +180,9 @@ def _saldo_es_cero(valor) -> bool:
 
 
 def _suma_saldos_columna(ws, col_saldo: int) -> float:
-    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
     suma = 0.0
-    for fila in range(fila_ini, ws.max_row + 1):
-        if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
-            continue
+    for fila in range(fila_ini, fila_fin + 1):
         raw = ws.cell(fila, col_saldo).value
         if raw is None or raw == "":
             continue
@@ -182,12 +194,9 @@ def _suma_saldos_columna(ws, col_saldo: int) -> float:
 
 
 def _conteo_con_saldo_distinto_cero(ws, col_saldo: int) -> int:
-    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
     total = 0
-    for fila in range(fila_ini, ws.max_row + 1):
-        if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
-            continue
+    for fila in range(fila_ini, fila_fin + 1):
         if not _saldo_es_cero(ws.cell(fila, col_saldo).value):
             total += 1
     return total
@@ -201,18 +210,22 @@ def _actualizar_resumen_liquidados(
     suma = _suma_saldos_columna(ws, col_saldo)
     conteo = _conteo_con_saldo_distinto_cero(ws, col_saldo)
 
-    celda_suma = ws.cell(FILA_SUMA_LIQUIDADOS, col_saldo)
-    celda_conteo = ws.cell(FILA_CONTEO_LIQUIDADOS, col_saldo)
+    fila_suma = _fila_suma_liquidados(ws)
+    fila_conteo = _fila_conteo_liquidados(ws)
+    celda_suma = _celda_para_escribir(ws, fila_suma, col_saldo)
+    celda_conteo = _celda_para_escribir(ws, fila_conteo, col_saldo)
 
     if col_prev_saldo:
-        _copiar_estilo_celda(ws.cell(FILA_SUMA_LIQUIDADOS, col_prev_saldo), celda_suma)
-        _copiar_estilo_celda(ws.cell(FILA_CONTEO_LIQUIDADOS, col_prev_saldo), celda_conteo)
+        _copiar_estilo_celda(ws.cell(fila_suma, col_prev_saldo), celda_suma)
+        _copiar_estilo_celda(ws.cell(fila_conteo, col_prev_saldo), celda_conteo)
 
     if not _celda_tiene_formula(celda_suma):
         celda_suma.value = suma
     if not _celda_tiene_formula(celda_conteo):
         celda_conteo.value = conteo
         celda_conteo.fill = PatternFill(fill_type=None)
+
+    _centrar_celdas_total(celda_suma, celda_conteo)
 
 
 def actualizar_hoja_liquidados_con_saldo(
@@ -222,8 +235,11 @@ def actualizar_hoja_liquidados_con_saldo(
 ) -> list[str]:
     """
     Escribe SALDO MES con saldo Matriz por k4 (con apropiación).
-    Fila 1: suma de todos los saldos. Fila 2: conteo con saldo ≠ 0.
+    Totales al pie: suma en la fila tras el último contrato; conteo debajo (saldo ≠ $0).
     """
+    if not _hoja_tiene_filas_contratista(ws):
+        return []
+
     advertencias: list[str] = []
     col_saldo, col_prev = _asegurar_columna_saldo_mes(ws, fecha)
 
@@ -247,7 +263,7 @@ def actualizar_hoja_liquidados_con_saldo(
             "No. de Cto, AÑO SUSCRIPCIÓN o APROPIACION DISPONIBLE."
         )
 
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini = _fila_inicio_datos_hoja(ws)
 
     for fila in range(fila_ini, ws.max_row + 1):
         if not _fila_tiene_contratista(ws, fila, col_nombre):
@@ -258,12 +274,13 @@ def actualizar_hoja_liquidados_con_saldo(
         anio = ws.cell(fila, col_anio).value
         aprop = ws.cell(fila, col_aprop).value
         k4 = clave_cuatro(nombre, contrato, anio, aprop)
-        saldo = mapa_k4.get(k4, 0.0)
+        saldo = mapa_k4.get(k4)
 
-        celda_saldo = ws.cell(fila, col_saldo)
+        celda_saldo = _celda_para_escribir(ws, fila, col_saldo)
         if col_prev:
-            _copiar_estilo_celda(ws.cell(fila, col_prev), celda_saldo)
-        celda_saldo.value = saldo
+            _copiar_estilo_celda_sin_relleno(ws.cell(fila, col_prev), celda_saldo)
+        celda_saldo.value = None if saldo is None else saldo
+        celda_saldo.fill = PatternFill(fill_type=None)
 
     _actualizar_resumen_liquidados(ws, col_saldo, col_prev)
     _autoajustar_columna_suspendidos(ws, col_saldo, titulo_saldo_suspendidos(fecha))
@@ -275,4 +292,6 @@ __all__ = [
     "actualizar_hoja_liquidados_con_saldo",
     "preparar_mapa_k4_saldo_matriz",
     "resolver_hoja_liquidados_con_saldo",
+    "_fila_suma_liquidados",
+    "_fila_conteo_liquidados",
 ]

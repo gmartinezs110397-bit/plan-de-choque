@@ -18,10 +18,16 @@ from cxp_cruce import (
     _celda_tiene_formula,
     _columna,
     _copiar_estilo_celda,
+    _centrar_celdas_total,
+    _celda_para_escribir,
+    _copiar_estilo_celda_sin_relleno,
     _fecha_datetime,
     _fila_encabezado_contratos,
+    _fila_encabezado_hoja_datos,
     _fila_inicio_datos_contratos,
+    _fila_inicio_datos_hoja,
     _fila_tiene_contratista,
+    _hoja_tiene_filas_contratista,
     _indice_columna_en_hoja,
     _normalizar,
     _ultima_columna_con_datos,
@@ -110,13 +116,18 @@ def preparar_mapa_k3_saldo_estado(
         "ESTADO",
     )
     mapa: dict[str, dict[str, Any]] = {}
+    from cxp_cruce import _suma_saldos_grupo_matriz
+
     for k3, grupo in grupos_k3.items():
-        saldo = float(grupo["_saldo"].sum())
+        saldo = _suma_saldos_grupo_matriz(grupo["_saldo"])
         estado = ""
         if col_estado:
             g = grupo.copy()
             g["_abs"] = g["_saldo"].abs()
-            fila_ref = g.loc[g["_abs"].idxmax()]
+            if g["_saldo"].notna().any():
+                fila_ref = g.loc[g["_abs"].idxmax()]
+            else:
+                fila_ref = grupo.iloc[0]
             raw = fila_ref[col_estado]
             if raw is not None and str(raw).strip():
                 estado = str(raw).strip()
@@ -176,7 +187,7 @@ def _es_columna_estado_mes(titulo: str) -> bool:
 
 def _listar_pares_mes_seguimiento(ws) -> list[tuple[int, int, int]]:
     """(col_saldo, col_estado, número de mes) ordenados por mes."""
-    fila_hdr = _fila_encabezado_contratos()
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     saldos: dict[int, int] = {}
     estados: dict[int, int] = {}
 
@@ -202,8 +213,45 @@ def _listar_pares_mes_seguimiento(ws) -> list[tuple[int, int, int]]:
     return pares
 
 
+def _listar_columnas_saldo_mes(ws) -> list[tuple[int, int]]:
+    """(columna, número de mes) ordenados por mes — p. ej. Liquidados con saldo."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    columnas: dict[int, int] = {}
+    for col in range(1, ws.max_column + 1):
+        val = ws.cell(fila_hdr, col).value
+        if val is None or not str(val).strip():
+            continue
+        titulo = str(val).strip()
+        if not _es_columna_saldo_mes(titulo):
+            continue
+        mes = _mes_desde_titulo(titulo)
+        if mes is not None:
+            columnas[mes] = col
+    return [(columnas[m], m) for m in sorted(columnas)]
+
+
+def _titulo_saldo_mes_numero(mes_num: int) -> str:
+    return f"SALDO {MESES_ES[mes_num - 1].upper()}"
+
+
+def _titulo_estado_mes_numero(mes_num: int) -> str:
+    return f"ESTADO ACTUAL {MESES_ES[mes_num - 1].upper()}"
+
+
+def _reforzar_titulos_pares_mes_seguimiento(ws) -> None:
+    """Asegura títulos SALDO/ESTADO del mes tras copiar estilos de encabezado."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    for col_saldo, col_estado, mes_num in _listar_pares_mes_seguimiento(ws):
+        _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(
+            mes_num
+        )
+        _celda_para_escribir(ws, fila_hdr, col_estado).value = _titulo_estado_mes_numero(
+            mes_num
+        )
+
+
 def _indice_columna_titulos(ws, titulos: tuple[str, ...]) -> int | None:
-    fila_hdr = _fila_encabezado_contratos()
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     objetivos = {_normalizar(t) for t in titulos}
     for col in range(1, ws.max_column + 1):
         val = ws.cell(fila_hdr, col).value
@@ -274,17 +322,33 @@ def _fill_encabezado_alterno(celda_referencia) -> PatternFill:
     return FILL_ENCABEZADO_AZUL
 
 
+def _fill_encabezado_por_mes(mes_num: int) -> PatternFill:
+    """
+    Color de título según el mes (misma regla en todas las pestañas).
+    Mes par (p. ej. abril=4) → azul; mes impar (p. ej. mayo=5) → amarillo.
+    """
+    return FILL_ENCABEZADO_AMARILLO if (mes_num % 2) else FILL_ENCABEZADO_AZUL
+
+
 def _copiar_estilo_columna(
     ws,
     col_origen: int,
     col_destino: int,
     fila_desde: int = 1,
     fila_hasta: int | None = None,
+    *,
+    sin_relleno_desde_fila: int | None = None,
 ) -> None:
     if fila_hasta is None:
         fila_hasta = ws.max_row
+    fila_datos = sin_relleno_desde_fila or _fila_inicio_datos_hoja(ws)
     for fila in range(fila_desde, fila_hasta + 1):
-        _copiar_estilo_celda(ws.cell(fila, col_origen), ws.cell(fila, col_destino))
+        origen = ws.cell(fila, col_origen)
+        destino = ws.cell(fila, col_destino)
+        if fila >= fila_datos:
+            _copiar_estilo_celda_sin_relleno(origen, destino)
+        else:
+            _copiar_estilo_celda(origen, destino)
 
 
 def _copiar_ancho_columna(ws, col_origen: int, col_destino: int) -> None:
@@ -305,10 +369,67 @@ def _copiar_formato_mes_desde_anterior(
     """Fuente, bordes, alineación, número y ancho desde el par de columnas del mes anterior."""
     if not col_prev_saldo or not col_prev_estado:
         return
-    _copiar_estilo_columna(ws, col_prev_saldo, col_saldo)
-    _copiar_estilo_columna(ws, col_prev_estado, col_estado)
+    _copiar_estilo_columna(ws, col_prev_saldo, col_saldo, sin_relleno_desde_fila=_fila_inicio_datos_hoja(ws))
+    _copiar_estilo_columna(ws, col_prev_estado, col_estado, sin_relleno_desde_fila=_fila_inicio_datos_hoja(ws))
     _copiar_ancho_columna(ws, col_prev_saldo, col_saldo)
     _copiar_ancho_columna(ws, col_prev_estado, col_estado)
+
+
+def _filas_encabezado_seguimiento(ws) -> tuple[int, int]:
+    """Fila(s) del encabezado (p. ej. 1:2 si las columnas están combinadas en vertical)."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    fila_fin = fila_hdr
+    for rango in ws.merged_cells.ranges:
+        if rango.min_row == fila_hdr and rango.max_row > fila_hdr:
+            fila_fin = max(fila_fin, rango.max_row)
+            break
+    return fila_hdr, fila_fin
+
+
+def _aplicar_merge_encabezado_columna(
+    ws,
+    col: int,
+    fila_ini: int,
+    fila_fin: int,
+) -> None:
+    if fila_fin <= fila_ini:
+        return
+    letra = get_column_letter(col)
+    objetivo = f"{letra}{fila_ini}:{letra}{fila_fin}"
+    for rango in list(ws.merged_cells.ranges):
+        if (
+            rango.min_col <= col <= rango.max_col
+            and rango.min_row <= fila_fin
+            and rango.max_row >= fila_ini
+        ):
+            ws.unmerge_cells(str(rango))
+    ws.merge_cells(objetivo)
+
+
+def _aplicar_merge_encabezados_mes(ws, col_saldo: int, col_estado: int) -> None:
+    fila_ini, fila_fin = _filas_encabezado_seguimiento(ws)
+    _aplicar_merge_encabezado_columna(ws, col_saldo, fila_ini, fila_fin)
+    _aplicar_merge_encabezado_columna(ws, col_estado, fila_ini, fila_fin)
+
+
+def _normalizar_titulos_mes_cortos(ws, fecha: datetime | date) -> None:
+    """Renombra encabezados sueltos «ABRIL»/«MAYO» a «SALDO {MES}»."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    for col in range(1, ws.max_column + 1):
+        val = ws.cell(fila_hdr, col).value
+        if val is None or not str(val).strip():
+            continue
+        titulo = str(val).strip()
+        if _es_columna_estado_mes(titulo):
+            continue
+        mes = _mes_desde_titulo(titulo)
+        if mes is None:
+            continue
+        if _normalizar(titulo) != _normalizar(MESES_ES[mes - 1]):
+            continue
+        _celda_para_escribir(ws, fila_hdr, col).value = (
+            f"SALDO {MESES_ES[mes - 1].upper()}"
+        )
 
 
 def _aplicar_titulos_encabezado_mes(
@@ -319,41 +440,53 @@ def _aplicar_titulos_encabezado_mes(
     col_prev_saldo: int | None,
     col_prev_estado: int | None,
 ) -> None:
-    fila_hdr = _fila_encabezado_contratos()
+    del col_prev_saldo, col_prev_estado
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     titulo_saldo = titulo_saldo_suspendidos(fecha)
     titulo_estado = titulo_estado_suspendidos(fecha)
 
-    ws.cell(fila_hdr, col_saldo, value=titulo_saldo)
-    ws.cell(fila_hdr, col_estado, value=titulo_estado)
+    _celda_para_escribir(ws, fila_hdr, col_saldo).value = titulo_saldo
+    _celda_para_escribir(ws, fila_hdr, col_estado).value = titulo_estado
+    _aplicar_merge_encabezados_mes(ws, col_saldo, col_estado)
 
 
 def _aplicar_encabezados_meses_alternos(ws) -> None:
-    """Títulos con formato del mes previo y relleno azul/amarillo alterno."""
-    fila_hdr = _fila_encabezado_contratos()
+    """
+    Encabezados de mes con alternancia azul/amarillo entre meses.
+    SALDO y ESTADO del mismo mes comparten el mismo color de título.
+    """
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     pares = _listar_pares_mes_seguimiento(ws)
     if not pares:
         return
 
-    col_plantilla = _indice_columna_en_hoja(ws, "ESTADO ACTUAL", "SALDO FINAL", "Saldo Final")
+    for col_saldo, col_estado, mes_num in pares:
+        celda_saldo = _celda_para_escribir(ws, fila_hdr, col_saldo)
+        celda_estado = _celda_para_escribir(ws, fila_hdr, col_estado)
+        _aplicar_merge_encabezados_mes(ws, col_saldo, col_estado)
 
-    for indice, (col_saldo, col_estado, _) in enumerate(pares):
-        celda_saldo = ws.cell(fila_hdr, col_saldo)
-        celda_estado = ws.cell(fila_hdr, col_estado)
+        fill_titulo = _fill_encabezado_por_mes(mes_num)
 
-        if indice > 0:
-            prev_col_saldo, prev_col_estado, _ = pares[indice - 1]
-            _copiar_estilo_celda(ws.cell(fila_hdr, prev_col_saldo), celda_saldo)
-            _copiar_estilo_celda(ws.cell(fila_hdr, prev_col_estado), celda_estado)
-            fill_titulo = _fill_encabezado_alterno(ws.cell(fila_hdr, prev_col_saldo))
-        elif col_plantilla:
-            _copiar_estilo_celda(ws.cell(fila_hdr, col_plantilla), celda_saldo)
-            _copiar_estilo_celda(ws.cell(fila_hdr, col_plantilla), celda_estado)
-            fill_titulo = FILL_ENCABEZADO_AZUL
-        else:
-            fill_titulo = FILL_ENCABEZADO_AZUL
-
+        _copiar_estilo_celda(celda_saldo, celda_estado)
         celda_saldo.fill = fill_titulo
         celda_estado.fill = fill_titulo
+
+
+def _aplicar_encabezados_saldo_mes_alternos(ws) -> None:
+    """
+    Alternancia azul/amarillo por mes en columnas solo SALDO (Liquidados con saldo).
+    """
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    fila_ini, fila_fin = _filas_encabezado_seguimiento(ws)
+    cols = _listar_columnas_saldo_mes(ws)
+    if not cols:
+        return
+
+    for col, mes_num in cols:
+        celda = _celda_para_escribir(ws, fila_hdr, col)
+        _aplicar_merge_encabezado_columna(ws, col, fila_ini, fila_fin)
+        celda.fill = _fill_encabezado_por_mes(mes_num)
+        celda.value = _titulo_saldo_mes_numero(mes_num)
 
 
 def _es_suspendido(valor) -> bool:
@@ -391,6 +524,7 @@ def _asegurar_columnas_mes(
     """
     Devuelve (col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas).
     """
+    _normalizar_titulos_mes_cortos(ws, fecha)
     col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
     col_estado = _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
     columnas_nuevas = col_saldo is None or col_estado is None
@@ -406,7 +540,7 @@ def _asegurar_columnas_mes(
     if col_estado is None:
         col_estado = siguiente
 
-    fila_hdr = _fila_encabezado_contratos()
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
 
     if columnas_nuevas and col_prev_saldo and col_prev_estado:
         _copiar_estilo_columna(ws, col_prev_saldo, col_saldo)
@@ -428,9 +562,9 @@ def _asegurar_columnas_mes(
         )
 
     if columnas_nuevas and col_prev_saldo and col_prev_estado:
-        for fila in (FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS):
-            _copiar_estilo_celda(ws.cell(fila, col_prev_saldo), ws.cell(fila, col_saldo))
-            _copiar_estilo_celda(ws.cell(fila, col_prev_estado), ws.cell(fila, col_estado))
+        fila_tot = _fila_totales_seguimiento(ws)
+        _copiar_estilo_celda(ws.cell(fila_tot, col_prev_saldo), ws.cell(fila_tot, col_saldo))
+        _copiar_estilo_celda(ws.cell(fila_tot, col_prev_estado), ws.cell(fila_tot, col_estado))
 
     if not col_prev_saldo or not col_prev_estado:
         col_prev_saldo, col_prev_estado = _par_mes_anterior(
@@ -441,6 +575,7 @@ def _asegurar_columnas_mes(
         ws, col_saldo, col_estado, col_prev_saldo, col_prev_estado
     )
     _aplicar_encabezados_meses_alternos(ws)
+    _reforzar_titulos_pares_mes_seguimiento(ws)
 
     return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
 
@@ -476,13 +611,39 @@ def _resolver_relleno_estado(
     return None
 
 
-def _conteo_suspendidos_en_columna(ws, col_estado: int) -> int:
+def _ultima_fila_contratista(ws) -> int | None:
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
-    total = 0
+    if not col_nombre:
+        return None
+    fila_ini = _fila_inicio_datos_hoja(ws)
+    ultima: int | None = None
     for fila in range(fila_ini, ws.max_row + 1):
-        if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
-            continue
+        if _fila_tiene_contratista(ws, fila, col_nombre):
+            ultima = fila
+    return ultima
+
+
+def _fila_totales_seguimiento(ws) -> int:
+    """Fila al pie de la lista de contratos (conteo en col. estado, suma en col. saldo)."""
+    ultima = _ultima_fila_contratista(ws)
+    if ultima is not None:
+        return ultima + 1
+    return _fila_inicio_datos_hoja(ws)
+
+
+def _rango_filas_datos_seguimiento(ws) -> tuple[int, int]:
+    """(primera fila contrato, última fila contrato) sin incluir la fila de totales."""
+    fila_ini = _fila_inicio_datos_hoja(ws)
+    ultima = _ultima_fila_contratista(ws)
+    if ultima is None:
+        return fila_ini, fila_ini - 1
+    return fila_ini, ultima
+
+
+def _conteo_suspendidos_en_columna(ws, col_estado: int) -> int:
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
+    total = 0
+    for fila in range(fila_ini, fila_fin + 1):
         if _es_suspendido(ws.cell(fila, col_estado).value):
             total += 1
     return total
@@ -494,7 +655,8 @@ def _conteo_suspendidos_mes_anterior(
 ) -> int | None:
     if not col_prev_estado:
         return None
-    celda_prev = ws.cell(FILA_CONTEO_CONTRATOS, col_prev_estado)
+    fila_tot = _fila_totales_seguimiento(ws)
+    celda_prev = ws.cell(fila_tot, col_prev_estado)
     if celda_prev.value not in (None, ""):
         try:
             return int(float(celda_prev.value))
@@ -505,13 +667,15 @@ def _conteo_suspendidos_mes_anterior(
 
 def _leer_total_reportado_mes_anterior(
     ws,
-    fila_total: int,
     col_prev: int | None,
+    *,
+    fila_total: int | None = None,
 ) -> float | None:
-    """Valor mostrado en fila 1 o 2 del mes anterior (el que se reportó)."""
+    """Valor reportado al pie de la columna del mes anterior."""
     if not col_prev:
         return None
-    celda = ws.cell(fila_total, col_prev)
+    fila = fila_total if fila_total is not None else _fila_totales_seguimiento(ws)
+    celda = ws.cell(fila, col_prev)
     if celda.value in (None, ""):
         return None
     try:
@@ -536,12 +700,9 @@ def _aplicar_tope_mes_anterior(
 
 
 def _suma_saldos_columna(ws, col_saldo: int) -> float:
-    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
     suma = 0.0
-    for fila in range(fila_ini, ws.max_row + 1):
-        if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
-            continue
+    for fila in range(fila_ini, fila_fin + 1):
         raw = ws.cell(fila, col_saldo).value
         if raw is None or raw == "":
             continue
@@ -559,13 +720,13 @@ def _actualizar_resumen_suspendidos(
     col_prev_saldo: int | None,
     col_prev_estado: int | None,
 ) -> tuple[int, int]:
-    """Fila 1: conteo suspendidos (tope vs mes anterior). Fila 2: suma saldos."""
+    """Última fila: conteo en col. estado (tope vs mes anterior) y suma en col. saldo."""
     conteo_real = _conteo_suspendidos_en_columna(ws, col_estado)
     conteo_prev = _conteo_suspendidos_mes_anterior(ws, col_prev_estado)
     if conteo_prev is None and col_prev_estado:
-        conteo_prev = _leer_total_reportado_mes_anterior(
-            ws, FILA_CONTEO_CONTRATOS, col_prev_estado
-        )
+        reportado = _leer_total_reportado_mes_anterior(ws, col_prev_estado)
+        if reportado is not None:
+            conteo_prev = int(reportado)
     conteo_mostrar, _ = _aplicar_tope_mes_anterior(
         conteo_real,
         float(conteo_prev) if conteo_prev is not None else None,
@@ -574,17 +735,18 @@ def _actualizar_resumen_suspendidos(
 
     suma = _suma_saldos_columna(ws, col_saldo)
 
-    celda_conteo = ws.cell(FILA_CONTEO_CONTRATOS, col_estado)
-    celda_suma = ws.cell(FILA_SUMA_CONTRATOS, col_saldo)
+    fila_tot = _fila_totales_seguimiento(ws)
+    celda_conteo = _celda_para_escribir(ws, fila_tot, col_estado)
+    celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
 
     if col_prev_estado:
         _copiar_estilo_celda(
-            ws.cell(FILA_CONTEO_CONTRATOS, col_prev_estado),
+            ws.cell(fila_tot, col_prev_estado),
             celda_conteo,
         )
     if col_prev_saldo:
         _copiar_estilo_celda(
-            ws.cell(FILA_SUMA_CONTRATOS, col_prev_saldo),
+            ws.cell(fila_tot, col_prev_saldo),
             celda_suma,
         )
 
@@ -594,6 +756,8 @@ def _actualizar_resumen_suspendidos(
 
     if not _celda_tiene_formula(celda_suma):
         celda_suma.value = suma
+
+    _centrar_celdas_total(celda_conteo, celda_suma)
 
     return conteo_real, conteo_mostrar
 
@@ -620,6 +784,9 @@ def actualizar_hoja_suspendidos(
     Escribe SALDO MES y ESTADO ACTUAL MES desde Matriz.
     Colores solo en celdas de estado del mes actual.
     """
+    if not _hoja_tiene_filas_contratista(ws):
+        return []
+
     advertencias: list[str] = []
     col_saldo, col_estado, col_prev_saldo, col_prev_estado, _ = _asegurar_columnas_mes(
         ws, fecha
@@ -641,7 +808,7 @@ def actualizar_hoja_suspendidos(
             "Suspendidos: faltan columnas NOMBRE CONTRATISTA, No. de Cto o AÑO SUSCRIPCIÓN."
         )
 
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini = _fila_inicio_datos_hoja(ws)
 
     for fila in range(fila_ini, ws.max_row + 1):
         if not _fila_tiene_contratista(ws, fila, col_nombre):
@@ -651,16 +818,24 @@ def actualizar_hoja_suspendidos(
         contrato = ws.cell(fila, col_cto).value
         anio = ws.cell(fila, col_anio).value
         k3 = clave_tres(nombre, contrato, anio)
-        datos = mapa_k3.get(k3, {"saldo": 0.0, "estado": ""})
+        datos = mapa_k3.get(k3)
 
-        celda_saldo = ws.cell(fila, col_saldo)
-        celda_estado = ws.cell(fila, col_estado)
+        celda_saldo = _celda_para_escribir(ws, fila, col_saldo)
+        celda_estado = _celda_para_escribir(ws, fila, col_estado)
 
         if col_prev_saldo:
             _copiar_estilo_celda(ws.cell(fila, col_prev_saldo), celda_saldo)
-        celda_saldo.value = datos["saldo"]
-
-        estado = datos.get("estado", "")
+        if datos is None:
+            celda_saldo.value = None
+            estado = ""
+        else:
+            saldo_celda = datos.get("saldo")
+            celda_saldo.value = (
+                None
+                if saldo_celda is None
+                else saldo_celda
+            )
+            estado = datos.get("estado", "")
         prev_celda = None
         prev_estado = None
         if col_prev_estado:
@@ -696,4 +871,7 @@ __all__ = [
     "resolver_hoja_suspendidos",
     "titulo_estado_suspendidos",
     "titulo_saldo_suspendidos",
+    "_fila_totales_seguimiento",
+    "_rango_filas_datos_seguimiento",
+    "_leer_total_reportado_mes_anterior",
 ]

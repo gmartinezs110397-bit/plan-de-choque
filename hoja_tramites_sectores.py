@@ -9,12 +9,13 @@ from openpyxl.styles import PatternFill
 
 from constantes import HOJAS_TRAMITES_SECTORES
 from cxp_cruce import (
-    FILA_CONTEO_CONTRATOS,
-    FILA_SUMA_CONTRATOS,
+    _centrar_celdas_total,
+    _celda_para_escribir,
     _celda_tiene_formula,
     _copiar_estilo_celda,
-    _fila_inicio_datos_contratos,
+    _fila_inicio_datos_hoja,
     _fila_tiene_contratista,
+    _hoja_tiene_filas_contratista,
     _indice_columna_en_hoja,
     _normalizar,
     clave_tres,
@@ -25,7 +26,9 @@ from hoja_suspendidos import (
     _aplicar_tope_mes_anterior,
     _asegurar_columnas_mes,
     _autoajustar_columna_suspendidos,
+    _fila_totales_seguimiento,
     _leer_total_reportado_mes_anterior,
+    _rango_filas_datos_seguimiento,
     _suma_saldos_columna,
     preparar_mapa_k3_saldo_estado,
     titulo_estado_suspendidos,
@@ -76,12 +79,9 @@ def _cuenta_para_total_tramites(estado, saldo) -> bool:
 
 
 def _conteo_tramites_en_columna(ws, col_estado: int, col_saldo: int) -> int:
-    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
     total = 0
-    for fila in range(fila_ini, ws.max_row + 1):
-        if col_nombre and not _fila_tiene_contratista(ws, fila, col_nombre):
-            continue
+    for fila in range(fila_ini, fila_fin + 1):
         estado = ws.cell(fila, col_estado).value
         saldo = ws.cell(fila, col_saldo).value
         if _cuenta_para_total_tramites(estado, saldo):
@@ -122,17 +122,18 @@ def _actualizar_resumen_tramites(
 
     suma = _suma_saldos_columna(ws, col_saldo)
 
-    celda_conteo = ws.cell(FILA_CONTEO_CONTRATOS, col_estado)
-    celda_suma = ws.cell(FILA_SUMA_CONTRATOS, col_saldo)
+    fila_tot = _fila_totales_seguimiento(ws)
+    celda_conteo = _celda_para_escribir(ws, fila_tot, col_estado)
+    celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
 
     if col_prev_estado:
         _copiar_estilo_celda(
-            ws.cell(FILA_CONTEO_CONTRATOS, col_prev_estado),
+            ws.cell(fila_tot, col_prev_estado),
             celda_conteo,
         )
     if col_prev_saldo:
         _copiar_estilo_celda(
-            ws.cell(FILA_SUMA_CONTRATOS, col_prev_saldo),
+            ws.cell(fila_tot, col_prev_saldo),
             celda_suma,
         )
 
@@ -142,6 +143,8 @@ def _actualizar_resumen_tramites(
 
     if not _celda_tiene_formula(celda_suma):
         celda_suma.value = suma
+
+    _centrar_celdas_total(celda_conteo, celda_suma)
 
     return conteo_real, conteo_mostrar
 
@@ -156,6 +159,9 @@ def actualizar_hoja_tramites_sectores(
     Suma: todos los saldos. Conteo estado: excluye LIQUIDADO y saldo cero.
     Verde: LIQUIDADO. Amarillo: saldo cero. Tope vs mes anterior en conteo.
     """
+    if not _hoja_tiene_filas_contratista(ws):
+        return []
+
     advertencias: list[str] = []
     col_saldo, col_estado, col_prev_saldo, col_prev_estado, _ = _asegurar_columnas_mes(
         ws, fecha
@@ -178,7 +184,7 @@ def actualizar_hoja_tramites_sectores(
             "No. de Cto o AÑO SUSCRIPCIÓN."
         )
 
-    fila_ini = _fila_inicio_datos_contratos()
+    fila_ini = _fila_inicio_datos_hoja(ws)
 
     for fila in range(fila_ini, ws.max_row + 1):
         if not _fila_tiene_contratista(ws, fila, col_nombre):
@@ -188,22 +194,29 @@ def actualizar_hoja_tramites_sectores(
         contrato = ws.cell(fila, col_cto).value
         anio = ws.cell(fila, col_anio).value
         k3 = clave_tres(nombre, contrato, anio)
-        datos = mapa_k3.get(k3, {"saldo": 0.0, "estado": ""})
+        datos = mapa_k3.get(k3)
 
-        celda_saldo = ws.cell(fila, col_saldo)
-        celda_estado = ws.cell(fila, col_estado)
+        celda_saldo = _celda_para_escribir(ws, fila, col_saldo)
+        celda_estado = _celda_para_escribir(ws, fila, col_estado)
 
         if col_prev_saldo:
             _copiar_estilo_celda(ws.cell(fila, col_prev_saldo), celda_saldo)
-        celda_saldo.value = datos["saldo"]
+
+        if datos is None:
+            celda_saldo.value = None
+            estado = ""
+            saldo = None
+        else:
+            saldo_celda = datos.get("saldo")
+            celda_saldo.value = None if saldo_celda is None else saldo_celda
+            estado = datos.get("estado", "")
+            saldo = saldo_celda
 
         if col_prev_estado:
             _copiar_estilo_celda(ws.cell(fila, col_prev_estado), celda_estado)
 
-        estado = datos.get("estado", "")
         celda_estado.value = estado or None
 
-        saldo = datos["saldo"]
         relleno = _resolver_relleno_estado_tramites(estado, saldo)
         if relleno:
             celda_estado.fill = relleno

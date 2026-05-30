@@ -5,22 +5,27 @@ from __future__ import annotations
 import re
 from datetime import date, datetime
 
+from openpyxl.styles import PatternFill
+
 from constantes import HOJAS_ESTRATEGIAS
 from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
     _celda_tiene_formula,
+    _indice_columna_corte_en_hoja,
     _normalizar,
     dia_fin_mes_corte,
     mes_nombre_corte,
+    resolver_hoja_cruce_cxp,
 )
 from hoja_liquidados_con_saldo import (
-    FILA_CONTEO_LIQUIDADOS,
-    FILA_SUMA_LIQUIDADOS,
+    _fila_conteo_liquidados,
+    _fila_suma_liquidados,
     resolver_hoja_liquidados_con_saldo,
 )
 from hoja_proximos_a_perder import resolver_hoja_proximos_a_perder
 from hoja_suspendidos import (
+    _fila_totales_seguimiento,
     _indice_columna_titulos,
     _titulos_estado_equivalentes,
     _titulos_saldo_equivalentes,
@@ -33,6 +38,10 @@ COL_CONTRATOS = 5  # E
 COL_MONTO = 6  # F
 FILA_TITULOS = 3
 FILA_INICIO_DATOS = 4
+
+# Misma paleta que la plantilla de Estrategias
+FILL_TITULOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor="FFC000")
+FILL_DATOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor="00FA00")
 
 
 def resolver_hoja_estrategias(nombres_hojas: list[str]) -> str | None:
@@ -76,14 +85,39 @@ def _escribir_valor(celda, valor) -> None:
     celda.value = valor
 
 
+def _aplicar_relleno_datos_estrategias(ws, filas: list[int], fila_total: int | None) -> None:
+    """Verde en columnas E/F de cada fila de detalle y en la fila Total (como la plantilla)."""
+    objetivos = list(filas)
+    if fila_total is not None:
+        objetivos.append(fila_total)
+    for fila in objetivos:
+        for col in (COL_CONTRATOS, COL_MONTO):
+            celda = ws.cell(fila, col)
+            celda.fill = FILL_DATOS_ESTRATEGIAS
+
+
 def _leer_totales_hoja_par(ws, fecha: datetime | date) -> tuple[float | int | None, float | int | None]:
-    """Conteo fila 1 col estado; suma fila 2 col saldo (Suspendidos, Próximos, Trámites)."""
+    """Conteo y suma en la última fila de cada columna del mes (Suspendidos, Próximos, Trámites)."""
     col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
     col_estado = _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
     if not col_saldo or not col_estado:
         return None, None
-    conteo = _valor_numerico(ws.cell(FILA_CONTEO_CONTRATOS, col_estado).value)
-    suma = _valor_numerico(ws.cell(FILA_SUMA_CONTRATOS, col_saldo).value)
+    fila_tot = _fila_totales_seguimiento(ws)
+    conteo = _valor_numerico(ws.cell(fila_tot, col_estado).value)
+    suma = _valor_numerico(ws.cell(fila_tot, col_saldo).value)
+    return conteo, suma
+
+
+def _leer_totales_hoja_cps(
+    ws,
+    fecha: datetime | date,
+) -> tuple[float | int | None, float | int | None]:
+    """Cps/Caja por depurar: fila 1 = No. contratos, fila 2 = saldo total del mes."""
+    col_corte, _ = _indice_columna_corte_en_hoja(ws, fecha)
+    if not col_corte:
+        return None, None
+    conteo = _valor_numerico(ws.cell(FILA_CONTEO_CONTRATOS, col_corte).value)
+    suma = _valor_numerico(ws.cell(FILA_SUMA_CONTRATOS, col_corte).value)
     return conteo, suma
 
 
@@ -91,12 +125,12 @@ def _leer_totales_hoja_liquidados(
     ws,
     fecha: datetime | date,
 ) -> tuple[float | int | None, float | int | None]:
-    """Fila 1 suma; fila 2 conteo (solo columna saldo del mes)."""
+    """Suma y conteo al pie de la columna saldo del mes (conteo debajo de la suma)."""
     col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
     if not col_saldo:
         return None, None
-    suma = _valor_numerico(ws.cell(FILA_SUMA_LIQUIDADOS, col_saldo).value)
-    conteo = _valor_numerico(ws.cell(FILA_CONTEO_LIQUIDADOS, col_saldo).value)
+    suma = _valor_numerico(ws.cell(_fila_suma_liquidados(ws), col_saldo).value)
+    conteo = _valor_numerico(ws.cell(_fila_conteo_liquidados(ws), col_saldo).value)
     return conteo, suma
 
 
@@ -105,24 +139,30 @@ def _construir_totales_desde_libro(
     nombres_hojas: list[str],
     fecha: datetime | date,
 ) -> dict[str, tuple[float | int | None, float | int | None]]:
-    """Clave lógica -> (conteo contratos, monto total)."""
+    """Clave lógica -> (conteo contratos, monto total). Solo pestañas con contratos reales."""
+    from cxp_cruce import _hoja_tiene_filas_contratista
+
     totales: dict[str, tuple[float | int | None, float | int | None]] = {}
 
     nombre = resolver_hoja_suspendidos(nombres_hojas)
-    if nombre:
+    if nombre and _hoja_tiene_filas_contratista(wb[nombre]):
         totales["suspendidos"] = _leer_totales_hoja_par(wb[nombre], fecha)
 
     nombre = resolver_hoja_proximos_a_perder(nombres_hojas)
-    if nombre:
+    if nombre and _hoja_tiene_filas_contratista(wb[nombre]):
         totales["proximos"] = _leer_totales_hoja_par(wb[nombre], fecha)
 
     nombre = resolver_hoja_tramites_sectores(nombres_hojas)
-    if nombre:
+    if nombre and _hoja_tiene_filas_contratista(wb[nombre]):
         totales["tramites"] = _leer_totales_hoja_par(wb[nombre], fecha)
 
     nombre = resolver_hoja_liquidados_con_saldo(nombres_hojas)
-    if nombre:
+    if nombre and _hoja_tiene_filas_contratista(wb[nombre]):
         totales["liquidados"] = _leer_totales_hoja_liquidados(wb[nombre], fecha)
+
+    nombre = resolver_hoja_cruce_cxp(nombres_hojas)
+    if nombre:
+        totales["cps"] = _leer_totales_hoja_cps(wb[nombre], fecha)
 
     return totales
 
@@ -141,6 +181,8 @@ def _identificar_fuente_por_texto(texto: str) -> str | None:
         return "tramites"
     if "liquid" in norm and "saldo" in norm:
         return "liquidados"
+    if "depur" in norm or ("cps" in norm and "caja" not in norm):
+        return "cps"
     return None
 
 
@@ -155,9 +197,11 @@ def actualizar_hoja_estrategias(
     """
     advertencias: list[str] = []
 
-    # Títulos: siempre actualizar (aunque la celda tenga fórmula heredada del Excel)
-    ws.cell(FILA_TITULOS, COL_CONTRATOS, value=titulo_contratos_estrategias(fecha))
-    ws.cell(FILA_TITULOS, COL_MONTO, value=titulo_monto_total_estrategias(fecha))
+    # Títulos fila 3 (amarillo); datos filas 4+ (verde)
+    celda_te = ws.cell(FILA_TITULOS, COL_CONTRATOS, value=titulo_contratos_estrategias(fecha))
+    celda_tm = ws.cell(FILA_TITULOS, COL_MONTO, value=titulo_monto_total_estrategias(fecha))
+    celda_te.fill = FILL_TITULOS_ESTRATEGIAS
+    celda_tm.fill = FILL_TITULOS_ESTRATEGIAS
 
     filas_datos: list[int] = []
     fila_total: int | None = None
@@ -181,10 +225,6 @@ def actualizar_hoja_estrategias(
 
         conteo, monto = totales_fuentes[fuente]
         if conteo is None and monto is None:
-            advertencias.append(
-                f"Estrategias: no se leyeron totales para «{raw_b}» "
-                f"(falta columna del mes en la pestaña origen)."
-            )
             continue
 
         if conteo is not None:
@@ -208,10 +248,13 @@ def actualizar_hoja_estrategias(
         if hubo_monto:
             _escribir_valor(ws.cell(fila_total, COL_MONTO), suma_montos)
 
+    _aplicar_relleno_datos_estrategias(ws, filas_datos, fila_total)
+
     if not filas_datos:
         advertencias.append(
             "Estrategias: no se identificó ninguna fila en columna B "
-            "(Suspendidos, Próximos a perder, Trámites sectores, Liquidados con saldo)."
+            "(Suspendidos, Próximos a perder, Trámites sectores, Cps por depurar, "
+            "Liquidados con saldo)."
         )
 
     return advertencias
