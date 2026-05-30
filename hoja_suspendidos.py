@@ -85,8 +85,8 @@ def titulo_saldo_suspendidos(fecha: datetime | date) -> str:
 
 
 def titulo_estado_suspendidos(fecha: datetime | date) -> str:
-    mes = MESES_ES[_fecha_datetime(fecha).month - 1].upper()
-    return f"ESTADO ACTUAL {mes}"
+    """Mismo formato que saldo: Estado a 31 de mayo, etc."""
+    return titulo_estado_corte(fecha)
 
 
 def _titulos_saldo_equivalentes(fecha: datetime | date) -> tuple[str, ...]:
@@ -94,12 +94,7 @@ def _titulos_saldo_equivalentes(fecha: datetime | date) -> tuple[str, ...]:
 
 
 def _titulos_estado_equivalentes(fecha: datetime | date) -> tuple[str, ...]:
-    mes = MESES_ES[_fecha_datetime(fecha).month - 1].upper()
-    return (
-        titulo_estado_suspendidos(fecha),
-        f"ESTADO ACTUAL ({mes})",
-        f"ESTADO ACTUAL A {mes}",
-    )
+    return titulos_columna_estado_mes(fecha)
 
 
 def preparar_mapa_k3_saldo_estado(
@@ -182,7 +177,11 @@ def _es_columna_saldo_mes(titulo: str) -> bool:
 
 def _es_columna_estado_mes(titulo: str) -> bool:
     norm = _normalizar(str(titulo or ""))
-    return norm.startswith("estado actual") and _mes_desde_titulo(titulo) is not None
+    mes = _mes_desde_titulo(titulo)
+    return mes is not None and (
+        norm.startswith("estado actual")
+        or norm.startswith("estado a ")
+    )
 
 
 def _listar_pares_mes_seguimiento(ws) -> list[tuple[int, int, int]]:
