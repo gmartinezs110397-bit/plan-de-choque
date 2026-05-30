@@ -33,6 +33,9 @@ from cxp_cruce import (
     _ultima_columna_con_datos,
     clave_tres,
     preparar_indice_matriz,
+    titulo_saldo_corte,
+    titulo_saldo_corte_para_mes,
+    titulos_columna_saldo_mes,
 )
 
 FILL_VERDE_NEON = PatternFill(fill_type="solid", fgColor="CCFF00")
@@ -74,8 +77,8 @@ def resolver_hoja_suspendidos(nombres_hojas: list[str]) -> str | None:
 
 
 def titulo_saldo_suspendidos(fecha: datetime | date) -> str:
-    mes = MESES_ES[_fecha_datetime(fecha).month - 1].upper()
-    return f"SALDO {mes}"
+    """Mismo título que Cps: Saldo a 31 de mayo, Saldo a 30 de abril, etc."""
+    return titulo_saldo_corte(fecha)
 
 
 def titulo_estado_suspendidos(fecha: datetime | date) -> str:
@@ -84,13 +87,7 @@ def titulo_estado_suspendidos(fecha: datetime | date) -> str:
 
 
 def _titulos_saldo_equivalentes(fecha: datetime | date) -> tuple[str, ...]:
-    mes = MESES_ES[_fecha_datetime(fecha).month - 1].upper()
-    return (
-        titulo_saldo_suspendidos(fecha),
-        mes,
-        f"SALDO ({mes})",
-        f"SALDO A {mes}",
-    )
+    return titulos_columna_saldo_mes(fecha)
 
 
 def _titulos_estado_equivalentes(fecha: datetime | date) -> tuple[str, ...]:
@@ -230,20 +227,32 @@ def _listar_columnas_saldo_mes(ws) -> list[tuple[int, int]]:
     return [(columnas[m], m) for m in sorted(columnas)]
 
 
-def _titulo_saldo_mes_numero(mes_num: int) -> str:
-    return f"SALDO {MESES_ES[mes_num - 1].upper()}"
+def _titulo_saldo_mes_numero(mes_num: int, anio: int | None = None) -> str:
+    year = anio if anio is not None else datetime.now().year
+    return titulo_saldo_corte_para_mes(year, mes_num)
+
+
+def _columna_saldo_mes_en_hoja(ws, fecha: datetime | date) -> int | None:
+    """
+    Columna del mes en curso (reconoce «Saldo a 31 de mayo», «SALDO MAYO», etc.).
+    """
+    mes_actual = _fecha_datetime(fecha).month
+    for col, mes in _listar_columnas_saldo_mes(ws):
+        if mes == mes_actual:
+            return col
+    return _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
 
 
 def _titulo_estado_mes_numero(mes_num: int) -> str:
     return f"ESTADO ACTUAL {MESES_ES[mes_num - 1].upper()}"
 
 
-def _reforzar_titulos_pares_mes_seguimiento(ws) -> None:
+def _reforzar_titulos_pares_mes_seguimiento(ws, anio: int) -> None:
     """Asegura títulos SALDO/ESTADO del mes tras copiar estilos de encabezado."""
     fila_hdr = _fila_encabezado_hoja_datos(ws)
     for col_saldo, col_estado, mes_num in _listar_pares_mes_seguimiento(ws):
         _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(
-            mes_num
+            mes_num, anio
         )
         _celda_para_escribir(ws, fila_hdr, col_estado).value = _titulo_estado_mes_numero(
             mes_num
@@ -427,8 +436,8 @@ def _normalizar_titulos_mes_cortos(ws, fecha: datetime | date) -> None:
             continue
         if _normalizar(titulo) != _normalizar(MESES_ES[mes - 1]):
             continue
-        _celda_para_escribir(ws, fila_hdr, col).value = (
-            f"SALDO {MESES_ES[mes - 1].upper()}"
+        _celda_para_escribir(ws, fila_hdr, col).value = _titulo_saldo_mes_numero(
+            mes, _fecha_datetime(fecha).year
         )
 
 
@@ -472,10 +481,11 @@ def _aplicar_encabezados_meses_alternos(ws) -> None:
         celda_estado.fill = fill_titulo
 
 
-def _aplicar_encabezados_saldo_mes_alternos(ws) -> None:
+def _aplicar_encabezados_saldo_mes_alternos(ws, fecha: datetime | date) -> None:
     """
     Alternancia azul/amarillo por mes en columnas solo SALDO (Liquidados con saldo).
     """
+    anio = _fecha_datetime(fecha).year
     fila_hdr = _fila_encabezado_hoja_datos(ws)
     fila_ini, fila_fin = _filas_encabezado_seguimiento(ws)
     cols = _listar_columnas_saldo_mes(ws)
@@ -486,7 +496,7 @@ def _aplicar_encabezados_saldo_mes_alternos(ws) -> None:
         celda = _celda_para_escribir(ws, fila_hdr, col)
         _aplicar_merge_encabezado_columna(ws, col, fila_ini, fila_fin)
         celda.fill = _fill_encabezado_por_mes(mes_num)
-        celda.value = _titulo_saldo_mes_numero(mes_num)
+        celda.value = _titulo_saldo_mes_numero(mes_num, anio)
 
 
 def _es_suspendido(valor) -> bool:
@@ -525,7 +535,7 @@ def _asegurar_columnas_mes(
     Devuelve (col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas).
     """
     _normalizar_titulos_mes_cortos(ws, fecha)
-    col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
+    col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
     col_estado = _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
     columnas_nuevas = col_saldo is None or col_estado is None
 
@@ -575,7 +585,7 @@ def _asegurar_columnas_mes(
         ws, col_saldo, col_estado, col_prev_saldo, col_prev_estado
     )
     _aplicar_encabezados_meses_alternos(ws)
-    _reforzar_titulos_pares_mes_seguimiento(ws)
+    _reforzar_titulos_pares_mes_seguimiento(ws, _fecha_datetime(fecha).year)
 
     return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
 

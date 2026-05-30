@@ -26,15 +26,14 @@ from cxp_cruce import (
 )
 from hoja_suspendidos import (
     _aplicar_encabezados_saldo_mes_alternos,
+    _columna_saldo_mes_en_hoja,
     _normalizar_titulos_mes_cortos,
     _rango_filas_datos_seguimiento,
     _ultima_fila_contratista,
     _autoajustar_columna_suspendidos,
     _copiar_ancho_columna,
     _copiar_estilo_columna,
-    _indice_columna_titulos,
-    _titulo_saldo_mes_numero,
-    _titulos_saldo_equivalentes,
+    titulo_saldo_corte,
     titulo_saldo_suspendidos,
 )
 
@@ -115,7 +114,7 @@ def _asegurar_columna_saldo_mes(
 ) -> tuple[int, int | None]:
     """Devuelve (col_saldo_actual, col_saldo_mes_anterior)."""
     _normalizar_titulos_mes_cortos(ws, fecha)
-    col_saldo = _indice_columna_titulos(ws, _titulos_saldo_equivalentes(fecha))
+    col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
     col_prev = None
     if col_saldo is not None:
         col_prev = _columna_saldo_mes_anterior(ws, fecha, col_saldo)
@@ -126,7 +125,6 @@ def _asegurar_columna_saldo_mes(
         col_prev = _columna_saldo_mes_anterior(ws, fecha, col_saldo)
 
     fila_hdr = _fila_encabezado_hoja_datos(ws)
-    mes_num = _fecha_datetime(fecha).month
 
     fila_suma = _fila_suma_liquidados(ws)
     fila_conteo = _fila_conteo_liquidados(ws)
@@ -164,9 +162,10 @@ def _asegurar_columna_saldo_mes(
     if col_prev:
         _copiar_ancho_columna(ws, col_prev, col_saldo)
 
-    _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(mes_num)
-    _aplicar_encabezados_saldo_mes_alternos(ws)
-    _celda_para_escribir(ws, fila_hdr, col_saldo).value = _titulo_saldo_mes_numero(mes_num)
+    titulo_mes = titulo_saldo_corte(fecha)
+    _celda_para_escribir(ws, fila_hdr, col_saldo).value = titulo_mes
+    _aplicar_encabezados_saldo_mes_alternos(ws, fecha)
+    _celda_para_escribir(ws, fila_hdr, col_saldo).value = titulo_mes
     return col_saldo, col_prev
 
 

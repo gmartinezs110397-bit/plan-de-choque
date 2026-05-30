@@ -544,6 +544,30 @@ def titulo_saldo_corte(fecha: datetime | date) -> str:
     return f"Saldo a {dia} de {mes}"
 
 
+def titulo_saldo_corte_para_mes(anio: int, mes_num: int) -> str:
+    """Título de columna de saldo para un mes concreto (p. ej. abril vs mayo)."""
+    dia = calendar.monthrange(anio, mes_num)[1]
+    mes = MESES_ES[mes_num - 1]
+    return f"Saldo a {dia} de {mes}"
+
+
+def titulos_columna_saldo_mes(fecha: datetime | date) -> tuple[str, ...]:
+    """Nombres equivalentes de la columna del mes (Cps y hojas de seguimiento)."""
+    f = _fecha_datetime(fecha)
+    mes = MESES_ES[f.month - 1]
+    mes_up = mes.upper()
+    titulo = titulo_saldo_corte(f)
+    return (
+        titulo,
+        titulo.upper(),
+        f"SALDO {mes_up}",
+        mes,
+        mes_up,
+        f"SALDO ({mes_up})",
+        f"SALDO A {mes_up}",
+    )
+
+
 def titulo_columna_mes(fecha: datetime | date) -> str:
     """Alias del título de corte (compatibilidad)."""
     return titulo_saldo_corte(fecha)
@@ -1051,8 +1075,7 @@ def exportar_contratos_preservando_formato(
     if col_corte is None:
         col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte)
     else:
-        if crear_columna and titulo_columna:
-            ws.cell(_fila_encabezado_contratos(), col_corte, value=titulo_columna)
+        ws.cell(_fila_encabezado_contratos(), col_corte, value=titulo_corte)
 
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
 
@@ -1178,11 +1201,11 @@ def exportar_contratos_preservando_formato(
 
 
 def _indice_columna_corte(columnas: list, fecha: datetime | date) -> str | None:
-    """Busca columna existente: Saldo a 31 de mayo, SALDO A 31 DE MAYO, etc."""
+    """Busca columna del mes: Saldo a 31 de mayo, SALDO MAYO, etc."""
     f = _fecha_datetime(fecha)
-    objetivo = _normalizar(titulo_saldo_corte(f))
+    objetivos = {_normalizar(t) for t in titulos_columna_saldo_mes(f)}
     for col in columnas:
-        if _normalizar(str(col)) == objetivo:
+        if _normalizar(str(col)) in objetivos:
             return col
 
     dia = str(calendar.monthrange(f.year, f.month)[1])
@@ -1190,11 +1213,6 @@ def _indice_columna_corte(columnas: list, fecha: datetime | date) -> str | None:
     for col in columnas:
         n = _normalizar(str(col))
         if "saldo" in n and dia in n and mes in n:
-            return col
-
-    mes_cap = MESES_ES[f.month - 1][:1].upper() + MESES_ES[f.month - 1][1:]
-    for col in columnas:
-        if _normalizar(str(col)) == _normalizar(mes_cap):
             return col
     return None
 
