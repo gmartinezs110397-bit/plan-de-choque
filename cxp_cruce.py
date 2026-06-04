@@ -908,19 +908,9 @@ def _es_columna_saldo_corte_mes(titulo: str) -> bool:
     )
 
 
-def _fila_encabezado_cps(ws) -> int:
-    """Fila de títulos en Cps/Caja (RESPONSABLE + SALDO por mes), normalmente fila 3."""
-    for fila in (_fila_encabezado_contratos(), 1, 2, 3, 4):
-        for col in range(1, min(ws.max_column or 1, 80) + 1):
-            val = ws.cell(fila, col).value
-            if val is not None and _normalizar(str(val)) == "responsable":
-                return fila
-    return _fila_encabezado_contratos()
-
-
 def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
     """(columna, mes) de columnas de corte mensual en la fila de encabezados Cps."""
-    fila_hdr = _fila_encabezado_cps(ws)
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     columnas: dict[int, int] = {}
     limite = _ultima_columna_con_datos(ws)
     for col in range(1, limite + 1):
@@ -942,8 +932,8 @@ def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
 
 
 def _aplicar_fill_encabezado_corte_cps(ws, col: int, mes_num: int) -> None:
-    """Azul/amarillo en el título SALDO del mes (fila RESPONSABLE / fila 3)."""
-    fila_hdr = _fila_encabezado_cps(ws)
+    """Azul/amarillo en el título SALDO del mes (fila de NOMBRE CONTRATISTA)."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     celda = _celda_para_escribir(ws, fila_hdr, col)
     celda.fill = _fill_encabezado_corte_por_mes(mes_num)
 
@@ -956,7 +946,7 @@ def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
 
 def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
     """Inserta columna tras la última con datos; estilo copiado de SALDO FINAL."""
-    fila_hdr = _fila_encabezado_cps(ws)
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     col_estilo = _columna_estilo_saldo_final(ws)
     nueva_col = _ultima_columna_con_datos(ws) + 1
     celda_hdr = _celda_para_escribir(ws, fila_hdr, nueva_col)
@@ -1168,7 +1158,7 @@ def exportar_contratos_preservando_formato(
     if col_corte is None:
         col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte, fecha_analisis)
     else:
-        fila_hdr = _fila_encabezado_cps(ws)
+        fila_hdr = _fila_encabezado_hoja_datos(ws)
         _celda_para_escribir(ws, fila_hdr, col_corte).value = titulo_corte
 
     _aplicar_encabezados_corte_alternos_cps(ws)
