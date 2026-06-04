@@ -19,7 +19,7 @@ from typing import Any
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, PatternFill
+from openpyxl.styles import Alignment, Color, PatternFill
 from openpyxl.utils import get_column_letter
 
 from constantes import AMARILLO_TITULO, COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
@@ -858,8 +858,12 @@ def _ultima_columna_con_datos(ws) -> int:
 
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
-_FILL_ENCABEZADO_AZUL_CPS = PatternFill(fill_type="solid", fgColor="BDD7EE")
-_FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
+_FILL_ENCABEZADO_AZUL_CPS = PatternFill(
+    fill_type="solid", fgColor=Color(rgb="FFBDD7EE")
+)
+_FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(
+    fill_type="solid", fgColor=Color(rgb="00" + AMARILLO_TITULO)
+)
 
 
 def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
@@ -926,18 +930,74 @@ def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
     return _FILL_ENCABEZADO_AMARILLO_CPS if (mes_num % 2) else _FILL_ENCABEZADO_AZUL_CPS
 
 
-def _aplicar_fill_encabezado_corte_cps(ws, col: int, mes_num: int) -> None:
-    """Azul/amarillo sólido en el título SALDO del mes (fila 3, sin gris de plantilla)."""
-    fila_hdr = _fila_titulos_corte_cps(ws)
+def _liberar_tablas_excel_cps(ws) -> None:
+    """
+    Las tablas de Excel imponen encabezado gris y pisan el fill de openpyxl.
+    Solo en Cps/Caja por depurar.
+    """
+    tablas = getattr(ws, "tables", None)
+    if tablas:
+        tablas.clear()
+
+
+def _asignar_fill_titulo_cps(ws, fila_hdr: int, col: int, fill: PatternFill) -> None:
+    """Aplica fill en la celda del título y en todo el rango combinado."""
     celda = _celda_para_escribir(ws, fila_hdr, col)
-    fill = _fill_encabezado_corte_por_mes(mes_num)
-    celda.fill = PatternFill(fill_type="solid", fgColor=fill.fgColor)
+    celda.fill = fill
+    coord = celda.coordinate
+    for rango in ws.merged_cells.ranges:
+        if coord in rango:
+            for fila in range(rango.min_row, rango.max_row + 1):
+                for columna in range(rango.min_col, rango.max_col + 1):
+                    ws.cell(fila, columna).fill = fill
+            break
+
+
+def _aplicar_fill_encabezado_corte_cps(ws, col: int, mes_num: int) -> None:
+    """Azul/amarillo sólido en el título SALDO del mes (fila 3)."""
+    _asignar_fill_titulo_cps(
+        ws, _fila_titulos_corte_cps(ws), col, _fill_encabezado_corte_por_mes(mes_num)
+    )
 
 
 def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
-    """Pinta todos los títulos de mes en fila 3: alternancia azul/amarillo."""
-    for col, mes_num in _listar_columnas_corte_mes_cps(ws):
+    """Pinta todos los títulos SALDO por mes en fila 3: alternancia azul/amarillo."""
+    _liberar_tablas_excel_cps(ws)
+    pares = _listar_columnas_corte_mes_cps(ws)
+    ya_pintadas = {c for c, _ in pares}
+    for col, mes_num in pares:
         _aplicar_fill_encabezado_corte_cps(ws, col, mes_num)
+    # Columnas de mes que el listado no detectó (títulos legacy / variantes)
+    fila_hdr = _fila_titulos_corte_cps(ws)
+    limite = _ultima_columna_con_datos(ws)
+    for col in range(1, limite + 1):
+        if col in ya_pintadas:
+            continue
+        celda = _celda_para_escribir(ws, fila_hdr, col)
+        titulo = str(celda.value or "").strip()
+        if not titulo:
+            continue
+        norm = _normalizar(titulo)
+        if "saldo" not in norm or norm in ("saldo final",):
+            continue
+        mes = _mes_numero_desde_titulo_columna(titulo)
+        if mes is None:
+            continue
+        _aplicar_fill_encabezado_corte_cps(ws, col, mes)
+
+
+def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
+    """Vuelve a pintar títulos Cps tras xlsx-fixer (a veces restaura el gris)."""
+    try:
+        wb = load_workbook(BytesIO(contenido))
+        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+        _aplicar_encabezados_corte_alternos_cps(wb[nombre])
+        _preparar_workbook_antes_guardar(wb)
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
+    except Exception:
+        return contenido
 
 
 def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
@@ -1077,7 +1137,9 @@ def _quitar_enlaces_externos_xlsx(contenido: bytes) -> bytes:
 
 
 def _finalizar_xlsx_contratos(contenido: bytes) -> bytes:
-    return compatibilizar_xlsx_excel_mac(_quitar_enlaces_externos_xlsx(contenido))
+    contenido = _quitar_enlaces_externos_xlsx(contenido)
+    contenido = compatibilizar_xlsx_excel_mac(contenido)
+    return _repintar_encabezados_cps_en_xlsx(contenido)
 
 
 def compatibilizar_xlsx_excel_mac(contenido: bytes) -> bytes:
