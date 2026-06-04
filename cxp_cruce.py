@@ -862,7 +862,7 @@ _FILL_ENCABEZADO_AZUL_CPS = PatternFill(
     fill_type="solid", fgColor=Color(rgb="FFBDD7EE")
 )
 _FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(
-    fill_type="solid", fgColor=Color(rgb="00" + AMARILLO_TITULO)
+    fill_type="solid", fgColor=Color(rgb="FF" + AMARILLO_TITULO)
 )
 
 
