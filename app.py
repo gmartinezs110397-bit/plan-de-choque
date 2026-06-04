@@ -2158,25 +2158,38 @@ def procesar_consolidacion(cola_run: list, pwd: str):
     mostrar_reporte_tecnico_admin()  # solo si hubo casos no previstos
 
 
-@st.dialog("Contraseña Matriz")
-def dialogo_contrasena_matriz():
-    pwd = st.text_input(
-        "Contraseña",
-        type="password",
-        key="pwd_matriz_dialog",
-        placeholder="Ingrese la contraseña de la Matriz",
-    )
-    col_ok, col_cancel = st.columns(2)
-    with col_ok:
-        if st.button("Continuar", type="primary", use_container_width=True):
-            st.session_state.pwd_matriz = pwd.strip() if pwd else ""
-            st.session_state.iniciar_consolidacion = True
-            st.session_state.abrir_dialogo = False
-            st.rerun()
-    with col_cancel:
-        if st.button("Cancelar", use_container_width=True):
-            st.session_state.abrir_dialogo = False
-            st.rerun()
+def render_solicitud_contrasena_matriz() -> None:
+    """Formulario en página (sin modal) para no bloquear la vista durante la ejecución."""
+    with st.container(border=True):
+        st.markdown("**Contraseña Matriz**")
+        st.caption("Ingrese la contraseña para abrir los archivos de Matriz.")
+        pwd = st.text_input(
+            "Contraseña",
+            type="password",
+            key="pwd_matriz_dialog",
+            placeholder="Ingrese la contraseña de la Matriz",
+            label_visibility="collapsed",
+        )
+        col_ok, col_cancel = st.columns(2)
+        with col_ok:
+            if st.button(
+                "Continuar",
+                type="primary",
+                use_container_width=True,
+                key="btn_pwd_matriz_continuar",
+            ):
+                st.session_state.pwd_matriz = pwd.strip() if pwd else ""
+                st.session_state.abrir_dialogo = False
+                st.session_state.iniciar_consolidacion = True
+                st.rerun()
+        with col_cancel:
+            if st.button(
+                "Cancelar",
+                use_container_width=True,
+                key="btn_pwd_matriz_cancelar",
+            ):
+                st.session_state.abrir_dialogo = False
+                st.rerun()
 
 
 if not st.session_state.get("acceso_autorizado"):
@@ -2335,7 +2348,9 @@ if run_clicked:
             st.session_state.abrir_dialogo = True
             st.rerun()
 
-if st.session_state.get("iniciar_consolidacion"):
+if st.session_state.get("abrir_dialogo"):
+    render_solicitud_contrasena_matriz()
+elif st.session_state.get("iniciar_consolidacion"):
     st.session_state.iniciar_consolidacion = False
     procesar_consolidacion(
         st.session_state.cola_ejecucion,
@@ -2505,6 +2520,3 @@ if st.session_state.processed:
             )
         except (OSError, ValueError) as e:
             st.error(f"No se pudo guardar en Descargas: {e}")
-
-if st.session_state.get("abrir_dialogo"):
-    dialogo_contrasena_matriz()
