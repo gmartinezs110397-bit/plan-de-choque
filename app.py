@@ -1150,8 +1150,15 @@ def _externalizar_reporte_en_sesion() -> None:
     st.session_state.pop("reporte_ejecucion", None)
 
 
+def _compactar_sesion_vista_completa() -> None:
+    """Persistencia liviana sin cerrar el panel (rerun por descarga, desempate, etc.)."""
+    if st.session_state.get("cruce_detalle"):
+        _persistir_cruce_detalle(list(st.session_state.cruce_detalle))
+    _aligerar_sesion_archivos_pesados()
+
+
 def _compactar_sesion_para_f5() -> None:
-    """Reduce lo que Streamlit serializa en cada recarga (F5)."""
+    """Reduce lo que Streamlit serializa en cada recarga (F5) — vista resumen."""
     if st.session_state.get("cruce_detalle"):
         _persistir_cruce_detalle(list(st.session_state.cruce_detalle))
     if st.session_state.get("processed") and st.session_state.get("cruce_informe"):
@@ -3321,7 +3328,10 @@ if _necesita_dependencias_pesadas():
 _limpiar_estado_consolidacion_bloqueado()
 _sanear_sesion_consolidacion()
 if not st.session_state.get("ejecutar_consolidacion_ahora"):
-    _compactar_sesion_para_f5()
+    if st.session_state.get(_CLAVE_MOSTRAR_RESULTADOS):
+        _compactar_sesion_vista_completa()
+    else:
+        _compactar_sesion_para_f5()
 
 _barra_consolidacion = None
 if st.session_state.get("ejecutar_consolidacion_ahora"):
@@ -3667,28 +3677,22 @@ def _render_panel_resultados_completos() -> None:
         mime_dl = (zip_info or {}).get("mime") or "application/zip"
         ruta_zip = (zip_info or {}).get("path")
         if descargas_ok and ruta_zip and Path(ruta_zip).is_file():
-            if not st.session_state.get("zip_descarga_listo"):
-                if st.button(
-                    "Preparar descarga ZIP",
-                    use_container_width=True,
-                    key="btn_preparar_zip_contratos",
-                ):
-                    st.session_state.zip_descarga_listo = True
-                    st.rerun()
-            else:
-                datos_dl = _leer_binario_desde_ruta(
-                    ruta_zip, Path(ruta_zip).stat().st_mtime
-                )
-                st.download_button(
-                    label="Descargar Contratos actualizados (ZIP)",
-                    data=datos_dl,
-                    file_name=nombre_dl,
-                    mime=mime_dl,
-                    key="dl_contratos_todas",
-                    use_container_width=True,
-                )
+            datos_dl = _leer_binario_desde_ruta(
+                ruta_zip, Path(ruta_zip).stat().st_mtime
+            )
+            st.download_button(
+                label="Descargar Contratos actualizados (ZIP)",
+                data=datos_dl,
+                file_name=nombre_dl,
+                mime=mime_dl,
+                key="dl_contratos_todas",
+                use_container_width=True,
+            )
         elif descargas_ok:
-            st.caption("Pulse **Preparar descarga ZIP** cuando quiera bajar los archivos.")
+            st.warning(
+                "No se encontró el ZIP en el servidor. Vuelva a consolidar o aplique "
+                "el desempate para regenerarlo."
+            )
         with st.expander("Archivos incluidos en la descarga"):
             for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
                 st.markdown(
