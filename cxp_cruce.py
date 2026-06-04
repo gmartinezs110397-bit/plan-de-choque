@@ -19,7 +19,7 @@ from typing import Any
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment, Color, PatternFill
+from openpyxl.styles import Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
 from constantes import AMARILLO_TITULO, COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
@@ -858,12 +858,11 @@ def _ultima_columna_con_datos(ws) -> int:
 
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
-_FILL_ENCABEZADO_AZUL_CPS = PatternFill(
-    fill_type="solid", fgColor=Color(rgb="FFBDD7EE")
-)
+_FILL_ENCABEZADO_AZUL_CPS = PatternFill(fill_type="solid", fgColor="BDD7EE")
 _FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(
-    fill_type="solid", fgColor=Color(rgb="FF" + AMARILLO_TITULO)
+    fill_type="solid", fgColor=AMARILLO_TITULO
 )
+_OOXML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 
 def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
@@ -986,16 +985,79 @@ def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
         _aplicar_fill_encabezado_corte_cps(ws, col, mes)
 
 
+def _indices_estilo_titulos_saldo_cps(ws) -> set[int]:
+    """Índices cellXfs (atributo s de la celda) de títulos SALDO por mes en fila 3."""
+    fila_hdr = _fila_titulos_corte_cps(ws)
+    pares = _listar_columnas_corte_mes_cps(ws)
+    ya_pintadas = {c for c, _ in pares}
+    ids: set[int] = set()
+    for col, _ in pares:
+        ids.add(_celda_para_escribir(ws, fila_hdr, col).style_id)
+    limite = _ultima_columna_con_datos(ws)
+    for col in range(1, limite + 1):
+        if col in ya_pintadas:
+            continue
+        celda = _celda_para_escribir(ws, fila_hdr, col)
+        titulo = str(celda.value or "").strip()
+        if not titulo:
+            continue
+        norm = _normalizar(titulo)
+        if "saldo" not in norm or norm in ("saldo final",):
+            continue
+        if _mes_numero_desde_titulo_columna(titulo) is None:
+            continue
+        ids.add(celda.style_id)
+    return ids
+
+
+def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -> bytes:
+    """
+    Excel ignora fillId en cellXfs si applyFill no es 1 (sigue el gris del estilo base).
+    """
+    if not style_ids:
+        return contenido
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles_data = zin.read("xl/styles.xml")
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name != "xl/styles.xml"
+            }
+
+        root = ET.fromstring(styles_data)
+        cell_xfs = root.find(f"{{{_OOXML_NS}}}cellXfs")
+        if cell_xfs is None:
+            return contenido
+        for i, xf in enumerate(cell_xfs.findall(f"{{{_OOXML_NS}}}xf")):
+            if i in style_ids:
+                xf.set("applyFill", "1")
+
+        new_styles = ET.tostring(root, encoding="utf-8")
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", new_styles)
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
 def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
     """Vuelve a pintar títulos Cps tras xlsx-fixer (a veces restaura el gris)."""
     try:
         wb = load_workbook(BytesIO(contenido))
         nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
-        _aplicar_encabezados_corte_alternos_cps(wb[nombre])
+        ws = wb[nombre]
+        _aplicar_encabezados_corte_alternos_cps(ws)
+        style_ids = _indices_estilo_titulos_saldo_cps(ws)
         _preparar_workbook_antes_guardar(wb)
         out = BytesIO()
         wb.save(out)
-        return out.getvalue()
+        return _aplicar_apply_fill_cellxfs_en_xlsx(out.getvalue(), style_ids)
     except Exception:
         return contenido
 
