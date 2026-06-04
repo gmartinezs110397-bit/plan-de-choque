@@ -337,6 +337,7 @@ def init_session_state():
         "upload_key": 0,
         "abrir_dialogo": False,
         "iniciar_consolidacion": False,
+        "consolidacion_en_curso": False,
         "pwd_matriz": "",
         "cola_ejecucion": [],
         "error_ultima_ejecucion": None,
@@ -1465,15 +1466,48 @@ def es_error_contrasena(mensaje: str) -> bool:
     return "contrasena incorrecta" in m or "ingrese la contrasena" in m
 
 
+def _probar_contrasena_matriz(
+    file_bytes: bytes, password: str, nombre_archivo: str = ""
+) -> None:
+    """Valida contraseña sin re-guardar el Excel (evita lectura lenta duplicada)."""
+    try:
+        libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+        libro.seek(0)
+        pd.read_excel(
+            libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", nrows=1
+        )
+    except ValueError:
+        raise
+    except Exception as e:
+        err = str(e).lower()
+        if "zip" in err or "bad magic" in err or "not a zip" in err:
+            raise ValueError("Contraseña incorrecta.") from e
+        etiqueta = f"Matriz **{nombre_archivo}**" if nombre_archivo else "Matriz"
+        raise ValueError(f"{etiqueta}: no se pudo abrir ({e})") from e
+
+
+def _valores_columna_a_matriz(file_bytes: bytes, password: str) -> list[str]:
+    """Columna A desde fila 8 sin pasar por quitar_autofiltros (solo validación)."""
+    from openpyxl import load_workbook
+
+    libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+    libro.seek(0)
+    wb = load_workbook(libro, read_only=True, data_only=True)
+    try:
+        ws = wb[SHEET_MATRIZ]
+        return [
+            str(ws.cell(r, 1).value or "").strip()
+            for r in range(FILA_INICIO_MATRIZ, (ws.max_row or FILA_INICIO_MATRIZ) + 1)
+            if ws.cell(r, 1).value is not None and str(ws.cell(r, 1).value).strip()
+        ]
+    finally:
+        wb.close()
+
+
 def texto_localidad_en_matriz(file_bytes: bytes, password: str, nombre_archivo: str = "") -> str:
     """Lee columna A desde fila 8 en MATRIZ OXP."""
-    df = leer_hoja_matriz(
-        file_bytes, password, nombre_archivo, header=None, usecols=[0]
-    )
-    if len(df) < FILA_INICIO_MATRIZ:
-        return ""
-    valores = df.iloc[FILA_INICIO_MATRIZ - 1 :, 0].dropna().astype(str)
-    return " ".join(valores.tolist())
+    del nombre_archivo
+    return " ".join(_valores_columna_a_matriz(file_bytes, password))
 
 
 def validar_nombre_contratos(nombre_archivo: str, localidad: str) -> tuple[bool, str]:
@@ -1526,8 +1560,8 @@ def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool,
         loc = item["localidad"]
         nm = item["matriz"]["name"]
         try:
-            leer_hoja_matriz(
-                item["matriz"]["bytes"], password_matriz, item["matriz"]["name"], nrows=3
+            _probar_contrasena_matriz(
+                item["matriz"]["bytes"], password_matriz, item["matriz"]["name"]
             )
         except ValueError as e:
             errores.append(f"**{loc}** — Matriz **{nm}**: {e}")
@@ -1984,7 +2018,10 @@ def ejecutar_consolidacion(
         localidad = item["localidad"]
         progress.progress(
             (i + 1) / total,
-            text=f"Cruce Matriz → Contratos ({localidad})…",
+            text=(
+                f"{localidad}: leyendo Matriz, cruzando contratos y "
+                f"generando Excel actualizado…"
+            ),
         )
 
         try:
@@ -2111,51 +2148,71 @@ def ejecutar_consolidacion(
     return True
 
 
+def consolidacion_activa() -> bool:
+    return bool(
+        st.session_state.get("consolidacion_en_curso")
+        or st.session_state.get("abrir_dialogo")
+    )
+
+
 def procesar_consolidacion(cola_run: list, pwd: str):
     n = len(cola_run)
-    limpiar_resultado_consolidado()
-    reporte = ReporteEjecucion()
-
-    with st.spinner("Chequeando archivos…"):
-        nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
-
-    if not nombres_ok:
-        reporte.cerrar(False)
-        if any(es_error_contrasena(e) for e in errores_nombres):
-            st.error("Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo.")
-        else:
-            st.error("No se consolidaron las localidades correctamente. Revise los archivos.")
-        for detalle in errores_nombres:
-            st.markdown(f"- {detalle}")
-        return
-
-    exito = ejecutar_consolidacion(cola_run, pwd, reporte)
-    localidades_ok = len(st.session_state.get("cruce_informe", []))
-    reporte.cerrar(exito, localidades_ok, n)
-    _guardar_reporte_en_sesion(reporte)
-
-    if exito and st.session_state.processed:
-        titulo_mes = st.session_state.get("titulo_saldo_corte", "")
-        sin_res = sum(i.get("sin_resolver", 0) for i in st.session_state.get("cruce_informe", []))
-        msg = (
-            f"**{n}** localidad(es) consolidadas · columna **{titulo_mes}** "
-            f"(Cps, Suspendidos, Próximos, Trámites, Liquidados, Estrategias)."
-        )
-        if sin_res:
-            msg += f" Pendiente: **{sin_res}** desempate(s) manual(es)."
-        st.success(msg)
-    else:
+    st.session_state.consolidacion_en_curso = True
+    try:
         limpiar_resultado_consolidado()
-        errores_ej = st.session_state.pop("errores_ejecucion", [])
-        todos_errores = errores_ej
-        if any(es_error_contrasena(e) for e in todos_errores):
-            st.error("Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo.")
-        else:
-            st.error("No se consolidaron las localidades correctamente.")
-        for detalle in todos_errores:
-            st.markdown(f"- {detalle}")
+        reporte = ReporteEjecucion()
 
-    mostrar_reporte_tecnico_admin()  # solo si hubo casos no previstos
+        with st.spinner("Validando archivos y contraseña…"):
+            nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
+
+        if not nombres_ok:
+            reporte.cerrar(False)
+            if any(es_error_contrasena(e) for e in errores_nombres):
+                st.error(
+                    "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
+                )
+            else:
+                st.error(
+                    "No se consolidaron las localidades correctamente. Revise los archivos."
+                )
+            for detalle in errores_nombres:
+                st.markdown(f"- {detalle}")
+            return
+
+        exito = ejecutar_consolidacion(cola_run, pwd, reporte)
+        localidades_ok = len(st.session_state.get("cruce_informe", []))
+        reporte.cerrar(exito, localidades_ok, n)
+        _guardar_reporte_en_sesion(reporte)
+
+        if exito and st.session_state.processed:
+            titulo_mes = st.session_state.get("titulo_saldo_corte", "")
+            sin_res = sum(
+                i.get("sin_resolver", 0)
+                for i in st.session_state.get("cruce_informe", [])
+            )
+            msg = (
+                f"**{n}** localidad(es) consolidadas · columna **{titulo_mes}** "
+                f"(Cps, Suspendidos, Próximos, Trámites, Liquidados, Estrategias)."
+            )
+            if sin_res:
+                msg += f" Pendiente: **{sin_res}** desempate(s) manual(es)."
+            st.success(msg)
+        else:
+            limpiar_resultado_consolidado()
+            errores_ej = st.session_state.pop("errores_ejecucion", [])
+            todos_errores = errores_ej
+            if any(es_error_contrasena(e) for e in todos_errores):
+                st.error(
+                    "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
+                )
+            else:
+                st.error("No se consolidaron las localidades correctamente.")
+            for detalle in todos_errores:
+                st.markdown(f"- {detalle}")
+
+        mostrar_reporte_tecnico_admin()  # solo si hubo casos no previstos
+    finally:
+        st.session_state.consolidacion_en_curso = False
 
 
 def render_solicitud_contrasena_matriz() -> None:
@@ -2319,11 +2376,14 @@ if cola:
         st.rerun()
 
 st.divider()
+if consolidacion_activa():
+    st.caption("Consolidación en curso. Espere a que termine la barra de avance.")
 run_clicked = st.button(
     "Ejecutar consolidación",
     type="primary",
     use_container_width=True,
     key="btn_ejecutar_consolidacion",
+    disabled=consolidacion_activa(),
     help="Procesa todos los consolidados de la cola.",
 )
 
