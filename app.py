@@ -1,6 +1,7 @@
 import importlib
 import re
 import sys
+import time
 import unicodedata
 import zipfile
 from io import BytesIO
@@ -1999,29 +2000,53 @@ def mostrar_reporte_tecnico_admin() -> None:
         )
 
 
+FRACCION_PROGRESO_VALIDACION = 0.1
+
+
+def _actualizar_barra_progreso(progress, valor: float, texto: str) -> None:
+    """Actualiza la barra y fuerza un refresco mínimo de la interfaz."""
+    if progress is None:
+        return
+    progress.progress(min(max(valor, 0.0), 1.0), text=texto)
+    time.sleep(0.05)
+
+
+def _fraccion_en_rango(inicio: float, fin: float, parte: float) -> float:
+    return inicio + (fin - inicio) * min(max(parte, 0.0), 1.0)
+
+
 def ejecutar_consolidacion(
     cola,
     password_matriz: str,
     reporte: ReporteEjecucion,
+    progress=None,
+    fraccion_inicio: float = 0.0,
+    fraccion_fin: float = 1.0,
 ):
     stats, errores = [], []
     informe_localidades = []
     detalle_global = []
     contratos_actualizados = {}
     conteo_global: dict[str, int] = {}
-    total = len(cola)
-    progress = st.progress(0, text="Iniciando consolidación…")
+    total = len(cola) or 1
     ahora = datetime.now()
     titulo_mes = titulo_saldo_corte(ahora)
 
+    _actualizar_barra_progreso(
+        progress,
+        fraccion_inicio,
+        "Iniciando cruce por localidad…",
+    )
+
     for i, item in enumerate(cola):
         localidad = item["localidad"]
-        progress.progress(
-            (i + 1) / total,
-            text=(
-                f"{localidad}: leyendo Matriz, cruzando contratos y "
-                f"generando Excel actualizado…"
-            ),
+        base = i / total
+        tercio = 1.0 / (total * 3)
+
+        _actualizar_barra_progreso(
+            progress,
+            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base),
+            f"{localidad} ({i + 1}/{len(cola)}): leyendo Matriz…",
         )
 
         try:
@@ -2050,6 +2075,12 @@ def ejecutar_consolidacion(
             )
             continue
 
+        _actualizar_barra_progreso(
+            progress,
+            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base + tercio),
+            f"{localidad}: cruzando contratos con Matriz…",
+        )
+
         try:
             resultado = procesar_localidad_cxp(
                 item["contratos"]["bytes"],
@@ -2077,6 +2108,12 @@ def ejecutar_consolidacion(
                 fase="procesamiento_contratos",
             )
             continue
+
+        _actualizar_barra_progreso(
+            progress,
+            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base + 2 * tercio),
+            f"{localidad}: guardando Excel actualizado…",
+        )
 
         registrar_resultado_localidad(reporte, item, resultado)
         _agregar_conteo_global(conteo_global, resultado["conteo"])
@@ -2112,7 +2149,19 @@ def ejecutar_consolidacion(
             },
         ])
 
-    progress.empty()
+        _actualizar_barra_progreso(
+            progress,
+            _fraccion_en_rango(fraccion_inicio, fraccion_fin, (i + 1) / total),
+            f"{localidad}: listo.",
+        )
+
+    _actualizar_barra_progreso(
+        progress,
+        fraccion_fin,
+        "Consolidación por localidad terminada.",
+    )
+    if progress is not None:
+        progress.empty()
 
     if errores:
         st.session_state.errores_ejecucion = errores
@@ -2161,11 +2210,17 @@ def procesar_consolidacion(cola_run: list, pwd: str):
     try:
         limpiar_resultado_consolidado()
         reporte = ReporteEjecucion()
+        progress = st.progress(0, text="Validando archivos y contraseña…")
 
-        with st.spinner("Validando archivos y contraseña…"):
-            nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
+        nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
+        _actualizar_barra_progreso(
+            progress,
+            FRACCION_PROGRESO_VALIDACION,
+            "Validación lista. Iniciando cruces…",
+        )
 
         if not nombres_ok:
+            progress.empty()
             reporte.cerrar(False)
             if any(es_error_contrasena(e) for e in errores_nombres):
                 st.error(
@@ -2179,7 +2234,14 @@ def procesar_consolidacion(cola_run: list, pwd: str):
                 st.markdown(f"- {detalle}")
             return
 
-        exito = ejecutar_consolidacion(cola_run, pwd, reporte)
+        exito = ejecutar_consolidacion(
+            cola_run,
+            pwd,
+            reporte,
+            progress=progress,
+            fraccion_inicio=FRACCION_PROGRESO_VALIDACION,
+            fraccion_fin=1.0,
+        )
         localidades_ok = len(st.session_state.get("cruce_informe", []))
         reporte.cerrar(exito, localidades_ok, n)
         _guardar_reporte_en_sesion(reporte)
