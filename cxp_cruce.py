@@ -1047,7 +1047,7 @@ def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -
             if i in style_ids:
                 xf.set("applyFill", "1")
 
-        new_styles = ET.tostring(root, encoding="utf-8")
+        new_styles = ET.tostring(root, encoding="utf-8", xml_declaration=True)
         buf_out = BytesIO()
         with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
             zout.writestr("xl/styles.xml", new_styles)
@@ -1058,21 +1058,136 @@ def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -
         return contenido
 
 
+def _resolver_hoja_cps_en_zip(contenido: bytes) -> tuple[str, str] | None:
+    """(nombre_hoja, ruta xl/worksheets/sheetN.xml) dentro del zip."""
+    ns_main = _OOXML_NS
+    ns_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ns_pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            wb_xml = zin.read("xl/workbook.xml")
+            rels_xml = zin.read("xl/_rels/workbook.xml.rels")
+        wb_root = ET.fromstring(wb_xml)
+        rels_root = ET.fromstring(rels_xml)
+        targets = {
+            rel.get("Id"): rel.get("Target")
+            for rel in rels_root.findall(f"{{{ns_pkg}}}Relationship")
+        }
+        for hoja in HOJAS_CRUCE_CXP:
+            for sheet in wb_root.findall(f".//{{{ns_main}}}sheet"):
+                if sheet.get("name") != hoja:
+                    continue
+                rid = sheet.get(f"{{{ns_rel}}}id")
+                target = targets.get(rid) if rid else None
+                if not target:
+                    continue
+                path = target.replace("\\", "/").lstrip("/")
+                if not path.startswith("xl/"):
+                    path = f"xl/{path}"
+                return hoja, path
+    except Exception:
+        return None
+    return None
+
+
+def _cargar_shared_strings_xlsx(contenido: bytes) -> list[str]:
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/sharedStrings.xml" not in zin.namelist():
+                return []
+            root = ET.fromstring(zin.read("xl/sharedStrings.xml"))
+        cadenas: list[str] = []
+        for si in root.findall(f".//{{{_OOXML_NS}}}si"):
+            trozos = [
+                (t.text or "")
+                for t in si.findall(f".//{{{_OOXML_NS}}}t")
+            ]
+            cadenas.append("".join(trozos))
+        return cadenas
+    except Exception:
+        return []
+
+
+def _titulo_desde_fragmento_celda_xml(
+    fragmento: str, shared_strings: list[str] | None = None
+) -> str:
+    partes = re.findall(r"<t[^>]*>([^<]*)</t>", fragmento)
+    if partes:
+        return "".join(partes).strip()
+    if not shared_strings:
+        return ""
+    m = re.search(r"<v>(\d+)</v>", fragmento)
+    if not m:
+        return ""
+    idx = int(m.group(1))
+    if 0 <= idx < len(shared_strings):
+        return str(shared_strings[idx]).strip()
+    return ""
+
+
+def _mes_desde_titulo_saldo_cps(titulo: str) -> int | None:
+    mes = _mes_numero_desde_titulo_columna(titulo)
+    if mes is None:
+        return None
+    norm = _normalizar(titulo)
+    if norm in ("responsable", "nombre contratista", "saldo final"):
+        return None
+    if norm.startswith("estado actual") or norm.startswith("estado a "):
+        return None
+    if "saldo" not in norm and norm not in _MESES_POR_NOMBRE:
+        return None
+    return mes
+
+
+def _coords_rgb_titulos_saldo_desde_xml(contenido: bytes) -> list[tuple[str, str]]:
+    """Detecta títulos SALDO en fila 3 leyendo solo el XML (sin guardar con openpyxl)."""
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return []
+    _, sheet_path = resuelto
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            sheet_txt = zin.read(sheet_path).decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    shared = _cargar_shared_strings_xlsx(contenido)
+    fila = _fila_encabezado_contratos()
+    items: list[tuple[str, str]] = []
+    row_m = re.search(rf'<row r="{fila}"[^>]*>(.*?)</row>', sheet_txt, re.DOTALL)
+    cuerpo_fila = row_m.group(1) if row_m else sheet_txt
+    pat_celda = r'<c r="([A-Z]+\d+)"[^>]*>(.*?)</c>'
+    for m in re.finditer(pat_celda, cuerpo_fila, re.DOTALL):
+        coord = m.group(1)
+        fila_m = re.search(r"(\d+)$", coord)
+        if not fila_m or int(fila_m.group(1)) != fila:
+            continue
+        titulo = _titulo_desde_fragmento_celda_xml(m.group(2), shared)
+        mes = _mes_desde_titulo_saldo_cps(titulo)
+        if mes is None:
+            continue
+        rgb = _FILL_AMARILLO_RGB if (mes % 2) else _FILL_AZUL_RGB
+        items.append((coord, rgb))
+    return items
+
+
 def _coords_rgb_titulos_saldo_cps(contenido: bytes) -> list[tuple[str, str]]:
     """Coordenadas Excel y RGB (FFBDD7EE / FFFFFD966) de títulos SALDO en fila 3."""
+    items = _coords_rgb_titulos_saldo_desde_xml(contenido)
+    if items:
+        return items
     try:
-        wb = load_workbook(BytesIO(contenido))
+        wb = load_workbook(BytesIO(contenido), read_only=True, data_only=True)
         nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
         ws = wb[nombre]
         fila_hdr = _fila_titulos_corte_cps(ws)
-        items: list[tuple[str, str]] = []
         for col, mes in _listar_columnas_corte_mes_cps(ws):
-            coord = _celda_para_escribir(ws, fila_hdr, col).coordinate
+            coord = ws.cell(fila_hdr, col).coordinate
             rgb = _FILL_AMARILLO_RGB if (mes % 2) else _FILL_AZUL_RGB
             items.append((coord, rgb))
-        return items
+        wb.close()
     except Exception:
         return []
+    return items
 
 
 def _asegurar_fill_rgb_en_styles(fills_elem, rgb: str) -> int:
@@ -1104,12 +1219,11 @@ def _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido: bytes) -> bytes:
     items = _coords_rgb_titulos_saldo_cps(contenido)
     if not items:
         return contenido
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return contenido
+    _, sheet_path = resuelto
     try:
-        wb = load_workbook(BytesIO(contenido))
-        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
-        idx_hoja = wb.sheetnames.index(nombre) + 1
-        sheet_path = f"xl/worksheets/sheet{idx_hoja}.xml"
-
         with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
             if "xl/styles.xml" not in zin.namelist():
                 return contenido
@@ -1183,7 +1297,7 @@ def _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido: bytes) -> bytes:
                 new_tag = tag_head + m.group(2)
             sheet_txt = sheet_txt[: m.start()] + new_tag + sheet_txt[m.end() :]
 
-        new_styles = ET.tostring(root, encoding="utf-8")
+        new_styles = ET.tostring(root, encoding="utf-8", xml_declaration=True)
         buf_out = BytesIO()
         with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
             zout.writestr("xl/styles.xml", new_styles)
@@ -1193,6 +1307,79 @@ def _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido: bytes) -> bytes:
         return buf_out.getvalue()
     except Exception:
         return contenido
+
+
+def _style_ids_desde_coords_en_sheet(
+    contenido: bytes, sheet_path: str, coords: list[str]
+) -> set[int]:
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            sheet = zin.read(sheet_path).decode("utf-8", errors="replace")
+        ids: set[int] = set()
+        for coord in coords:
+            m = re.search(rf'<c r="{re.escape(coord)}" s="(\d+)"', sheet)
+            if m:
+                ids.add(int(m.group(1)))
+        return ids
+    except Exception:
+        return set()
+
+
+def _encabezados_saldo_cps_coloreados(contenido: bytes) -> bool:
+    """True si todos los títulos SALDO de fila 3 tienen applyFill y RGB opaco."""
+    items = _coords_rgb_titulos_saldo_cps(contenido)
+    if not items:
+        return False
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return False
+    _, sheet_path = resuelto
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            st = zin.read("xl/styles.xml").decode("utf-8", errors="replace")
+            sheet = zin.read(sheet_path).decode("utf-8", errors="replace")
+        block = re.search(r"<cellXfs[^>]*>(.*)</cellXfs>", st, re.DOTALL)
+        xfs = re.findall(r"<xf\b[^>]*>", block.group(1) if block else "")
+        fills = re.findall(r"<fill>.*?</fill>", st, re.DOTALL)
+        for coord, rgb in items:
+            m = re.search(rf'<c r="{re.escape(coord)}" s="(\d+)"', sheet)
+            if not m:
+                return False
+            sid = int(m.group(1))
+            if sid >= len(xfs) or 'applyFill="1"' not in xfs[sid]:
+                return False
+            fid_m = re.search(r'fillId="(\d+)"', xfs[sid])
+            if not fid_m:
+                return False
+            fid = int(fid_m.group(1))
+            if fid >= len(fills):
+                return False
+            fill_xml = fills[fid].upper()
+            tono = rgb[-6:].upper()
+            if tono not in fill_xml:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def _aplicar_colores_encabezados_cps_xlsx(contenido: bytes) -> bytes:
+    """
+    Aplica azul/amarillo en títulos SALDO solo parcheando XML (fiable en Streamlit).
+    No reescribe el libro completo con openpyxl.save.
+    """
+    contenido = _parchear_fills_rgb_opacos_xlsx(contenido)
+    contenido = _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido)
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if resuelto:
+        _, sheet_path = resuelto
+        coords = [c for c, _ in _coords_rgb_titulos_saldo_cps(contenido)]
+        style_ids = _style_ids_desde_coords_en_sheet(contenido, sheet_path, coords)
+        if style_ids:
+            contenido = _aplicar_apply_fill_cellxfs_en_xlsx(contenido, style_ids)
+            contenido = _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido)
+            contenido = _parchear_fills_rgb_opacos_xlsx(contenido)
+    return contenido
 
 
 def _parchear_fills_rgb_opacos_xlsx(contenido: bytes) -> bytes:
@@ -1243,24 +1430,8 @@ def _style_ids_titulos_saldo_desde_xlsx(contenido: bytes, nombre_hoja: str) -> s
 
 
 def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
-    """Vuelve a pintar títulos Cps tras xlsx-fixer (a veces restaura el gris)."""
-    try:
-        wb = load_workbook(BytesIO(contenido))
-        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
-        ws = wb[nombre]
-        _aplicar_encabezados_corte_alternos_cps(ws)
-        _preparar_workbook_antes_guardar(wb)
-        out = BytesIO()
-        wb.save(out)
-        data = out.getvalue()
-        style_ids = _style_ids_titulos_saldo_desde_xlsx(data, nombre)
-        if not style_ids:
-            style_ids = _indices_estilo_titulos_saldo_cps(ws)
-        data = _aplicar_apply_fill_cellxfs_en_xlsx(data, style_ids)
-        data = _parchear_fills_rgb_opacos_xlsx(data)
-        return _sincronizar_xf_titulos_saldo_cps_en_xlsx(data)
-    except Exception:
-        return contenido
+    """Alias: colores Cps vía XML (sin openpyxl.save, que falla en algunos servidores)."""
+    return _aplicar_colores_encabezados_cps_xlsx(contenido)
 
 
 def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
@@ -1402,7 +1573,7 @@ def _quitar_enlaces_externos_xlsx(contenido: bytes) -> bytes:
 def _finalizar_xlsx_contratos(contenido: bytes) -> bytes:
     contenido = _quitar_enlaces_externos_xlsx(contenido)
     contenido = compatibilizar_xlsx_excel_mac(contenido)
-    return _repintar_encabezados_cps_en_xlsx(contenido)
+    return _aplicar_colores_encabezados_cps_xlsx(contenido)
 
 
 def compatibilizar_xlsx_excel_mac(contenido: bytes) -> bytes:
@@ -1759,6 +1930,13 @@ def procesar_localidad_cxp(
             mapa_k4_liquidados=mapa_k4_liquidados,
         )
     )
+    if not _encabezados_saldo_cps_coloreados(bytes_export):
+        bytes_export = _aplicar_colores_encabezados_cps_xlsx(bytes_export)
+        if not _encabezados_saldo_cps_coloreados(bytes_export):
+            observaciones.append(
+                "Cps por depurar: no se pudieron aplicar los colores de encabezado "
+                "SALDO (fila 3). Descargue de nuevo o avise al administrador."
+            )
 
     out = BytesIO()
     out.write(bytes_export)
