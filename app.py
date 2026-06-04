@@ -1715,7 +1715,7 @@ def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "
         except Exception:
             raise ValueError("Contraseña incorrecta.") from None
         dec.seek(0)
-        return BytesIO(quitar_autofiltros_xlsx(dec.getvalue()))
+        return dec
 
     raw.seek(0)
     try:
@@ -1723,15 +1723,7 @@ def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "
     except Exception as e:
         raise ValueError(f"{etiqueta}: no se pudo leer ({e})") from e
     raw.seek(0)
-    return BytesIO(quitar_autofiltros_xlsx(raw.getvalue()))
-
-
-def sanitizar_excel_sin_filtros(data: bytes, nombre_archivo: str) -> bytes:
-    """Quita filtros de Excel .xlsx/.xlsm al subir (Contratos)."""
-    if not str(nombre_archivo).lower().endswith((".xlsx", ".xlsm")):
-        return data
-    _inicializar_dependencias_modulo()
-    return quitar_autofiltros_xlsx(data)
+    return BytesIO(file_bytes)
 
 
 def _bytes_matriz_sin_reguardar(file_bytes: bytes, password: str) -> BytesIO:
@@ -1786,18 +1778,61 @@ def _indices_saldo_final_calculado(ws, fila_hdr: int) -> tuple[int, int, int] | 
     return None
 
 
+def _saldo_final_desde_dataframe(df: pd.DataFrame) -> pd.Series | None:
+    """Apropiación − Giros − Liberación desde columnas ya cargadas (rápido)."""
+    col_a = col_g = col_l = None
+    for c in df.columns:
+        n = normalizar(str(c))
+        if n == "apropiacion":
+            col_a = c
+        elif n == "giros":
+            col_g = c
+        elif "liberacion" in n or "fenecimiento" in n:
+            col_l = c
+    if not (col_a and col_g and col_l):
+        return None
+    a = pd.to_numeric(df[col_a], errors="coerce").fillna(0)
+    g = pd.to_numeric(df[col_g], errors="coerce").fillna(0)
+    lib = pd.to_numeric(df[col_l], errors="coerce").fillna(0)
+    return a - g - lib
+
+
 def _calcular_saldo_final_matriz_ws(ws, fila_hdr: int) -> list:
     cols = _indices_saldo_final_calculado(ws, fila_hdr)
     if not cols:
         return []
     col_a, col_g, col_l = cols
-    filas = []
-    for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1):
+    max_r = ws.max_row or fila_hdr
+    filas: list = []
+    for a_val, g_val, l_val in zip(
+        ws.iter_rows(
+            min_row=fila_hdr + 1,
+            max_row=max_r,
+            min_col=col_a,
+            max_col=col_a,
+            values_only=True,
+        ),
+        ws.iter_rows(
+            min_row=fila_hdr + 1,
+            max_row=max_r,
+            min_col=col_g,
+            max_col=col_g,
+            values_only=True,
+        ),
+        ws.iter_rows(
+            min_row=fila_hdr + 1,
+            max_row=max_r,
+            min_col=col_l,
+            max_col=col_l,
+            values_only=True,
+        ),
+    ):
         try:
-            a = float(ws.cell(r, col_a).value or 0)
-            g = float(ws.cell(r, col_g).value or 0)
-            lib = float(ws.cell(r, col_l).value or 0)
-            filas.append(a - g - lib)
+            filas.append(
+                float((a_val[0] if a_val else None) or 0)
+                - float((g_val[0] if g_val else None) or 0)
+                - float((l_val[0] if l_val else None) or 0)
+            )
         except (TypeError, ValueError):
             filas.append(None)
     return filas
@@ -1880,20 +1915,31 @@ def leer_hoja_matriz(
             if col_df:
                 if avance:
                     avance("Matriz · Saldo Final")
-                libro.seek(0)
-                valores_saldo = _columna_matriz_data_only(
-                    libro, header_pd, "Saldo Final"
-                )
                 n = len(df)
-                serie = pd.to_numeric(pd.Series(valores_saldo[:n]), errors="coerce")
-                if len(valores_saldo) < n:
-                    serie = pd.concat(
-                        [
-                            serie,
-                            pd.Series([pd.NA] * (n - len(valores_saldo))),
-                        ],
-                        ignore_index=True,
-                    )
+                serie = pd.to_numeric(df[col_df], errors="coerce")
+                umbral = max(3, int(n * 0.01))
+                if int(serie.notna().sum()) < umbral:
+                    calc_df = _saldo_final_desde_dataframe(df)
+                    if calc_df is not None and int(calc_df.notna().sum()) > int(
+                        serie.notna().sum()
+                    ):
+                        serie = calc_df
+                    else:
+                        libro.seek(0)
+                        valores_saldo = _columna_matriz_data_only(
+                            libro, header_pd, "Saldo Final"
+                        )
+                        serie = pd.to_numeric(
+                            pd.Series(valores_saldo[:n]), errors="coerce"
+                        )
+                        if len(valores_saldo) < n:
+                            serie = pd.concat(
+                                [
+                                    serie,
+                                    pd.Series([pd.NA] * (n - len(valores_saldo))),
+                                ],
+                                ignore_index=True,
+                            )
                 df = df.copy()
                 df[col_df] = serie
         return df
@@ -1932,7 +1978,7 @@ def _probar_contrasena_matriz(
 
 
 def _valores_columna_a_matriz(file_bytes: bytes, password: str) -> list[str]:
-    """Columna A desde fila 8 sin pasar por quitar_autofiltros (solo validación)."""
+    """Columna A desde fila 8 (solo validación de localidad)."""
     from openpyxl import load_workbook
 
     libro = _bytes_matriz_sin_reguardar(file_bytes, password)
@@ -2069,7 +2115,6 @@ def validar_cola_archivos(
 
 def file_to_buffer(uploaded_file) -> dict:
     data = uploaded_file.getvalue()
-    data = sanitizar_excel_sin_filtros(data, uploaded_file.name)
     carpeta = _directorio_archivos_sesion()
     destino = carpeta / sanitizar_nombre_archivo(uploaded_file.name)
     destino.write_bytes(data)
@@ -3183,7 +3228,6 @@ def _dependencias_consolidacion():
         clave_desde_detalle,
         claves_pendientes_localidad,
         procesar_localidad_cxp,
-        quitar_autofiltros_xlsx,
         recalcular_estadisticas_localidad,
         resolver_hoja_cruce_cxp,
         titulo_saldo_corte,
@@ -3205,7 +3249,6 @@ def _dependencias_consolidacion():
         "clave_desde_detalle": clave_desde_detalle,
         "claves_pendientes_localidad": claves_pendientes_localidad,
         "procesar_localidad_cxp": procesar_localidad_cxp,
-        "quitar_autofiltros_xlsx": quitar_autofiltros_xlsx,
         "recalcular_estadisticas_localidad": recalcular_estadisticas_localidad,
         "resolver_hoja_cruce_cxp": resolver_hoja_cruce_cxp,
         "titulo_saldo_corte": titulo_saldo_corte,
@@ -3228,7 +3271,7 @@ def _necesita_dependencias_pesadas() -> bool:
     ):
         return True
     if st.session_state.get("acceso_autorizado"):
-        # Formulario / añadir a cola: hace falta quitar_autofiltros, pandas, etc.
+        # Formulario / añadir a cola: hace falta pandas, cxp_cruce, etc.
         if st.session_state.get("processed") and not st.session_state.get(
             _CLAVE_MOSTRAR_RESULTADOS, False
         ):
@@ -3240,7 +3283,7 @@ def _necesita_dependencias_pesadas() -> bool:
 def _inicializar_dependencias_modulo() -> None:
     global pd, msoffcrypto, ms_exceptions, cxp_cruce, METODOS_LABEL
     global aplicar_desempate_en_contratos, clave_desde_detalle
-    global claves_pendientes_localidad, procesar_localidad_cxp, quitar_autofiltros_xlsx
+    global claves_pendientes_localidad, procesar_localidad_cxp
     global recalcular_estadisticas_localidad, resolver_hoja_cruce_cxp, titulo_saldo_corte
     global validar_desempate_completo, CasoNoPrevisto, ReporteEjecucion
     global registrar_resultado_localidad
@@ -3256,7 +3299,6 @@ def _inicializar_dependencias_modulo() -> None:
     clave_desde_detalle = dep["clave_desde_detalle"]
     claves_pendientes_localidad = dep["claves_pendientes_localidad"]
     procesar_localidad_cxp = dep["procesar_localidad_cxp"]
-    quitar_autofiltros_xlsx = dep["quitar_autofiltros_xlsx"]
     recalcular_estadisticas_localidad = dep["recalcular_estadisticas_localidad"]
     resolver_hoja_cruce_cxp = dep["resolver_hoja_cruce_cxp"]
     titulo_saldo_corte = dep["titulo_saldo_corte"]
@@ -3342,7 +3384,8 @@ if not _omitir_formulario:
         st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
         st.caption(
             "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
-            "correspondiente por localidad."
+            "correspondiente por localidad. En Excel, quite los **filtros/autofiltros** "
+            "de ambos archivos antes de subirlos."
         )
 
         st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)

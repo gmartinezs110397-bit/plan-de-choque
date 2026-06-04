@@ -934,46 +934,6 @@ def _actualizar_resumen_filas_1_2(ws, col_corte: int) -> None:
     _centrar_celdas_total(celda_conteo, celda_suma)
 
 
-def quitar_autofiltros_xlsx(
-    contenido: bytes,
-    hojas: list[str] | None = None,
-    *,
-    finalizar: bool = True,
-) -> bytes:
-    """
-    Quita AutoFilter de las hojas indicadas (o de todo el libro).
-    Devuelve los bytes originales si no hay filtros o no se pudo abrir el archivo.
-    """
-    try:
-        wb = load_workbook(BytesIO(contenido))
-    except Exception:
-        return contenido
-
-    modifico = False
-    objetivos = hojas if hojas is not None else list(wb.sheetnames)
-    for nombre in objetivos:
-        if nombre not in wb.sheetnames:
-            continue
-        ws = wb[nombre]
-        af = ws.auto_filter
-        if af is not None and getattr(af, "ref", None):
-            ws.auto_filter.ref = None
-            modifico = True
-
-    if not modifico:
-        wb.close()
-        return contenido
-
-    _preparar_workbook_antes_guardar(wb)
-    out = BytesIO()
-    wb.save(out)
-    wb.close()
-    resultado = out.getvalue()
-    if finalizar:
-        return _finalizar_xlsx_contratos(resultado)
-    return resultado
-
-
 def _preparar_workbook_antes_guardar(wb) -> None:
     """Evita que openpyxl deje enlaces externos rotos al guardar."""
     if hasattr(wb, "_external_links"):
@@ -1424,7 +1384,6 @@ __all__ = [
     "construir_dataframe_revision",
     "parsear_mapa_desempate",
     "procesar_localidad_cxp",
-    "quitar_autofiltros_xlsx",
     "recalcular_estadisticas_localidad",
     "resolver_hoja_cruce_cxp",
     "titulo_saldo_corte",
