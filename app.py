@@ -1832,9 +1832,16 @@ def _columna_matriz_data_only(
                 break
         valores: list = []
         if col_idx is not None:
+            max_r = ws.max_row or fila_hdr
             valores = [
-                ws.cell(r, col_idx).value
-                for r in range(fila_hdr + 1, (ws.max_row or fila_hdr) + 1)
+                row[0]
+                for row in ws.iter_rows(
+                    min_row=fila_hdr + 1,
+                    max_row=max_r,
+                    min_col=col_idx,
+                    max_col=col_idx,
+                    values_only=True,
+                )
             ]
         umbral = max(3, int(len(valores) * 0.01)) if valores else 3
         if _cuenta_celdas_numericas(valores) < umbral:
@@ -1847,14 +1854,23 @@ def _columna_matriz_data_only(
 
 
 def leer_hoja_matriz(
-    file_bytes: bytes, password: str, nombre_archivo: str = "", **kwargs
+    file_bytes: bytes,
+    password: str,
+    nombre_archivo: str = "",
+    *,
+    avance: callable | None = None,
+    **kwargs,
 ) -> pd.DataFrame:
     """Lee la hoja MATRIZ OXP; detecta contraseña incorrecta."""
     try:
         header_pd = kwargs.get("header", MATRIZ_HEADER_FILA)
         # Sin openpyxl.save: preserva caché de fórmulas en Saldo Final (col. V).
         valores_saldo: list = []
+        if avance:
+            avance("Abriendo Matriz (contraseña)…")
         libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+        if avance:
+            avance("Leyendo hoja MATRIZ OXP…")
         df = pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
         )
@@ -1862,17 +1878,12 @@ def leer_hoja_matriz(
             candidatos = ("Saldo Final", "SALDO FINAL", "Saldo final")
             col_df = next((c for c in candidatos if c in df.columns), None)
             if col_df:
+                if avance:
+                    avance("Leyendo columna Saldo Final…")
                 libro.seek(0)
                 valores_saldo = _columna_matriz_data_only(
                     libro, header_pd, "Saldo Final"
                 )
-                if _cuenta_celdas_numericas(valores_saldo) < max(
-                    3, int(len(df) * 0.01)
-                ):
-                    libro.seek(0)
-                    valores_saldo = _columna_matriz_data_only(
-                        libro, header_pd, "Saldo Final"
-                    )
                 n = len(df)
                 serie = pd.to_numeric(pd.Series(valores_saldo[:n]), errors="coerce")
                 if len(valores_saldo) < n:
@@ -2585,11 +2596,19 @@ def _procesar_localidad_en_work(
     localidad = item["localidad"]
     pasos_previos = indice * _NUM_SUBETAPAS
 
-    _actualizar_barra_progreso(
-        progress,
-        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos),
-        _texto_barra_consolidacion(localidad, indice, total, 0),
-    )
+    prog_ini = _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos)
+
+    def _avance_lectura_matriz(detalle: str) -> None:
+        _actualizar_barra_progreso(
+            progress,
+            prog_ini,
+            (
+                f"{localidad} ({indice + 1}/{total}) · Etapa Matriz: {detalle} "
+                "(puede tardar 1–5 min en archivos grandes; la barra avanza al terminar)."
+            ),
+        )
+
+    _avance_lectura_matriz("leyendo Matriz…")
 
     try:
         df_matriz = leer_hoja_matriz(
@@ -2597,6 +2616,7 @@ def _procesar_localidad_en_work(
             pwd,
             item["matriz"]["name"],
             header=MATRIZ_HEADER_FILA,
+            avance=_avance_lectura_matriz,
         )
     except ValueError as e:
         work["errores"].append(f"**{localidad}** — Matriz: {e}")
