@@ -7,7 +7,7 @@ from copy import copy
 from datetime import date, datetime
 from typing import Any, Callable
 
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment, Border, PatternFill
 from openpyxl.utils import get_column_letter
 
 from constantes import (
@@ -51,6 +51,11 @@ from cxp_cruce import (
 FILL_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_DATOS)
 FILL_ENCABEZADO_AZUL = PatternFill(fill_type="solid", fgColor="BDD7EE")
 FILL_ENCABEZADO_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
+
+_SIN_BORDE = Border()
+_FORMATO_NUMERO_SALDO_PIE = '"$"#,##0'
+_ALIGNMENT_TOTAL_CONTEO_PIE = Alignment(horizontal="right", vertical="center")
+_ALIGNMENT_TOTAL_SALDO_PIE = Alignment(horizontal="right", vertical="center")
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
 
@@ -708,8 +713,14 @@ def _asegurar_columnas_mes(
 
     if columnas_nuevas and col_prev_saldo and col_prev_estado:
         fila_tot = _fila_totales_seguimiento(ws)
-        _copiar_estilo_celda(ws.cell(fila_tot, col_prev_saldo), ws.cell(fila_tot, col_saldo))
-        _copiar_estilo_celda(ws.cell(fila_tot, col_prev_estado), ws.cell(fila_tot, col_estado))
+        _copiar_formato_celda_pie_seguimiento(
+            ws.cell(fila_tot, col_prev_saldo),
+            _celda_para_escribir(ws, fila_tot, col_saldo),
+        )
+        _copiar_formato_celda_pie_seguimiento(
+            ws.cell(fila_tot, col_prev_estado),
+            _celda_para_escribir(ws, fila_tot, col_estado),
+        )
 
     if not col_prev_saldo or not col_prev_estado:
         col_prev_saldo, col_prev_estado = _par_mes_anterior(
@@ -924,6 +935,19 @@ def _referencia_formato_saldo(
     return None
 
 
+def _limpiar_bordes_celda(celda) -> None:
+    celda.border = _SIN_BORDE
+
+
+def _copiar_formato_celda_pie_seguimiento(origen, destino) -> None:
+    """Formato de total al pie (número/moneda), sin bordes ni relleno."""
+    if origen.has_style:
+        _copiar_estilo_celda_sin_relleno(origen, destino)
+    else:
+        destino.fill = PatternFill(fill_type=None)
+    _limpiar_bordes_celda(destino)
+
+
 def _aplicar_estilo_total_saldo(
     celda,
     ws,
@@ -931,24 +955,30 @@ def _aplicar_estilo_total_saldo(
     col_prev_saldo: int | None,
     fila_total: int,
 ) -> None:
-    """Total de saldo: número con formato de la columna; sin color de fondo."""
-    from cxp_cruce import _ALIGNMENT_CENTRO_TOTAL
-
+    """Total de saldo al pie: moneda, sin bordes ni fondo (como Próximos a perder)."""
     ref = _referencia_formato_saldo(ws, col_saldo, col_prev_saldo, fila_total)
+    if col_prev_saldo:
+        ref_pie = _celda_para_escribir(ws, fila_total, col_prev_saldo)
+        if ref_pie.value not in (None, "") or str(ref_pie.number_format or "").strip() not in (
+            "",
+            "General",
+        ):
+            ref = ref_pie
     if ref and ref.has_style:
-        _copiar_estilo_celda_sin_relleno(ref, celda)
+        _copiar_formato_celda_pie_seguimiento(ref, celda)
     else:
         celda.fill = PatternFill(fill_type=None)
-    celda.alignment = _ALIGNMENT_CENTRO_TOTAL
+        celda.number_format = _FORMATO_NUMERO_SALDO_PIE
+        _limpiar_bordes_celda(celda)
+    celda.alignment = _ALIGNMENT_TOTAL_SALDO_PIE
 
 
 def _escribir_total_estado(celda, valor) -> None:
-    """Total de estado: valor centrado, sin formato especial ni color."""
-    from cxp_cruce import _ALIGNMENT_CENTRO_TOTAL
-
+    """Total de conteo al pie: entero alineado a la derecha, sin bordes."""
     celda.value = valor
     celda.fill = PatternFill(fill_type=None)
-    celda.alignment = _ALIGNMENT_CENTRO_TOTAL
+    celda.alignment = _ALIGNMENT_TOTAL_CONTEO_PIE
+    _limpiar_bordes_celda(celda)
 
 
 def _limpiar_totales_filas_superiores_seguimiento(
@@ -995,14 +1025,17 @@ def _escribir_totales_pie_seguimiento(
     if col_prev_estado:
         ref_e = _celda_para_escribir(ws, fila_tot, col_prev_estado)
         if ref_e.has_style:
-            _copiar_estilo_celda_sin_relleno(ref_e, celda_conteo)
+            _copiar_formato_celda_pie_seguimiento(ref_e, celda_conteo)
+            celda_conteo.alignment = _ALIGNMENT_TOTAL_CONTEO_PIE
     if col_prev_saldo:
         ref_s = _celda_para_escribir(ws, fila_tot, col_prev_saldo)
         if ref_s.has_style:
-            _copiar_estilo_celda_sin_relleno(ref_s, celda_suma)
+            _copiar_formato_celda_pie_seguimiento(ref_s, celda_suma)
     _aplicar_estilo_total_saldo(
         celda_suma, ws, col_saldo, col_prev_saldo, fila_tot
     )
+    _limpiar_bordes_celda(celda_conteo)
+    _limpiar_bordes_celda(celda_suma)
 
 
 def _aplicar_tope_mes_anterior(

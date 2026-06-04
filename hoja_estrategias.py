@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 from openpyxl.styles import PatternFill
 
-from constantes import AMARILLO_TITULO, FILL_VERDE_LIQUIDADO, HOJAS_ESTRATEGIAS
+from constantes import FILL_AMARILLO_ESTRATEGIAS, FILL_VERDE_LIQUIDADO, HOJAS_ESTRATEGIAS
 from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
@@ -38,7 +38,7 @@ COL_MONTO = 6  # F
 FILA_TITULOS = 3
 FILA_INICIO_DATOS = 4
 
-FILL_TITULOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
+FILL_TITULOS_ESTRATEGIAS = FILL_AMARILLO_ESTRATEGIAS
 
 
 def resolver_hoja_estrategias(nombres_hojas: list[str]) -> str | None:

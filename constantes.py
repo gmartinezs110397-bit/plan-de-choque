@@ -20,9 +20,12 @@ VERDES_RELLENO_COMPAT = (
     "00B050",
 )
 
-# Amarillo de títulos («Saldo a 31 de mayo», encabezados de mes, Estrategias fila 3)
+# Amarillo de títulos («Saldo a 31 de mayo», encabezados de mes en seguimiento y Cps)
 AMARILLO_TITULO = "FFD966"
 AMARILLO_TITULO_CSS = "#FFD966"
+# Amarillo solo en pestaña Estrategias (fila 3)
+AMARILLO_ESTRATEGIAS = "FFC000"
+FILL_AMARILLO_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor=AMARILLO_ESTRATEGIAS)
 # Amarillo en celdas de datos (saldo cero, transiciones de estado) — no es el de títulos
 AMARILLO_DATOS = "FFFF00"
 AMARILLOS_TITULO_COMPAT = (

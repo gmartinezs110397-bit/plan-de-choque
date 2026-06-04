@@ -909,8 +909,8 @@ def _es_columna_saldo_corte_mes(titulo: str) -> bool:
 
 
 def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
-    """(columna, mes) de columnas de corte mensual en fila 3 de Cps/Caja."""
-    fila_hdr = _fila_encabezado_contratos()
+    """(columna, mes) de columnas de corte mensual en la fila de encabezados."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     columnas: dict[int, int] = {}
     limite = _ultima_columna_con_datos(ws)
     for col in range(1, limite + 1):
@@ -931,22 +931,28 @@ def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
     return _FILL_ENCABEZADO_AMARILLO_CPS if (mes_num % 2) else _FILL_ENCABEZADO_AZUL_CPS
 
 
+def _aplicar_fill_encabezado_corte_cps(ws, col: int, mes_num: int) -> None:
+    """Azul/amarillo en el título de una columna de mes (misma regla que Suspendidos)."""
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    _celda_para_escribir(ws, fila_hdr, col).fill = _fill_encabezado_corte_por_mes(mes_num)
+
+
 def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
-    """Títulos de mes en fila 3 con alternancia azul/amarillo entre meses."""
-    fila_hdr = _fila_encabezado_contratos()
+    """Títulos de mes en fila de encabezados con alternancia azul/amarillo entre meses."""
     for col, mes_num in _listar_columnas_corte_mes_cps(ws):
-        celda = _celda_para_escribir(ws, fila_hdr, col)
-        celda.fill = _fill_encabezado_corte_por_mes(mes_num)
+        _aplicar_fill_encabezado_corte_cps(ws, col, mes_num)
 
 
-def _agregar_columna_corte_en_hoja(ws, titulo: str) -> int:
+def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
     """Inserta columna tras la última con datos; estilo copiado de SALDO FINAL."""
-    fila_hdr = _fila_encabezado_contratos()
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
     col_estilo = _columna_estilo_saldo_final(ws)
     nueva_col = _ultima_columna_con_datos(ws) + 1
 
     _copiar_estilo_celda(ws.cell(fila_hdr, col_estilo), ws.cell(fila_hdr, nueva_col))
     ws.cell(fila_hdr, nueva_col, value=titulo)
+    mes_num = _fecha_datetime(fecha).month
+    _aplicar_fill_encabezado_corte_cps(ws, nueva_col, mes_num)
 
     for fila in (FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS):
         _copiar_estilo_celda(ws.cell(fila, col_estilo), ws.cell(fila, nueva_col))
@@ -1147,9 +1153,13 @@ def exportar_contratos_preservando_formato(
     col_corte, titulo_usado = _indice_columna_corte_en_hoja(ws, fecha_analisis)
     col_estilo = _columna_estilo_saldo_final(ws)
     if col_corte is None:
-        col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte)
+        col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte, fecha_analisis)
     else:
-        ws.cell(_fila_encabezado_contratos(), col_corte, value=titulo_corte)
+        fila_hdr = _fila_encabezado_hoja_datos(ws)
+        _celda_para_escribir(ws, fila_hdr, col_corte).value = titulo_corte
+        _aplicar_fill_encabezado_corte_cps(
+            ws, col_corte, _fecha_datetime(fecha_analisis).month
+        )
 
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
 
