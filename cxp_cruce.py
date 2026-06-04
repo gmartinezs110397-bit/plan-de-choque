@@ -891,38 +891,33 @@ def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
     return None
 
 
-def _es_columna_saldo_corte_mes(titulo: str) -> bool:
-    """Columnas «Saldo a …» / «SALDO MAYO» del mes (no SALDO FINAL ni estado)."""
-    norm = _normalizar(str(titulo or ""))
-    if not norm or norm == "saldo final":
-        return False
-    if norm.startswith("estado actual") or norm.startswith("estado a "):
-        return False
-    if "responsable" in norm or "nombre" in norm:
-        return False
-    mes = _mes_numero_desde_titulo_columna(titulo)
-    return mes is not None and (
-        norm.startswith("saldo ")
-        or norm.startswith("saldo a ")
-        or norm in _MESES_POR_NOMBRE
-    )
+def _fila_titulos_corte_cps(ws) -> int:
+    """Fila 3 en Cps/Caja: títulos NOMBRE CONTRATISTA y SALDO por mes (misma que el cruce)."""
+    return _fila_encabezado_contratos()
 
 
 def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
-    """(columna, mes) de columnas de corte mensual en la fila de encabezados Cps."""
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    """(columna, mes) de columnas «Saldo a …» en la fila 3 de Cps."""
+    fila_hdr = _fila_titulos_corte_cps(ws)
     columnas: dict[int, int] = {}
     limite = _ultima_columna_con_datos(ws)
     for col in range(1, limite + 1):
-        val = ws.cell(fila_hdr, col).value
-        if val is None or not str(val).strip():
+        celda = _celda_para_escribir(ws, fila_hdr, col)
+        raw = celda.value
+        if raw is None or not str(raw).strip():
             continue
-        titulo = str(val).strip()
-        if not _es_columna_saldo_corte_mes(titulo):
-            continue
+        titulo = str(raw).strip()
         mes = _mes_numero_desde_titulo_columna(titulo)
-        if mes is not None:
-            columnas[mes] = col
+        if mes is None:
+            continue
+        norm = _normalizar(titulo)
+        if norm in ("responsable", "nombre contratista", "saldo final"):
+            continue
+        if norm.startswith("estado actual") or norm.startswith("estado a "):
+            continue
+        if "saldo" not in norm and norm not in _MESES_POR_NOMBRE:
+            continue
+        columnas[mes] = col
     return [(columnas[m], m) for m in sorted(columnas)]
 
 
@@ -932,21 +927,22 @@ def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
 
 
 def _aplicar_fill_encabezado_corte_cps(ws, col: int, mes_num: int) -> None:
-    """Azul/amarillo en el título SALDO del mes (fila de NOMBRE CONTRATISTA)."""
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    """Azul/amarillo sólido en el título SALDO del mes (fila 3, sin gris de plantilla)."""
+    fila_hdr = _fila_titulos_corte_cps(ws)
     celda = _celda_para_escribir(ws, fila_hdr, col)
-    celda.fill = _fill_encabezado_corte_por_mes(mes_num)
+    fill = _fill_encabezado_corte_por_mes(mes_num)
+    celda.fill = PatternFill(fill_type="solid", fgColor=fill.fgColor)
 
 
 def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
-    """Títulos de mes en fila de encabezados con alternancia azul/amarillo entre meses."""
+    """Pinta todos los títulos de mes en fila 3: alternancia azul/amarillo."""
     for col, mes_num in _listar_columnas_corte_mes_cps(ws):
         _aplicar_fill_encabezado_corte_cps(ws, col, mes_num)
 
 
 def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
     """Inserta columna tras la última con datos; estilo copiado de SALDO FINAL."""
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    fila_hdr = _fila_titulos_corte_cps(ws)
     col_estilo = _columna_estilo_saldo_final(ws)
     nueva_col = _ultima_columna_con_datos(ws) + 1
     celda_hdr = _celda_para_escribir(ws, fila_hdr, nueva_col)
@@ -1158,10 +1154,8 @@ def exportar_contratos_preservando_formato(
     if col_corte is None:
         col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte, fecha_analisis)
     else:
-        fila_hdr = _fila_encabezado_hoja_datos(ws)
+        fila_hdr = _fila_titulos_corte_cps(ws)
         _celda_para_escribir(ws, fila_hdr, col_corte).value = titulo_corte
-
-    _aplicar_encabezados_corte_alternos_cps(ws)
 
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
 
@@ -1173,6 +1167,7 @@ def exportar_contratos_preservando_formato(
 
     _actualizar_resumen_filas_1_2(ws, col_corte)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
+    # Último paso en Cps: títulos de mes (evita que otro estilo deje el gris de plantilla).
     _aplicar_encabezados_corte_alternos_cps(ws)
 
     if mapa_k3_suspendidos is not None:
