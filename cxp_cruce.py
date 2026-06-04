@@ -858,11 +858,23 @@ def _ultima_columna_con_datos(ws) -> int:
 
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
-_FILL_ENCABEZADO_AZUL_CPS = PatternFill(fill_type="solid", fgColor="BDD7EE")
+_FILL_AZUL_RGB = "FFBDD7EE"
+_FILL_AMARILLO_RGB = "FF" + AMARILLO_TITULO
+_FILL_ENCABEZADO_AZUL_CPS = PatternFill(
+    start_color=_FILL_AZUL_RGB,
+    end_color=_FILL_AZUL_RGB,
+    fill_type="solid",
+)
 _FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(
-    fill_type="solid", fgColor=AMARILLO_TITULO
+    start_color=_FILL_AMARILLO_RGB,
+    end_color=_FILL_AMARILLO_RGB,
+    fill_type="solid",
 )
 _OOXML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REEMPLAZOS_RGB_FILL_TRANSPARENTE = (
+    ("00BDD7EE", _FILL_AZUL_RGB),
+    ("00FFD966", _FILL_AMARILLO_RGB),
+)
 
 
 def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
@@ -1046,6 +1058,53 @@ def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -
         return contenido
 
 
+def _parchear_fills_rgb_opacos_xlsx(contenido: bytes) -> bytes:
+    """openpyxl a veces guarda 00BDD7EE (transparente); Excel muestra gris de fondo."""
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles = zin.read("xl/styles.xml").decode("utf-8")
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name != "xl/styles.xml"
+            }
+        for viejo, nuevo in _REEMPLAZOS_RGB_FILL_TRANSPARENTE:
+            styles = styles.replace(f'rgb="{viejo}"', f'rgb="{nuevo}"')
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", styles.encode("utf-8"))
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
+def _style_ids_titulos_saldo_desde_xlsx(contenido: bytes, nombre_hoja: str) -> set[int]:
+    """Índices s de celdas SALDO (fila 3) leídos del xlsx ya guardado."""
+    try:
+        wb = load_workbook(BytesIO(contenido))
+        if nombre_hoja not in wb.sheetnames:
+            return set()
+        idx = wb.sheetnames.index(nombre_hoja) + 1
+        sheet_path = f"xl/worksheets/sheet{idx}.xml"
+        with zipfile.ZipFile(BytesIO(contenido)) as zin:
+            sheet = zin.read(sheet_path).decode("utf-8", errors="replace")
+        ws = wb[nombre_hoja]
+        fila_hdr = _fila_titulos_corte_cps(ws)
+        ids: set[int] = set()
+        for col, _ in _listar_columnas_corte_mes_cps(ws):
+            coord = _celda_para_escribir(ws, fila_hdr, col).coordinate
+            m = re.search(rf'<c r="{re.escape(coord)}" s="(\d+)"', sheet)
+            if m:
+                ids.add(int(m.group(1)))
+        return ids
+    except Exception:
+        return set()
+
+
 def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
     """Vuelve a pintar títulos Cps tras xlsx-fixer (a veces restaura el gris)."""
     try:
@@ -1053,11 +1112,15 @@ def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
         nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
         ws = wb[nombre]
         _aplicar_encabezados_corte_alternos_cps(ws)
-        style_ids = _indices_estilo_titulos_saldo_cps(ws)
         _preparar_workbook_antes_guardar(wb)
         out = BytesIO()
         wb.save(out)
-        return _aplicar_apply_fill_cellxfs_en_xlsx(out.getvalue(), style_ids)
+        data = out.getvalue()
+        style_ids = _style_ids_titulos_saldo_desde_xlsx(data, nombre)
+        if not style_ids:
+            style_ids = _indices_estilo_titulos_saldo_cps(ws)
+        data = _aplicar_apply_fill_cellxfs_en_xlsx(data, style_ids)
+        return _parchear_fills_rgb_opacos_xlsx(data)
     except Exception:
         return contenido
 
