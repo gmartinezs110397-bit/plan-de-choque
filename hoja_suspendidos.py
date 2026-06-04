@@ -852,12 +852,10 @@ def _escribir_totales_pie_seguimiento(
         ref_e = _celda_para_escribir(ws, fila_tot, col_prev_estado)
         if ref_e.has_style:
             _copiar_estilo_celda_sin_relleno(ref_e, celda_conteo)
-            celda_conteo.alignment = ref_e.alignment
     if col_prev_saldo:
         ref_s = _celda_para_escribir(ws, fila_tot, col_prev_saldo)
         if ref_s.has_style:
             _copiar_estilo_celda_sin_relleno(ref_s, celda_suma)
-            celda_suma.alignment = ref_s.alignment
     _aplicar_estilo_total_saldo(
         celda_suma, ws, col_saldo, col_prev_saldo, fila_tot
     )
