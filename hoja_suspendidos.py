@@ -54,7 +54,7 @@ FILL_ENCABEZADO_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_TITUL
 
 _SIN_BORDE = Border()
 _FORMATO_NUMERO_SALDO_PIE = '"$"#,##0'
-_ALIGNMENT_TOTAL_CONTEO_PIE = Alignment(horizontal="right", vertical="center")
+_ALIGNMENT_TOTAL_CONTEO_PIE = Alignment(horizontal="center", vertical="center")
 _ALIGNMENT_TOTAL_SALDO_PIE = Alignment(horizontal="right", vertical="center")
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
@@ -974,7 +974,7 @@ def _aplicar_estilo_total_saldo(
 
 
 def _escribir_total_estado(celda, valor) -> None:
-    """Total de conteo al pie: entero alineado a la derecha, sin bordes."""
+    """Total de conteo al pie: entero centrado en columna estado, sin bordes."""
     celda.value = valor
     celda.fill = PatternFill(fill_type=None)
     celda.alignment = _ALIGNMENT_TOTAL_CONTEO_PIE
