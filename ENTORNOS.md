@@ -39,6 +39,8 @@ Streamlit Cloud permite **dos apps** con el **mismo repositorio** y **ramas dist
 | **Prueba** | `prueba` | `plan-de-choque-prueba.streamlit.app` (la elige al crear la app) | Probar cambios antes de publicar |
 | **Oficial** | `main` | [plan-de-choque.streamlit.app](https://plan-de-choque.streamlit.app/) | Usuarios finales |
 
+**Código:** las ramas `main` y `prueba` deben apuntar al **mismo commit** (mismo `app.py` y módulos). La **única** diferencia entre apps es la configuración de **Secrets** (clave de acceso al abrir la app).
+
 ### Configuración única en Streamlit Cloud
 
 1. Entre a [share.streamlit.io](https://share.streamlit.io) con su cuenta GitHub.
@@ -57,7 +59,16 @@ Streamlit Cloud permite **dos apps** con el **mismo repositorio** y **ramas dist
 
    La **Matriz** se sube **sin contraseña** de Excel (desbloqueada); no se pide en la app al consolidar.
 
-Solo la app enlazada a `main` es la “oficial”; la de `prueba` no se actualiza hasta que usted suba cambios a esa rama.
+### Mantener `main` y `prueba` alineadas
+
+Tras validar en la app de prueba, publique en oficial y alinee la rama:
+
+```powershell
+.\subir-cambios.ps1 "Describe el cambio"    # → origin/main
+.\subir-a-prueba.ps1                          # sin cambios nuevos: prueba = mismo commit que main
+```
+
+Comprobar en GitHub que ambas ramas muestran el mismo commit reciente.
 
 ### Flujo de trabajo recomendado
 
