@@ -12,6 +12,7 @@ from datetime import datetime, date
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
@@ -329,12 +330,246 @@ def init_session_state():
         "titulo_saldo_corte": "",
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
-        "acceso_autorizado": True,
+        "acceso_autorizado": False,
         "reporte_ejecucion": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
+
+
+def contrasena_acceso_esperada() -> str | None:
+    """Contraseña en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
+    try:
+        if st.secrets.get("sin_contrasena_acceso") in (True, "true", "1", "yes", "si", "sí"):
+            return None
+        valor = st.secrets.get("contrasena_acceso")
+        if valor is None:
+            valor = st.secrets.get("codigo_acceso")
+        if valor is None:
+            return None
+        texto = str(valor).strip()
+        return texto if texto else None
+    except Exception:
+        return None
+
+
+CLAVE_INPUT_CONTRASENA = "input_contrasena_portada"
+CLAVE_VER_CONTRASENA = "ver_contrasena_portada"
+
+
+def _componente_teclado_portada_acceso(clave_widget: str) -> None:
+    """Foco y captura de teclas (components.html suele funcionar mejor que st.html en Cloud)."""
+    selector = f".st-key-{clave_widget} input"
+    caja = ".st-key-portada_acceso_box"
+    components.html(
+        f"""
+        <script>
+        (function () {{
+          const selector = "{selector}";
+          const caja = "{caja}";
+
+          function documentos() {{
+            const docs = [];
+            const vistos = new Set();
+            function agregar(doc) {{
+              if (!doc || vistos.has(doc)) return;
+              vistos.add(doc);
+              docs.push(doc);
+            }}
+            agregar(document);
+            try {{ agregar(window.parent.document); }} catch (err) {{}}
+            try {{
+              window.parent.document.querySelectorAll("iframe").forEach(function (f) {{
+                try {{ agregar(f.contentDocument); }} catch (err) {{}}
+              }});
+            }} catch (err) {{}}
+            return docs;
+          }}
+
+          function buscarInput() {{
+            for (const doc of documentos()) {{
+              let el = doc.querySelector(selector);
+              if (el) return el;
+              const box = doc.querySelector(caja);
+              if (box) {{
+                el = box.querySelector('[data-testid="stTextInput"] input');
+                if (el) return el;
+              }}
+              const form = doc.querySelector('form[data-testid="stForm"]');
+              if (form) {{
+                el = form.querySelector("input");
+                if (el) return el;
+              }}
+            }}
+            return null;
+          }}
+
+          function configurar(el) {{
+            if (!el || el.dataset.pcAcceso === "1") return;
+            el.dataset.pcAcceso = "1";
+            el.setAttribute("autofocus", "");
+            el.setAttribute("inputmode", "numeric");
+            el.setAttribute("autocomplete", "one-time-code");
+          }}
+
+          function enfocar() {{
+            const el = buscarInput();
+            if (!el) return false;
+            configurar(el);
+            try {{
+              el.focus({{ preventScroll: true }});
+              el.click();
+            }} catch (err) {{}}
+            return true;
+          }}
+
+          function insertarTexto(el, ch) {{
+            const proto = window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, "value");
+            const next = el.value + ch;
+            if (desc && desc.set) desc.set.call(el, next);
+            else el.value = next;
+            try {{
+              el.dispatchEvent(new InputEvent("input", {{
+                bubbles: true,
+                inputType: "insertText",
+                data: ch,
+              }}));
+            }} catch (err) {{
+              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
+            }}
+          }}
+
+          function activoEsOtroInput() {{
+            const el = buscarInput();
+            for (const doc of documentos()) {{
+              const ae = doc.activeElement;
+              if (!ae) continue;
+              if (ae === el) return false;
+              const tag = (ae.tagName || "").toUpperCase();
+              if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+            }}
+            return false;
+          }}
+
+          function manejarTecla(e) {{
+            if (activoEsOtroInput()) return;
+            const el = buscarInput();
+            if (!el) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.key === "Tab" || e.key === "Escape" || e.key.startsWith("Arrow")) return;
+
+            if (e.key === "Enter") {{
+              for (const doc of documentos()) {{
+                if (doc.activeElement === el) return;
+              }}
+              e.preventDefault();
+              e.stopPropagation();
+              enfocar();
+              const form = el.closest("form");
+              const btn = form && (
+                form.querySelector('button[kind="primaryFormSubmit"]') ||
+                form.querySelector('button[type="submit"]') ||
+                form.querySelector("button")
+              );
+              if (btn) btn.click();
+              return;
+            }}
+
+            if (e.key.length !== 1) return;
+            e.preventDefault();
+            e.stopPropagation();
+            enfocar();
+            insertarTexto(el, e.key);
+          }}
+
+          function vincular(doc) {{
+            if (!doc || doc.documentElement.dataset.pcAccesoTeclas === "1") return;
+            doc.documentElement.dataset.pcAccesoTeclas = "1";
+            doc.addEventListener("keydown", manejarTecla, true);
+          }}
+
+          function iniciar() {{
+            documentos().forEach(vincular);
+            let intentos = 0;
+            const timer = setInterval(function () {{
+              enfocar();
+              if (++intentos > 40) clearInterval(timer);
+            }}, 50);
+            try {{
+              const obs = new MutationObserver(enfocar);
+              obs.observe(window.parent.document.body, {{
+                childList: true,
+                subtree: true,
+              }});
+            }} catch (err) {{}}
+          }}
+
+          iniciar();
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def render_portada_acceso() -> None:
+    """Pantalla de ingreso; detiene la app hasta contraseña correcta."""
+    contrasena_ok = contrasena_acceso_esperada()
+    st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
+    st.markdown(
+        '<p class="app-subtitle">Ingrese la contraseña para continuar</p>',
+        unsafe_allow_html=True,
+    )
+
+    with st.container(border=True, key="portada_acceso_box"):
+        mostrar_texto = bool(st.session_state.get(CLAVE_VER_CONTRASENA, False))
+        clase_campo = f".st-key-{CLAVE_INPUT_CONTRASENA}"
+        st.markdown(
+            f"""
+            <style>
+            .st-key-portada_acceso_box {clase_campo} input {{
+                -webkit-text-security: {"none" if mostrar_texto else "disc"};
+            }}
+            div[data-testid="InputInstructions"] > span {{
+                display: none !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form(
+            "form_contrasena_acceso",
+            clear_on_submit=False,
+            enter_to_submit=True,
+        ):
+            ingresado = st.text_input(
+                "Contraseña",
+                type="default",
+                placeholder="Contraseña",
+                key=CLAVE_INPUT_CONTRASENA,
+                label_visibility="collapsed",
+                autocomplete="one-time-code",
+            )
+            st.checkbox("Mostrar contraseña", key=CLAVE_VER_CONTRASENA)
+            enviado = st.form_submit_button(
+                "Entrar",
+                type="primary",
+                use_container_width=True,
+            )
+        _componente_teclado_portada_acceso(CLAVE_INPUT_CONTRASENA)
+
+    if enviado:
+        texto = str(st.session_state.get(CLAVE_INPUT_CONTRASENA, ingresado)).strip()
+        if texto == contrasena_ok:
+            st.session_state.acceso_autorizado = True
+            st.rerun()
+        st.session_state[CLAVE_INPUT_CONTRASENA] = ""
+        st.error("Contraseña incorrecta.")
+        st.rerun()
+
+    st.stop()
 
 
 init_session_state()
@@ -2908,6 +3143,13 @@ def procesar_consolidacion(
         if st.session_state.get("consolidacion_work") is None:
             st.session_state.ejecutar_consolidacion_ahora = False
 
+
+if not st.session_state.get("acceso_autorizado"):
+    if contrasena_acceso_esperada() is None:
+        st.session_state.acceso_autorizado = True
+    else:
+        render_portada_acceso()
+        st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _dependencias_consolidacion():
