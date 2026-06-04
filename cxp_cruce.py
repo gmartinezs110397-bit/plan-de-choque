@@ -912,9 +912,9 @@ def _fila_titulos_corte_cps(ws) -> int:
 
 
 def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
-    """(columna, mes) de columnas «Saldo a …» en la fila 3 de Cps."""
+    """(columna, mes) de columnas «Saldo a …» en la fila 3 de Cps (todas, sin deduplicar mes)."""
     fila_hdr = _fila_titulos_corte_cps(ws)
-    columnas: dict[int, int] = {}
+    resultado: list[tuple[int, int]] = []
     limite = _ultima_columna_con_datos(ws)
     for col in range(1, limite + 1):
         celda = _celda_para_escribir(ws, fila_hdr, col)
@@ -932,8 +932,8 @@ def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
             continue
         if "saldo" not in norm and norm not in _MESES_POR_NOMBRE:
             continue
-        columnas[mes] = col
-    return [(columnas[m], m) for m in sorted(columnas)]
+        resultado.append((col, mes))
+    return resultado
 
 
 def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
@@ -1058,6 +1058,143 @@ def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -
         return contenido
 
 
+def _coords_rgb_titulos_saldo_cps(contenido: bytes) -> list[tuple[str, str]]:
+    """Coordenadas Excel y RGB (FFBDD7EE / FFFFFD966) de títulos SALDO en fila 3."""
+    try:
+        wb = load_workbook(BytesIO(contenido))
+        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+        ws = wb[nombre]
+        fila_hdr = _fila_titulos_corte_cps(ws)
+        items: list[tuple[str, str]] = []
+        for col, mes in _listar_columnas_corte_mes_cps(ws):
+            coord = _celda_para_escribir(ws, fila_hdr, col).coordinate
+            rgb = _FILL_AMARILLO_RGB if (mes % 2) else _FILL_AZUL_RGB
+            items.append((coord, rgb))
+        return items
+    except Exception:
+        return []
+
+
+def _asegurar_fill_rgb_en_styles(fills_elem, rgb: str) -> int:
+    """Devuelve fillId (índice en fills) con fgColor rgb opaco."""
+    for i, fill in enumerate(fills_elem.findall(f"{{{_OOXML_NS}}}fill")):
+        xml = ET.tostring(fill, encoding="unicode")
+        if f'rgb="{rgb}"' in xml:
+            return i
+    nuevo = ET.Element(
+        f"{{{_OOXML_NS}}}fill",
+    )
+    pf = ET.SubElement(
+        nuevo,
+        f"{{{_OOXML_NS}}}patternFill",
+        {"patternType": "solid"},
+    )
+    ET.SubElement(pf, f"{{{_OOXML_NS}}}fgColor", {"rgb": rgb})
+    ET.SubElement(pf, f"{{{_OOXML_NS}}}bgColor", {"rgb": rgb})
+    fills_elem.append(nuevo)
+    fills_elem.set("count", str(len(fills_elem.findall(f"{{{_OOXML_NS}}}fill"))))
+    return len(fills_elem.findall(f"{{{_OOXML_NS}}}fill")) - 1
+
+
+def _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido: bytes) -> bytes:
+    """
+    Fuerza fillId + applyFill en el xf que Excel usa (s=), columna por columna.
+    Corrige junio u otras que quedan grises aunque openpyxl asignó fill en memoria.
+    """
+    items = _coords_rgb_titulos_saldo_cps(contenido)
+    if not items:
+        return contenido
+    try:
+        wb = load_workbook(BytesIO(contenido))
+        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+        idx_hoja = wb.sheetnames.index(nombre) + 1
+        sheet_path = f"xl/worksheets/sheet{idx_hoja}.xml"
+
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles_data = zin.read("xl/styles.xml")
+            sheet_data = zin.read(sheet_path)
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name not in ("xl/styles.xml", sheet_path)
+            }
+
+        root = ET.fromstring(styles_data)
+        fills_elem = root.find(f"{{{_OOXML_NS}}}fills")
+        cell_xfs = root.find(f"{{{_OOXML_NS}}}cellXfs")
+        if fills_elem is None or cell_xfs is None:
+            return contenido
+
+        xfs = cell_xfs.findall(f"{{{_OOXML_NS}}}xf")
+        fill_azul = _asegurar_fill_rgb_en_styles(fills_elem, _FILL_AZUL_RGB)
+        fill_amarillo = _asegurar_fill_rgb_en_styles(fills_elem, _FILL_AMARILLO_RGB)
+        cell_xfs.set("count", str(len(xfs)))
+
+        sheet_txt = sheet_data.decode("utf-8", errors="replace")
+
+        for coord, rgb in items:
+            fill_id = fill_azul if rgb == _FILL_AZUL_RGB else fill_amarillo
+            pat = rf'(<c r="{re.escape(coord)}"[^>]*)(>)'
+            m = re.search(pat, sheet_txt)
+            if not m:
+                continue
+            tag_head = m.group(1)
+            sid_m = re.search(r'\ss="(\d+)"', tag_head)
+            if sid_m:
+                sid = int(sid_m.group(1))
+            else:
+                base = xfs[0] if xfs else None
+                font_id = base.get("fontId", "0") if base is not None else "0"
+                border_id = base.get("borderId", "0") if base is not None else "0"
+                num_fmt = base.get("numFmtId", "0") if base is not None else "0"
+                nuevo_xf = ET.Element(
+                    f"{{{_OOXML_NS}}}xf",
+                    {
+                        "numFmtId": num_fmt,
+                        "fontId": font_id,
+                        "fillId": str(fill_id),
+                        "borderId": border_id,
+                        "applyFill": "1",
+                        "applyAlignment": "1",
+                        "pivotButton": "0",
+                        "quotePrefix": "0",
+                        "xfId": "0",
+                    },
+                )
+                cell_xfs.append(nuevo_xf)
+                xfs = cell_xfs.findall(f"{{{_OOXML_NS}}}xf")
+                sid = len(xfs) - 1
+                cell_xfs.set("count", str(len(xfs)))
+                if sid_m:
+                    tag_head = re.sub(r'\ss="\d+"', f' s="{sid}"', tag_head)
+                else:
+                    tag_head = tag_head + f' s="{sid}"'
+
+            if sid < len(xfs):
+                xf = xfs[sid]
+                xf.set("fillId", str(fill_id))
+                xf.set("applyFill", "1")
+
+            if sid_m:
+                new_tag = re.sub(r'\ss="\d+"', f' s="{sid}"', tag_head) + m.group(2)
+            else:
+                new_tag = tag_head + m.group(2)
+            sheet_txt = sheet_txt[: m.start()] + new_tag + sheet_txt[m.end() :]
+
+        new_styles = ET.tostring(root, encoding="utf-8")
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", new_styles)
+            zout.writestr(sheet_path, sheet_txt.encode("utf-8"))
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
 def _parchear_fills_rgb_opacos_xlsx(contenido: bytes) -> bytes:
     """openpyxl a veces guarda 00BDD7EE (transparente); Excel muestra gris de fondo."""
     try:
@@ -1120,7 +1257,8 @@ def _repintar_encabezados_cps_en_xlsx(contenido: bytes) -> bytes:
         if not style_ids:
             style_ids = _indices_estilo_titulos_saldo_cps(ws)
         data = _aplicar_apply_fill_cellxfs_en_xlsx(data, style_ids)
-        return _parchear_fills_rgb_opacos_xlsx(data)
+        data = _parchear_fills_rgb_opacos_xlsx(data)
+        return _sincronizar_xf_titulos_saldo_cps_en_xlsx(data)
     except Exception:
         return contenido
 
@@ -1343,6 +1481,9 @@ def exportar_contratos_preservando_formato(
     else:
         fila_hdr = _fila_titulos_corte_cps(ws)
         _celda_para_escribir(ws, fila_hdr, col_corte).value = titulo_corte
+        _aplicar_fill_encabezado_corte_cps(
+            ws, col_corte, _fecha_datetime(fecha_analisis).month
+        )
 
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
 
