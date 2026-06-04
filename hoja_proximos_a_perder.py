@@ -132,7 +132,13 @@ def _actualizar_resumen_proximos(
 
     suma = _suma_saldos_columna(ws, col_saldo)
     _escribir_totales_pie_seguimiento(
-        ws, col_saldo, col_estado, col_prev_saldo, conteo_mostrar, suma
+        ws,
+        col_saldo,
+        col_estado,
+        col_prev_saldo,
+        col_prev_estado,
+        conteo_mostrar,
+        suma,
     )
 
     return conteo_real, conteo_mostrar

@@ -602,6 +602,15 @@ def _asegurar_columnas_mes(
     _aplicar_encabezados_meses_alternos(ws)
     _reforzar_titulos_pares_mes_seguimiento(ws, _fecha_datetime(fecha).year)
 
+    # Títulos vacíos tras copiar estilo / limpiar legacy (encabezado en fila 1)
+    celda_t_s = _celda_para_escribir(ws, fila_hdr, col_saldo)
+    celda_t_e = _celda_para_escribir(ws, fila_hdr, col_estado)
+    if not str(celda_t_s.value or "").strip() or not str(celda_t_e.value or "").strip():
+        _aplicar_titulos_encabezado_mes(
+            ws, col_saldo, col_estado, fecha, col_prev_saldo, col_prev_estado
+        )
+        _aplicar_encabezados_meses_alternos(ws)
+
     return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
 
 
@@ -803,12 +812,17 @@ def _limpiar_totales_filas_superiores_seguimiento(
     col_saldo: int,
     col_estado: int,
 ) -> None:
-    """Quita totales en filas 1-2 si la plantilla los tenía arriba (pie es la fila válida)."""
+    """
+    Quita totales legacy en filas 1-2 (plantilla Cps).
+    No toca la fila de encabezados ni las filas de contratos.
+    """
     from cxp_cruce import FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS, _celda_para_escribir
 
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    fila_ini = _fila_inicio_datos_hoja(ws)
     fila_tot = _fila_totales_seguimiento(ws)
     for fila in (FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS):
-        if fila >= fila_tot:
+        if fila >= fila_tot or fila <= fila_hdr or fila >= fila_ini:
             continue
         for col in (col_saldo, col_estado):
             celda = _celda_para_escribir(ws, fila, col)
@@ -821,10 +835,11 @@ def _escribir_totales_pie_seguimiento(
     col_saldo: int,
     col_estado: int,
     col_prev_saldo: int | None,
+    col_prev_estado: int | None,
     conteo_mostrar: int,
     suma: float,
 ) -> None:
-    """Escribe suma y conteo al pie; reemplaza fórmulas vacías del mes nuevo."""
+    """Escribe suma y conteo al pie; mismo formato que el total del mes anterior."""
     from cxp_cruce import _celda_para_escribir
 
     _limpiar_totales_filas_superiores_seguimiento(ws, col_saldo, col_estado)
@@ -833,6 +848,16 @@ def _escribir_totales_pie_seguimiento(
     celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
     _escribir_total_estado(celda_conteo, conteo_mostrar)
     celda_suma.value = suma
+    if col_prev_estado:
+        ref_e = _celda_para_escribir(ws, fila_tot, col_prev_estado)
+        if ref_e.has_style:
+            _copiar_estilo_celda_sin_relleno(ref_e, celda_conteo)
+            celda_conteo.alignment = ref_e.alignment
+    if col_prev_saldo:
+        ref_s = _celda_para_escribir(ws, fila_tot, col_prev_saldo)
+        if ref_s.has_style:
+            _copiar_estilo_celda_sin_relleno(ref_s, celda_suma)
+            celda_suma.alignment = ref_s.alignment
     _aplicar_estilo_total_saldo(
         celda_suma, ws, col_saldo, col_prev_saldo, fila_tot
     )
@@ -882,7 +907,13 @@ def _actualizar_resumen_suspendidos(
 
     suma = _suma_saldos_columna(ws, col_saldo)
     _escribir_totales_pie_seguimiento(
-        ws, col_saldo, col_estado, col_prev_saldo, conteo_mostrar, suma
+        ws,
+        col_saldo,
+        col_estado,
+        col_prev_saldo,
+        col_prev_estado,
+        conteo_mostrar,
+        suma,
     )
 
     return conteo_real, conteo_mostrar
