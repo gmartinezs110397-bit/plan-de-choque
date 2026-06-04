@@ -116,13 +116,11 @@ st.markdown(
     .file-ok { color: #16a34a; font-size: 0.85rem; font-weight: 500; }
     .section-title {
         font-size: 1rem;
-        font-weight: 700;
+        font-weight: 600;
         color: #0f172a;
         margin: 2rem 0 0.75rem;
-        padding: 0.45rem 0.65rem;
-        background: #FFD966;
-        border-bottom: none;
-        border-radius: 4px;
+        padding-bottom: 0.4rem;
+        border-bottom: 2px solid #e2e8f0;
     }
     .metric-card {
         background: #fff;
