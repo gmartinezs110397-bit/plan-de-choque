@@ -5,12 +5,19 @@ from __future__ import annotations
 import re
 from copy import copy
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Callable
 
 from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 
-from constantes import HOJAS_SUSPENDIDOS
+from constantes import (
+    AMARILLO_DATOS,
+    AMARILLO_TITULO,
+    AMARILLOS_TITULO_COMPAT,
+    FILL_VERDE_LIQUIDADO,
+    HOJAS_SUSPENDIDOS,
+    VERDES_RELLENO_COMPAT,
+)
 from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
@@ -41,10 +48,9 @@ from cxp_cruce import (
     titulos_columna_estado_mes,
 )
 
-FILL_VERDE_NEON = PatternFill(fill_type="solid", fgColor="CCFF00")
-FILL_AMARILLO = PatternFill(fill_type="solid", fgColor="FFFF00")
+FILL_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_DATOS)
 FILL_ENCABEZADO_AZUL = PatternFill(fill_type="solid", fgColor="BDD7EE")
-FILL_ENCABEZADO_AMARILLO = PatternFill(fill_type="solid", fgColor="FFF2CC")
+FILL_ENCABEZADO_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
 
@@ -58,15 +64,7 @@ _RGB_AZUL_ENCABEZADO = (
     "DAEEF3",
     "C5D9F1",
 )
-_RGB_AMARILLO_ENCABEZADO = (
-    "FFF2CC",
-    "FFFF00",
-    "FFEB9C",
-    "FFC000",
-    "FFE699",
-    "FFF9C4",
-    "FCE4D6",
-)
+_RGB_AMARILLO_ENCABEZADO = AMARILLOS_TITULO_COMPAT
 
 
 def resolver_hoja_suspendidos(nombres_hojas: list[str]) -> str | None:
@@ -515,6 +513,12 @@ def _es_suspendido(valor) -> bool:
     return "suspendido" in _normalizar(str(valor or ""))
 
 
+def _normalizar_relleno_verde_liquidado(celda) -> None:
+    """Unifica tonos legacy (p. ej. CCFF00) al verde LIQUIDADO de Estrategias."""
+    if _celda_tiene_relleno_verde(celda):
+        celda.fill = FILL_VERDE_LIQUIDADO
+
+
 def _celda_tiene_relleno_verde(celda) -> bool:
     fill = celda.fill
     if not fill or fill.fill_type != "solid":
@@ -524,8 +528,7 @@ def _celda_tiene_relleno_verde(celda) -> bool:
     if not rgb:
         return False
     s = str(rgb).upper()
-    verdes = ("CCFF00", "39FF14", "00FF00", "92D050", "C6EFCE", "00B050")
-    return any(v in s for v in verdes)
+    return any(v in s for v in VERDES_RELLENO_COMPAT)
 
 
 def _celda_tiene_relleno_amarillo(celda) -> bool:
@@ -536,7 +539,7 @@ def _celda_tiene_relleno_amarillo(celda) -> bool:
     if not rgb:
         return False
     s = str(rgb).upper()
-    return "FFFF00" in s or "FFEB9C" in s or "FFC000" in s
+    return AMARILLO_DATOS in s or "FFEB9C" in s
 
 
 def _asegurar_columnas_mes(
@@ -616,13 +619,13 @@ def _resolver_relleno_estado(
 
     if _normalizar(prev_txt) == _normalizar(curr_txt):
         if prev_verde and not curr_susp:
-            return FILL_VERDE_NEON
+            return FILL_VERDE_LIQUIDADO
         if prev_amarillo and curr_susp:
             return FILL_AMARILLO
         return None
 
     if not curr_susp:
-        return FILL_VERDE_NEON
+        return FILL_VERDE_LIQUIDADO
 
     if prev_verde or (prev_txt and not prev_susp):
         return FILL_AMARILLO
@@ -646,11 +649,15 @@ def _ultima_fila_contratista(ws) -> int | None:
 
 
 def _fila_totales_seguimiento(ws) -> int:
-    """Fila al pie de la lista de contratos (conteo en col. estado, suma en col. saldo)."""
-    ultima = _ultima_fila_contratista(ws)
-    if ultima is not None:
-        return ultima + 1
-    return _fila_inicio_datos_hoja(ws)
+    """Primera fila al pie de contratos (conteo en col. estado, suma en col. saldo)."""
+    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
+    _, fila_fin = _rango_filas_datos_seguimiento(ws)
+    fila_busq = fila_fin + 1
+    for fila in range(fila_busq, ws.max_row + 1):
+        if col_nombre and _fila_tiene_contratista(ws, fila, col_nombre):
+            continue
+        return fila
+    return fila_busq
 
 
 def _rango_filas_datos_seguimiento(ws) -> tuple[int, int]:
@@ -674,17 +681,14 @@ def _conteo_suspendidos_en_columna(ws, col_estado: int) -> int:
 def _conteo_suspendidos_mes_anterior(
     ws,
     col_prev_estado: int | None,
-) -> int | None:
-    if not col_prev_estado:
-        return None
-    fila_tot = _fila_totales_seguimiento(ws)
-    celda_prev = ws.cell(fila_tot, col_prev_estado)
-    if celda_prev.value not in (None, ""):
-        try:
-            return int(float(celda_prev.value))
-        except (TypeError, ValueError):
-            pass
-    return _conteo_suspendidos_en_columna(ws, col_prev_estado)
+) -> float | None:
+    return _tope_conteo_estado_mes_anterior(
+        ws,
+        col_prev_estado,
+        recalcular_si_sin_reporte=lambda: _conteo_suspendidos_en_columna(
+            ws, col_prev_estado
+        ),
+    )
 
 
 def _leer_total_reportado_mes_anterior(
@@ -697,7 +701,9 @@ def _leer_total_reportado_mes_anterior(
     if not col_prev:
         return None
     fila = fila_total if fila_total is not None else _fila_totales_seguimiento(ws)
-    celda = ws.cell(fila, col_prev)
+    from cxp_cruce import _celda_para_escribir
+
+    celda = _celda_para_escribir(ws, fila, col_prev)
     if celda.value in (None, ""):
         return None
     try:
@@ -706,12 +712,138 @@ def _leer_total_reportado_mes_anterior(
         return None
 
 
+def _tope_conteo_estado_mes_anterior(
+    ws,
+    col_prev_estado: int | None,
+    *,
+    recalcular_si_sin_reporte: Callable[[], float | int] | None = None,
+) -> float | None:
+    """
+    Tope del total en columna estado: el número del mes anterior ya reportado
+    (celda al pie; si no hay, fila 1 legacy; si sigue vacío, recálculo opcional).
+    """
+    if not col_prev_estado:
+        return None
+
+    reportado = _leer_total_reportado_mes_anterior(ws, col_prev_estado)
+    if reportado is not None:
+        return reportado
+
+    from cxp_cruce import FILA_CONTEO_CONTRATOS, _celda_para_escribir
+
+    celda_legacy = _celda_para_escribir(ws, FILA_CONTEO_CONTRATOS, col_prev_estado)
+    if celda_legacy.value not in (None, ""):
+        try:
+            return float(celda_legacy.value)
+        except (TypeError, ValueError):
+            pass
+
+    if recalcular_si_sin_reporte is not None:
+        return float(recalcular_si_sin_reporte())
+    return None
+
+
+def _referencia_formato_saldo(
+    ws,
+    col_saldo: int,
+    col_prev_saldo: int | None,
+    fila_total: int,
+):
+    """Celda de referencia para copiar formato numérico al total de saldo."""
+    if col_prev_saldo:
+        ref = ws.cell(fila_total, col_prev_saldo)
+        if ref.value not in (None, "") or str(ref.number_format or "").strip() not in (
+            "",
+            "General",
+        ):
+            return ref
+    fila_ini, fila_fin = _rango_filas_datos_seguimiento(ws)
+    for fila in range(fila_fin, fila_ini - 1, -1):
+        c = ws.cell(fila, col_saldo)
+        if c.value not in (None, ""):
+            return c
+    col_sf = _indice_columna_en_hoja(ws, "SALDO FINAL", "Saldo Final")
+    if col_sf:
+        for fila in range(fila_fin, fila_ini - 1, -1):
+            c = ws.cell(fila, col_sf)
+            if c.value not in (None, ""):
+                return c
+    return None
+
+
+def _aplicar_estilo_total_saldo(
+    celda,
+    ws,
+    col_saldo: int,
+    col_prev_saldo: int | None,
+    fila_total: int,
+) -> None:
+    """Total de saldo: número con formato de la columna; sin color de fondo."""
+    from cxp_cruce import _ALIGNMENT_CENTRO_TOTAL
+
+    ref = _referencia_formato_saldo(ws, col_saldo, col_prev_saldo, fila_total)
+    if ref and ref.has_style:
+        _copiar_estilo_celda_sin_relleno(ref, celda)
+    else:
+        celda.fill = PatternFill(fill_type=None)
+    celda.alignment = _ALIGNMENT_CENTRO_TOTAL
+
+
+def _escribir_total_estado(celda, valor) -> None:
+    """Total de estado: valor centrado, sin formato especial ni color."""
+    from cxp_cruce import _ALIGNMENT_CENTRO_TOTAL
+
+    celda.value = valor
+    celda.fill = PatternFill(fill_type=None)
+    celda.alignment = _ALIGNMENT_CENTRO_TOTAL
+
+
+def _limpiar_totales_filas_superiores_seguimiento(
+    ws,
+    col_saldo: int,
+    col_estado: int,
+) -> None:
+    """Quita totales en filas 1-2 si la plantilla los tenía arriba (pie es la fila válida)."""
+    from cxp_cruce import FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS, _celda_para_escribir
+
+    fila_tot = _fila_totales_seguimiento(ws)
+    for fila in (FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS):
+        if fila >= fila_tot:
+            continue
+        for col in (col_saldo, col_estado):
+            celda = _celda_para_escribir(ws, fila, col)
+            celda.value = None
+            celda.fill = PatternFill(fill_type=None)
+
+
+def _escribir_totales_pie_seguimiento(
+    ws,
+    col_saldo: int,
+    col_estado: int,
+    col_prev_saldo: int | None,
+    conteo_mostrar: int,
+    suma: float,
+) -> None:
+    """Escribe suma y conteo al pie; reemplaza fórmulas vacías del mes nuevo."""
+    from cxp_cruce import _celda_para_escribir
+
+    _limpiar_totales_filas_superiores_seguimiento(ws, col_saldo, col_estado)
+    fila_tot = _fila_totales_seguimiento(ws)
+    celda_conteo = _celda_para_escribir(ws, fila_tot, col_estado)
+    celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
+    _escribir_total_estado(celda_conteo, conteo_mostrar)
+    celda_suma.value = suma
+    _aplicar_estilo_total_saldo(
+        celda_suma, ws, col_saldo, col_prev_saldo, fila_tot
+    )
+
+
 def _aplicar_tope_mes_anterior(
     valor_real: float | int,
     valor_anterior: float | None,
 ) -> tuple[float | int, float | int]:
     """
-    No se puede reportar un número mayor al del mes anterior.
+    Total en columna estado: no puede superar el reportado el mes anterior.
     Devuelve (valor_a_mostrar, valor_real).
     """
     if valor_anterior is None:
@@ -745,41 +877,13 @@ def _actualizar_resumen_suspendidos(
     """Última fila: conteo en col. estado (tope vs mes anterior) y suma en col. saldo."""
     conteo_real = _conteo_suspendidos_en_columna(ws, col_estado)
     conteo_prev = _conteo_suspendidos_mes_anterior(ws, col_prev_estado)
-    if conteo_prev is None and col_prev_estado:
-        reportado = _leer_total_reportado_mes_anterior(ws, col_prev_estado)
-        if reportado is not None:
-            conteo_prev = int(reportado)
-    conteo_mostrar, _ = _aplicar_tope_mes_anterior(
-        conteo_real,
-        float(conteo_prev) if conteo_prev is not None else None,
-    )
+    conteo_mostrar, _ = _aplicar_tope_mes_anterior(conteo_real, conteo_prev)
     conteo_mostrar = int(conteo_mostrar)
 
     suma = _suma_saldos_columna(ws, col_saldo)
-
-    fila_tot = _fila_totales_seguimiento(ws)
-    celda_conteo = _celda_para_escribir(ws, fila_tot, col_estado)
-    celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
-
-    if col_prev_estado:
-        _copiar_estilo_celda(
-            ws.cell(fila_tot, col_prev_estado),
-            celda_conteo,
-        )
-    if col_prev_saldo:
-        _copiar_estilo_celda(
-            ws.cell(fila_tot, col_prev_saldo),
-            celda_suma,
-        )
-
-    if not _celda_tiene_formula(celda_conteo):
-        celda_conteo.value = conteo_mostrar
-        celda_conteo.fill = PatternFill(fill_type=None)
-
-    if not _celda_tiene_formula(celda_suma):
-        celda_suma.value = suma
-
-    _centrar_celdas_total(celda_conteo, celda_suma)
+    _escribir_totales_pie_seguimiento(
+        ws, col_saldo, col_estado, col_prev_saldo, conteo_mostrar, suma
+    )
 
     return conteo_real, conteo_mostrar
 
@@ -870,6 +974,7 @@ def actualizar_hoja_suspendidos(
         relleno = _resolver_relleno_estado(prev_estado, prev_celda, estado)
         if relleno:
             celda_estado.fill = relleno
+        _normalizar_relleno_verde_liquidado(celda_estado)
 
     conteo_real, conteo_mostrar = _actualizar_resumen_suspendidos(
         ws, col_saldo, col_estado, col_prev_saldo, col_prev_estado

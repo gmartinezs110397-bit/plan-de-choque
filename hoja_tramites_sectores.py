@@ -7,11 +7,9 @@ from typing import Any
 
 from openpyxl.styles import PatternFill
 
-from constantes import HOJAS_TRAMITES_SECTORES
+from constantes import FILL_VERDE_LIQUIDADO, HOJAS_TRAMITES_SECTORES
 from cxp_cruce import (
-    _centrar_celdas_total,
     _celda_para_escribir,
-    _celda_tiene_formula,
     _copiar_estilo_celda,
     _fila_inicio_datos_hoja,
     _fila_tiene_contratista,
@@ -22,12 +20,13 @@ from cxp_cruce import (
 )
 from hoja_suspendidos import (
     FILL_AMARILLO,
-    FILL_VERDE_NEON,
+    _normalizar_relleno_verde_liquidado,
     _aplicar_tope_mes_anterior,
     _asegurar_columnas_mes,
     _autoajustar_columna_suspendidos,
+    _escribir_totales_pie_seguimiento,
     _fila_totales_seguimiento,
-    _leer_total_reportado_mes_anterior,
+    _tope_conteo_estado_mes_anterior,
     _rango_filas_datos_seguimiento,
     _suma_saldos_columna,
     preparar_mapa_k3_saldo_estado,
@@ -63,14 +62,14 @@ def _saldo_es_cero(valor) -> bool:
 def _resolver_relleno_estado_tramites(curr_estado, saldo) -> PatternFill | None:
     """Verde: LIQUIDADO. Amarillo: saldo cero (no liquidado)."""
     if _es_liquidado(curr_estado):
-        return FILL_VERDE_NEON
+        return FILL_VERDE_LIQUIDADO
     if _saldo_es_cero(saldo):
         return FILL_AMARILLO
     return None
 
 
 def _cuenta_para_total_tramites(estado, saldo) -> bool:
-    """Conteo en fila 1: no LIQUIDADO y saldo distinto de cero."""
+    """Pie de columna estado: no LIQUIDADO y saldo distinto de cero."""
     if _es_liquidado(estado):
         return False
     if _saldo_es_cero(saldo):
@@ -94,16 +93,14 @@ def _conteo_tramites_mes_anterior(
     col_prev_estado: int | None,
     col_prev_saldo: int | None,
 ) -> float | None:
-    if not col_prev_estado:
-        return None
-    reportado = _leer_total_reportado_mes_anterior(
-        ws, FILA_CONTEO_CONTRATOS, col_prev_estado
-    )
-    if reportado is not None:
-        return reportado
+    recalc = None
     if col_prev_saldo:
-        return float(_conteo_tramites_en_columna(ws, col_prev_estado, col_prev_saldo))
-    return None
+        recalc = lambda: _conteo_tramites_en_columna(
+            ws, col_prev_estado, col_prev_saldo
+        )
+    return _tope_conteo_estado_mes_anterior(
+        ws, col_prev_estado, recalcular_si_sin_reporte=recalc
+    )
 
 
 def _actualizar_resumen_tramites(
@@ -121,30 +118,9 @@ def _actualizar_resumen_tramites(
     conteo_mostrar = int(conteo_mostrar)
 
     suma = _suma_saldos_columna(ws, col_saldo)
-
-    fila_tot = _fila_totales_seguimiento(ws)
-    celda_conteo = _celda_para_escribir(ws, fila_tot, col_estado)
-    celda_suma = _celda_para_escribir(ws, fila_tot, col_saldo)
-
-    if col_prev_estado:
-        _copiar_estilo_celda(
-            ws.cell(fila_tot, col_prev_estado),
-            celda_conteo,
-        )
-    if col_prev_saldo:
-        _copiar_estilo_celda(
-            ws.cell(fila_tot, col_prev_saldo),
-            celda_suma,
-        )
-
-    if not _celda_tiene_formula(celda_conteo):
-        celda_conteo.value = conteo_mostrar
-        celda_conteo.fill = PatternFill(fill_type=None)
-
-    if not _celda_tiene_formula(celda_suma):
-        celda_suma.value = suma
-
-    _centrar_celdas_total(celda_conteo, celda_suma)
+    _escribir_totales_pie_seguimiento(
+        ws, col_saldo, col_estado, col_prev_saldo, conteo_mostrar, suma
+    )
 
     return conteo_real, conteo_mostrar
 
@@ -220,6 +196,7 @@ def actualizar_hoja_tramites_sectores(
         relleno = _resolver_relleno_estado_tramites(estado, saldo)
         if relleno:
             celda_estado.fill = relleno
+        _normalizar_relleno_verde_liquidado(celda_estado)
 
     conteo_real, conteo_mostrar = _actualizar_resumen_tramites(
         ws, col_saldo, col_estado, col_prev_saldo, col_prev_estado

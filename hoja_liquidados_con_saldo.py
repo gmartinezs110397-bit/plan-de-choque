@@ -10,7 +10,6 @@ from constantes import HOJAS_LIQUIDADOS_CON_SALDO
 from cxp_cruce import (
     _celda_para_escribir,
     _celda_tiene_formula,
-    _centrar_celdas_total,
     _copiar_estilo_celda,
     _copiar_estilo_celda_sin_relleno,
     _fila_encabezado_hoja_datos,
@@ -26,7 +25,9 @@ from cxp_cruce import (
 )
 from hoja_suspendidos import (
     _aplicar_encabezados_saldo_mes_alternos,
+    _aplicar_estilo_total_saldo,
     _columna_saldo_mes_en_hoja,
+    _escribir_total_estado,
     _normalizar_titulos_mes_cortos,
     _rango_filas_datos_seguimiento,
     _ultima_fila_contratista,
@@ -214,17 +215,13 @@ def _actualizar_resumen_liquidados(
     celda_suma = _celda_para_escribir(ws, fila_suma, col_saldo)
     celda_conteo = _celda_para_escribir(ws, fila_conteo, col_saldo)
 
-    if col_prev_saldo:
-        _copiar_estilo_celda(ws.cell(fila_suma, col_prev_saldo), celda_suma)
-        _copiar_estilo_celda(ws.cell(fila_conteo, col_prev_saldo), celda_conteo)
-
     if not _celda_tiene_formula(celda_suma):
         celda_suma.value = suma
+        _aplicar_estilo_total_saldo(
+            celda_suma, ws, col_saldo, col_prev_saldo, fila_suma
+        )
     if not _celda_tiene_formula(celda_conteo):
-        celda_conteo.value = conteo
-        celda_conteo.fill = PatternFill(fill_type=None)
-
-    _centrar_celdas_total(celda_suma, celda_conteo)
+        _escribir_total_estado(celda_conteo, conteo)
 
 
 def actualizar_hoja_liquidados_con_saldo(

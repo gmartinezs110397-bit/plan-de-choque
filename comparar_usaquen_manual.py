@@ -49,6 +49,7 @@ from hoja_suspendidos import (
     titulo_estado_suspendidos,
     titulo_saldo_suspendidos,
 )
+from constantes import AMARILLOS_TITULO_COMPAT, VERDES_RELLENO_COMPAT
 from hoja_tramites_sectores import resolver_hoja_tramites_sectores
 
 DOWNLOADS = Path(r"C:\Users\f1rac\Downloads")
@@ -78,14 +79,19 @@ def _rgb(celda) -> str:
 def _es_verde(rgb: str) -> bool:
     if not rgb:
         return False
-    verdes = ("CCFF00", "39FF14", "00FF00", "92D050", "C6EFCE", "00B050")
-    return any(v in rgb for v in verdes)
+    return any(v in rgb for v in VERDES_RELLENO_COMPAT)
 
 
-def _es_amarillo(rgb: str) -> bool:
+def _es_amarillo_titulo(rgb: str) -> bool:
     if not rgb:
         return False
-    return "FFFF00" in rgb or "FFEB9C" in rgb or "FFC000" in rgb or "FFF2CC" in rgb
+    return any(v in rgb for v in AMARILLOS_TITULO_COMPAT)
+
+
+def _es_amarillo_datos(rgb: str) -> bool:
+    if not rgb:
+        return False
+    return "FFFF00" in rgb or "FFEB9C" in rgb
 
 
 def analizar_formato_hoja(ws, nombre_hoja: str) -> dict:
@@ -104,7 +110,7 @@ def analizar_formato_hoja(ws, nombre_hoja: str) -> dict:
                     "titulo": titulo,
                     "hdr_rgb": hdr_rgb,
                     "hdr_azul": hdr_rgb in ("BDD7EE", "9BC2E6", "8DB4E2", "4472C4", "DDEBF7"),
-                    "hdr_amarillo": _es_amarillo(hdr_rgb),
+                    "hdr_amarillo": _es_amarillo_titulo(hdr_rgb),
                 }
             )
 
@@ -125,7 +131,7 @@ def analizar_formato_hoja(ws, nombre_hoja: str) -> dict:
             rgb = _rgb(ws.cell(fila, col_estado_mayo))
             if _es_verde(rgb):
                 verde_estado += 1
-            elif _es_amarillo(rgb):
+            elif _es_amarillo_datos(rgb):
                 amarillo_estado += 1
             else:
                 sin_color += 1

@@ -113,14 +113,16 @@ st.markdown(
         font-weight: 700;
         margin-right: 0.5rem;
     }
-    .file-ok { color: #16a34a; font-size: 0.85rem; font-weight: 500; }
+    .file-ok { color: #00FF00; font-size: 0.85rem; font-weight: 500; }
     .section-title {
         font-size: 1rem;
-        font-weight: 600;
+        font-weight: 700;
         color: #0f172a;
         margin: 2rem 0 0.75rem;
-        padding-bottom: 0.4rem;
-        border-bottom: 2px solid #e2e8f0;
+        padding: 0.45rem 0.65rem;
+        background: #FFD966;
+        border-bottom: none;
+        border-radius: 4px;
     }
     .metric-card {
         background: #fff;
@@ -255,29 +257,29 @@ st.markdown(
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23dc2626'%3E%3Cpath d='M9 3h6a1 1 0 0 1 1 1v1h4a1 1 0 1 1 0 2h-1v13a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V7H4a1 1 0 1 1 0-2h4V4a1 1 0 0 1 1-1zm1 2h4V4h-4v1zm-2 3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8H8zm3 3a1 1 0 1 1 2 0v7a1 1 0 1 1-2 0v-7zm4 0a1 1 0 1 1 2 0v7a1 1 0 1 1-2 0v-7z'/%3E%3C/svg%3E");
         pointer-events: none;
     }
-    /* Descargas — verde */
+    /* Descargas — verde LIQUIDADO (#00FF00, ver constantes.VERDE_LIQUIDADO) */
     .st-key-btn_descargar_excel button,
     .st-key-dl_contratos_todas button {
-        background: #059669 !important;
-        background-color: #059669 !important;
-        color: #ffffff !important;
-        border: 1px solid #059669 !important;
+        background: #00FF00 !important;
+        background-color: #00FF00 !important;
+        color: #0f172a !important;
+        border: 1px solid #00FF00 !important;
         font-weight: 600 !important;
         border-radius: 10px !important;
-        box-shadow: 0 2px 8px rgba(5, 150, 105, 0.35) !important;
+        box-shadow: 0 2px 8px rgba(0, 255, 0, 0.35) !important;
     }
     .st-key-btn_descargar_excel button:hover,
     .st-key-dl_contratos_todas button:hover {
-        background: #047857 !important;
-        background-color: #047857 !important;
-        border-color: #047857 !important;
-        color: #ffffff !important;
+        background: #00DD00 !important;
+        background-color: #00DD00 !important;
+        border-color: #00DD00 !important;
+        color: #0f172a !important;
     }
     .st-key-btn_descargar_excel button p,
     .st-key-btn_descargar_excel button span,
     .st-key-dl_contratos_todas button p,
     .st-key-dl_contratos_todas button span {
-        color: #ffffff !important;
+        color: #0f172a !important;
     }
     .st-key-btn_descargar_excel button:disabled,
     .st-key-dl_contratos_todas button:disabled {

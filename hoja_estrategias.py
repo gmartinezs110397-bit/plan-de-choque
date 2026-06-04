@@ -7,7 +7,7 @@ from datetime import date, datetime
 
 from openpyxl.styles import PatternFill
 
-from constantes import HOJAS_ESTRATEGIAS
+from constantes import AMARILLO_TITULO, FILL_VERDE_LIQUIDADO, HOJAS_ESTRATEGIAS
 from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
@@ -38,9 +38,7 @@ COL_MONTO = 6  # F
 FILA_TITULOS = 3
 FILA_INICIO_DATOS = 4
 
-# Misma paleta que la plantilla de Estrategias
-FILL_TITULOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor="FFC000")
-FILL_DATOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor="00FA00")
+FILL_TITULOS_ESTRATEGIAS = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
 
 
 def resolver_hoja_estrategias(nombres_hojas: list[str]) -> str | None:
@@ -92,18 +90,28 @@ def _aplicar_relleno_datos_estrategias(ws, filas: list[int], fila_total: int | N
     for fila in objetivos:
         for col in (COL_CONTRATOS, COL_MONTO):
             celda = ws.cell(fila, col)
-            celda.fill = FILL_DATOS_ESTRATEGIAS
+            celda.fill = FILL_VERDE_LIQUIDADO
 
 
-def _leer_totales_hoja_par(ws, fecha: datetime | date) -> tuple[float | int | None, float | int | None]:
-    """Conteo y suma en la última fila de cada columna del mes (Suspendidos, Próximos, Trámites)."""
+def _leer_totales_hoja_par(
+    ws,
+    fecha: datetime | date,
+    *,
+    fila_conteo: int | None = None,
+    fila_suma: int | None = None,
+) -> tuple[float | int | None, float | int | None]:
+    """
+    Conteo (col. estado) y suma (col. saldo) del mes.
+    Suspendidos, Próximos a perder y Trámites sectores: pie de lista.
+    """
     col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
     col_estado = _columna_estado_mes_en_hoja(ws, fecha)
     if not col_saldo or not col_estado:
         return None, None
-    fila_tot = _fila_totales_seguimiento(ws)
-    conteo = _valor_numerico(ws.cell(fila_tot, col_estado).value)
-    suma = _valor_numerico(ws.cell(fila_tot, col_saldo).value)
+    fila_c = fila_conteo if fila_conteo is not None else _fila_totales_seguimiento(ws)
+    fila_s = fila_suma if fila_suma is not None else fila_c
+    conteo = _valor_numerico(ws.cell(fila_c, col_estado).value)
+    suma = _valor_numerico(ws.cell(fila_s, col_saldo).value)
     return conteo, suma
 
 
@@ -219,22 +227,18 @@ def actualizar_hoja_estrategias(
             fila_total = fila
             continue
 
-        if fuente is None or fuente not in totales_fuentes:
+        if fuente is None:
             continue
 
-        conteo, monto = totales_fuentes[fuente]
-        if conteo is None and monto is None:
-            continue
-
-        if conteo is not None:
-            _escribir_valor(ws.cell(fila, COL_CONTRATOS), conteo)
-            suma_conteos += float(conteo)
-            hubo_conteo = True
-        if monto is not None:
-            _escribir_valor(ws.cell(fila, COL_MONTO), monto)
-            suma_montos += float(monto)
-            hubo_monto = True
-
+        conteo, monto = totales_fuentes.get(fuente, (None, None))
+        valor_conteo = 0 if conteo is None else conteo
+        valor_monto = 0 if monto is None else monto
+        _escribir_valor(ws.cell(fila, COL_CONTRATOS), valor_conteo)
+        _escribir_valor(ws.cell(fila, COL_MONTO), valor_monto)
+        suma_conteos += float(valor_conteo)
+        suma_montos += float(valor_monto)
+        hubo_conteo = True
+        hubo_monto = True
         filas_datos.append(fila)
 
     if fila_total is None and filas_datos:
@@ -242,10 +246,16 @@ def actualizar_hoja_estrategias(
 
     if fila_total is not None:
         if hubo_conteo:
-            valor_c = int(suma_conteos) if abs(suma_conteos - round(suma_conteos)) < 1e-9 else suma_conteos
-            _escribir_valor(ws.cell(fila_total, COL_CONTRATOS), valor_c)
-        if hubo_monto:
-            _escribir_valor(ws.cell(fila_total, COL_MONTO), suma_montos)
+            valor_c = (
+                int(suma_conteos)
+                if abs(suma_conteos - round(suma_conteos)) < 1e-9
+                else suma_conteos
+            )
+        else:
+            valor_c = 0
+        valor_m = suma_montos if hubo_monto else 0.0
+        _escribir_valor(ws.cell(fila_total, COL_CONTRATOS), valor_c)
+        _escribir_valor(ws.cell(fila_total, COL_MONTO), valor_m)
 
     _aplicar_relleno_datos_estrategias(ws, filas_datos, fila_total)
 

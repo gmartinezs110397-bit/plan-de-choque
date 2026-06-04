@@ -877,7 +877,11 @@ def _fila_tiene_contratista(ws, fila: int, col_nombre: int) -> bool:
     if val is None or not str(val).strip():
         return False
     norm = _normalizar(str(val))
-    return norm not in ("no tiene", "nombre contratista")
+    if norm in ("no tiene", "nombre contratista", "total", "totales"):
+        return False
+    if norm.startswith("total "):
+        return False
+    return True
 
 
 def _hoja_tiene_filas_contratista(ws) -> bool:
