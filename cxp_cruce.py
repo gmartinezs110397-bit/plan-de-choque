@@ -19,10 +19,10 @@ from typing import Any
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles import Alignment
+from openpyxl.styles import Alignment, PatternFill
 from openpyxl.utils import get_column_letter
 
-from constantes import COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
+from constantes import AMARILLO_TITULO, COL_DESEMPATE_MANUAL, HOJAS_CRUCE_CXP
 
 MESES_ES = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
@@ -857,6 +857,88 @@ def _ultima_columna_con_datos(ws) -> int:
     return ultima
 
 
+_MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
+_FILL_ENCABEZADO_AZUL_CPS = PatternFill(fill_type="solid", fgColor="BDD7EE")
+_FILL_ENCABEZADO_AMARILLO_CPS = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
+
+
+def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
+    """Número de mes (1-12) desde títulos de columna de corte o seguimiento."""
+    norm = _normalizar(str(titulo or ""))
+    if not norm:
+        return None
+
+    m = re.search(r"\(([^)]+)\)", norm)
+    if m:
+        mes = _MESES_POR_NOMBRE.get(_normalizar(m.group(1)))
+        if mes:
+            return mes
+
+    for prefijo in ("estado actual ", "estado actual a ", "saldo "):
+        if norm.startswith(prefijo):
+            resto = norm[len(prefijo) :].strip()
+            mes = _MESES_POR_NOMBRE.get(resto)
+            if mes:
+                return mes
+
+    if norm in _MESES_POR_NOMBRE:
+        return _MESES_POR_NOMBRE[norm]
+
+    if norm.startswith("saldo a ") or norm.startswith("estado a "):
+        for mes_nombre, num in _MESES_POR_NOMBRE.items():
+            if mes_nombre in norm:
+                return num
+    return None
+
+
+def _es_columna_saldo_corte_mes(titulo: str) -> bool:
+    """Columnas «Saldo a …» / «SALDO MAYO» del mes (no SALDO FINAL ni estado)."""
+    norm = _normalizar(str(titulo or ""))
+    if not norm or norm == "saldo final":
+        return False
+    if norm.startswith("estado actual") or norm.startswith("estado a "):
+        return False
+    if "responsable" in norm or "nombre" in norm:
+        return False
+    mes = _mes_numero_desde_titulo_columna(titulo)
+    return mes is not None and (
+        norm.startswith("saldo ")
+        or norm.startswith("saldo a ")
+        or norm in _MESES_POR_NOMBRE
+    )
+
+
+def _listar_columnas_corte_mes_cps(ws) -> list[tuple[int, int]]:
+    """(columna, mes) de columnas de corte mensual en fila 3 de Cps/Caja."""
+    fila_hdr = _fila_encabezado_contratos()
+    columnas: dict[int, int] = {}
+    limite = _ultima_columna_con_datos(ws)
+    for col in range(1, limite + 1):
+        val = ws.cell(fila_hdr, col).value
+        if val is None or not str(val).strip():
+            continue
+        titulo = str(val).strip()
+        if not _es_columna_saldo_corte_mes(titulo):
+            continue
+        mes = _mes_numero_desde_titulo_columna(titulo)
+        if mes is not None:
+            columnas[mes] = col
+    return [(columnas[m], m) for m in sorted(columnas)]
+
+
+def _fill_encabezado_corte_por_mes(mes_num: int) -> PatternFill:
+    """Misma regla que Suspendidos: mes par → azul, impar → amarillo."""
+    return _FILL_ENCABEZADO_AMARILLO_CPS if (mes_num % 2) else _FILL_ENCABEZADO_AZUL_CPS
+
+
+def _aplicar_encabezados_corte_alternos_cps(ws) -> None:
+    """Títulos de mes en fila 3 con alternancia azul/amarillo entre meses."""
+    fila_hdr = _fila_encabezado_contratos()
+    for col, mes_num in _listar_columnas_corte_mes_cps(ws):
+        celda = _celda_para_escribir(ws, fila_hdr, col)
+        celda.fill = _fill_encabezado_corte_por_mes(mes_num)
+
+
 def _agregar_columna_corte_en_hoja(ws, titulo: str) -> int:
     """Inserta columna tras la última con datos; estilo copiado de SALDO FINAL."""
     fila_hdr = _fila_encabezado_contratos()
@@ -869,6 +951,7 @@ def _agregar_columna_corte_en_hoja(ws, titulo: str) -> int:
     for fila in (FILA_CONTEO_CONTRATOS, FILA_SUMA_CONTRATOS):
         _copiar_estilo_celda(ws.cell(fila, col_estilo), ws.cell(fila, nueva_col))
 
+    _aplicar_encabezados_corte_alternos_cps(ws)
     return nueva_col
 
 
@@ -1078,6 +1161,7 @@ def exportar_contratos_preservando_formato(
 
     _actualizar_resumen_filas_1_2(ws, col_corte)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
+    _aplicar_encabezados_corte_alternos_cps(ws)
 
     if mapa_k3_suspendidos is not None:
         nombre_susp = resolver_hoja_suspendidos(nombres_hojas)
