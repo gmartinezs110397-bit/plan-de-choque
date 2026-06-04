@@ -279,6 +279,55 @@ def _indice_columna_titulos(ws, titulos: tuple[str, ...]) -> int | None:
     return None
 
 
+def _columnas_par_mes_siguiente(
+    col_prev_saldo: int,
+    col_prev_estado: int,
+) -> tuple[int, int]:
+    """Saldo y estado del mes siguiente al par anterior (columnas consecutivas)."""
+    if col_prev_estado == col_prev_saldo + 1:
+        return col_prev_estado + 1, col_prev_estado + 2
+    return col_prev_saldo + 2, col_prev_saldo + 3
+
+
+def _inferir_columnas_mes_actual(
+    ws,
+    fecha: datetime | date,
+    col_prev_saldo: int | None,
+    col_prev_estado: int | None,
+) -> tuple[int | None, int | None]:
+    """
+    Par saldo/estado recién creado sin título (p. ej. Q/R tras P).
+    Evita duplicar columnas al final cuando ya hay datos pero faltan encabezados.
+    """
+    if not col_prev_saldo or not col_prev_estado:
+        return None, None
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    mes_actual = _fecha_datetime(fecha).month
+    col_saldo, col_estado = _columnas_par_mes_siguiente(col_prev_saldo, col_prev_estado)
+    if col_estado > ws.max_column:
+        return None, None
+
+    for col in (col_saldo, col_estado):
+        val = _celda_para_escribir(ws, fila_hdr, col).value
+        if val is None or not str(val).strip():
+            continue
+        mes = _mes_desde_titulo(str(val))
+        if mes is not None and mes != mes_actual:
+            return None, None
+
+    tit_s = _celda_para_escribir(ws, fila_hdr, col_saldo).value
+    tit_e = _celda_para_escribir(ws, fila_hdr, col_estado).value
+    if (tit_s and str(tit_s).strip()) or (tit_e and str(tit_e).strip()):
+        mes_s = _mes_desde_titulo(str(tit_s or ""))
+        mes_e = _mes_desde_titulo(str(tit_e or ""))
+        if (mes_s and mes_s == mes_actual) or (mes_e and mes_e == mes_actual):
+            return col_saldo, col_estado
+        if mes_s or mes_e:
+            return None, None
+
+    return col_saldo, col_estado
+
+
 def _par_mes_anterior(
     ws,
     fecha: datetime | date,
@@ -558,12 +607,23 @@ def _asegurar_columnas_mes(
         ws, fecha, col_saldo or 0, col_estado or 0
     )
 
+    if col_saldo is None or col_estado is None:
+        inf_s, inf_e = _inferir_columnas_mes_actual(
+            ws, fecha, col_prev_saldo, col_prev_estado
+        )
+        if inf_s and inf_e:
+            col_saldo = col_saldo or inf_s
+            col_estado = col_estado or inf_e
+            columnas_nuevas = False
+
     siguiente = _ultima_columna_con_datos(ws) + 1
     if col_saldo is None:
         col_saldo = siguiente
         siguiente += 1
+        columnas_nuevas = True
     if col_estado is None:
         col_estado = siguiente
+        columnas_nuevas = True
 
     fila_hdr = _fila_encabezado_hoja_datos(ws)
 
@@ -602,16 +662,40 @@ def _asegurar_columnas_mes(
     _aplicar_encabezados_meses_alternos(ws)
     _reforzar_titulos_pares_mes_seguimiento(ws, _fecha_datetime(fecha).year)
 
-    # Títulos vacíos tras copiar estilo / limpiar legacy (encabezado en fila 1)
+    # Títulos del mes actual (vacíos, incorrectos o tras limpiar legacy)
+    _restaurar_titulos_mes_actual(
+        ws, col_saldo, col_estado, fecha, col_prev_saldo, col_prev_estado
+    )
+
+    return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
+
+
+def _restaurar_titulos_mes_actual(
+    ws,
+    col_saldo: int,
+    col_estado: int,
+    fecha: datetime | date,
+    col_prev_saldo: int | None,
+    col_prev_estado: int | None,
+) -> None:
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    esperado_s = titulo_saldo_suspendidos(fecha)
+    esperado_e = titulo_estado_suspendidos(fecha)
     celda_t_s = _celda_para_escribir(ws, fila_hdr, col_saldo)
     celda_t_e = _celda_para_escribir(ws, fila_hdr, col_estado)
-    if not str(celda_t_s.value or "").strip() or not str(celda_t_e.value or "").strip():
+    actual_s = str(celda_t_s.value or "").strip()
+    actual_e = str(celda_t_e.value or "").strip()
+    if (
+        not actual_s
+        or not actual_e
+        or _normalizar(actual_s) != _normalizar(esperado_s)
+        or _normalizar(actual_e) != _normalizar(esperado_e)
+    ):
         _aplicar_titulos_encabezado_mes(
             ws, col_saldo, col_estado, fecha, col_prev_saldo, col_prev_estado
         )
         _aplicar_encabezados_meses_alternos(ws)
-
-    return col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas
+        _reforzar_titulos_pares_mes_seguimiento(ws, _fecha_datetime(fecha).year)
 
 
 def _resolver_relleno_estado(
