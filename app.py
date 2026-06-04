@@ -344,6 +344,8 @@ def init_session_state():
 def contrasena_acceso_esperada() -> str | None:
     """Contraseña en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
     try:
+        if st.secrets.get("sin_contrasena_acceso") in (True, "true", "1", "yes", "si", "sí"):
+            return None
         valor = st.secrets.get("contrasena_acceso")
         if valor is None:
             valor = st.secrets.get("codigo_acceso")
@@ -523,12 +525,6 @@ def render_portada_acceso() -> None:
         '<p class="app-subtitle">Ingrese la contraseña para continuar</p>',
         unsafe_allow_html=True,
     )
-    if not contrasena_ok:
-        st.error(
-            "Falta configurar la contraseña en Streamlit Cloud → **Manage app** → "
-            "**Settings** → **Secrets** (`contrasena_acceso = \"1100\"` o `codigo_acceso`)."
-        )
-        st.stop()
 
     with st.container(border=True, key="portada_acceso_box"):
         mostrar_texto = bool(st.session_state.get(CLAVE_VER_CONTRASENA, False))
@@ -3171,8 +3167,12 @@ def render_solicitud_contrasena_matriz() -> None:
 
 
 if not st.session_state.get("acceso_autorizado"):
-    render_portada_acceso()
-    st.stop()
+    if contrasena_acceso_esperada() is None:
+        # App de prueba / Secrets sin contrasena_acceso: entrada directa
+        st.session_state.acceso_autorizado = True
+    else:
+        render_portada_acceso()
+        st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _dependencias_consolidacion():

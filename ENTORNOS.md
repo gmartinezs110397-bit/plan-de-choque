@@ -48,7 +48,14 @@ Streamlit Cloud permite **dos apps** con el **mismo repositorio** y **ramas dist
    - **Branch:** `prueba` (no `main`).
    - **Main file:** `app.py`.
    - Nombre sugerido: `plan-de-choque-prueba`.
-4. En **Secrets** de **cada** app puede usar la misma `contrasena_acceso` o una distinta para la de prueba.
+4. **Secrets** (distinto en cada app):
+
+   | App | Qué poner en Secrets |
+   |-----|----------------------|
+   | **Oficial** (`main`) | `contrasena_acceso = "1100"` |
+   | **Prueba** (`prueba`) | Vacío, o solo `sin_contrasena_acceso = true` (entra sin pantalla de contraseña) |
+
+   La contraseña de la **Matriz** al consolidar no va en Secrets; se escribe en la app al ejecutar.
 
 Solo la app enlazada a `main` es la “oficial”; la de `prueba` no se actualiza hasta que usted suba cambios a esa rama.
 
