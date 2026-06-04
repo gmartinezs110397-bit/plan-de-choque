@@ -38,6 +38,12 @@ Consolidación **Matriz OXP** + **Contratos plan de choque** por localidad (Bogo
 2. Secrets → `contrasena_acceso = "1100"` (o `codigo_acceso` legacy).
 3. La contraseña de la **Matriz** se ingresa al consolidar; no va en GitHub.
 
+## Prueba vs app oficial
+
+- **Backup / volver atrás:** etiqueta Git `v1.0-estable-2025-06-03` (ver [ENTORNOS.md](ENTORNOS.md)).
+- **Ventana de prueba:** segunda app en Streamlit Cloud con rama `prueba`; subir con `.\subir-a-prueba.ps1`.
+- **Publicar oficial:** rama `main` con `.\subir-cambios.ps1` cuando la prueba esté validada.
+
 ## Actualizar el link publicado
 
 ```powershell

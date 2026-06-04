@@ -1,43 +1,23 @@
-import importlib
+from __future__ import annotations
+
+import pickle
 import re
 import sys
-import time
+import tempfile
 import unicodedata
+import uuid
 import zipfile
 from io import BytesIO
 from datetime import datetime, date
 from pathlib import Path
 
-import msoffcrypto
-import msoffcrypto.exceptions as ms_exceptions
-import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
-
-import cxp_cruce
-
-importlib.reload(cxp_cruce)
-
-from cxp_cruce import (
-    METODOS_LABEL,
-    aplicar_desempate_en_contratos,
-    clave_desde_detalle,
-    claves_pendientes_localidad,
-    procesar_localidad_cxp,
-    quitar_autofiltros_xlsx,
-    recalcular_estadisticas_localidad,
-    resolver_hoja_cruce_cxp,
-    titulo_saldo_corte,
-    validar_desempate_completo,
-)
-from reporte_ejecucion import (
-    ReporteEjecucion,
-    registrar_resultado_localidad,
-)
 
 # Localidades de Bogotá D.C. (20), orden alfabético
 LOCALIDADES = [
@@ -73,8 +53,9 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    html, body, [class*="css"] {
+        font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    }
     #MainMenu, footer, header { visibility: hidden; }
     .block-container { padding-top: 1.25rem; max-width: 960px; }
 
@@ -171,13 +152,13 @@ st.markdown(
     .metric-value-sm { font-size: clamp(1.05rem, 2.6vw, 1.45rem); }
 
     /* Select localidad — borde y foco azul (#2563eb, igual que Ejecutar consolidación) */
-    .st-key-select_localidad [data-baseweb="select"] > div,
+    [class*="st-key-select_localidad"] [data-baseweb="select"] > div,
     [data-testid="stSelectbox"] [data-baseweb="select"] > div {
         border-color: #cbd5e1 !important;
         border-radius: 10px !important;
     }
-    .st-key-select_localidad [data-baseweb="select"]:focus-within > div,
-    .st-key-select_localidad [data-baseweb="select"]:hover > div,
+    [class*="st-key-select_localidad"] [data-baseweb="select"]:focus-within > div,
+    [class*="st-key-select_localidad"] [data-baseweb="select"]:hover > div,
     [data-testid="stSelectbox"] [data-baseweb="select"]:focus-within > div,
     [data-testid="stSelectbox"] [data-baseweb="select"]:hover > div {
         border-color: #2563eb !important;
@@ -316,7 +297,7 @@ st.markdown(
 SHEET_MATRIZ = "MATRIZ OXP"
 MATRIZ_HEADER_FILA = 6  # fila de encabezados en pandas (Excel fila 7)
 FILA_INICIO_MATRIZ = 8  # columna A desde fila 8 en hoja MATRIZ OXP
-SELECCION_LOCALIDAD = "Seleccione localidad"
+SELECCION_LOCALIDAD = "Seleccione Localidad"
 KW_CONTRATOS = "plan de choque"
 KW_MATRIZ = "matriz"
 PALABRAS_IGNORAR = {"de", "la", "los", "las", "el", "del", "y"}
@@ -337,8 +318,9 @@ def init_session_state():
         "last_processed_at": None,
         "upload_key": 0,
         "abrir_dialogo": False,
-        "iniciar_consolidacion": False,
+        "pendiente_consolidacion": False,
         "consolidacion_en_curso": False,
+        "ejecutar_consolidacion_ahora": False,
         "pwd_matriz": "",
         "cola_ejecucion": [],
         "error_ultima_ejecucion": None,
@@ -514,7 +496,7 @@ def _componente_teclado_portada_acceso(clave_widget: str) -> None:
             let intentos = 0;
             const timer = setInterval(function () {{
               enfocar();
-              if (++intentos > 300) clearInterval(timer);
+              if (++intentos > 40) clearInterval(timer);
             }}, 50);
             try {{
               const obs = new MutationObserver(enfocar);
@@ -775,6 +757,454 @@ def nombre_descarga_contratos_actualizado(
     return sanitizar_nombre_archivo(nombre)
 
 
+def _directorio_archivos_sesion() -> Path:
+    """Guarda Excels en disco (no en session_state) para que F5 no reenvíe megabytes."""
+    raiz = Path(tempfile.gettempdir()) / "plan_de_choque"
+    raiz.mkdir(parents=True, exist_ok=True)
+    sid = st.session_state.get("_pc_sid_archivos")
+    if not sid:
+        sid = uuid.uuid4().hex
+        st.session_state._pc_sid_archivos = sid
+    carpeta = raiz / str(sid)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    return carpeta
+
+
+def bytes_archivo_cola(entrada: dict) -> bytes:
+    """Lee bytes desde disco o desde entrada antigua que aún trae bytes en sesión."""
+    if entrada.get("bytes") is not None:
+        return entrada["bytes"]
+    ruta = entrada.get("path")
+    if ruta:
+        p = Path(ruta)
+        if p.is_file():
+            return p.read_bytes()
+    return b""
+
+
+@st.cache_data(show_spinner=False)
+def _leer_binario_desde_ruta(ruta: str, modificado: float) -> bytes:
+    """Cache en memoria del servidor: F5 no vuelve a leer el ZIP del disco."""
+    del modificado
+    return Path(ruta).read_bytes()
+
+
+def bytes_contratos_de_salida(data: dict) -> bytes:
+    if data.get("bytes_contratos") is not None:
+        return data["bytes_contratos"]
+    ruta = data.get("path_contratos")
+    if ruta and Path(ruta).is_file():
+        return Path(ruta).read_bytes()
+    return b""
+
+
+_CLAVE_RUTA_DETALLE = "_pc_cruce_detalle_ruta"
+_CLAVE_RUTA_REPORTE = "_pc_reporte_ejecucion_ruta"
+_CLAVE_SNAPSHOT = "_pc_snapshot_consolidacion_ruta"
+_CLAVE_MOSTRAR_RESULTADOS = "mostrar_resultados_completos"
+_CLAVE_RESUMEN_LIGERO = "_pc_resumen_consolidado"
+_ARCHIVO_META_DETALLE = "cruce_detalle_meta.pkl"
+_PREFIJOS_WIDGET_ARCHIVO = (
+    "uploader_contratos_",
+    "uploader_matriz_",
+    "select_localidad_",
+)
+
+
+def _guardar_contratos_en_disco(localidad: str, data: dict) -> dict:
+    """Quita bytes_contratos de session_state (pesado en cada F5)."""
+    if data.get("path_contratos") and data.get("bytes_contratos") is None:
+        return data
+    raw = data.get("bytes_contratos")
+    if raw is None:
+        return data
+    carpeta = _directorio_archivos_sesion()
+    base = sanitizar_nombre_archivo(
+        data.get("nombre_contratos") or f"contratos_{localidad}.xlsx"
+    )
+    destino = carpeta / f"salida_{sanitizar_nombre_archivo(localidad)}_{base}"
+    destino.write_bytes(raw)
+    ligero = {k: v for k, v in data.items() if k != "bytes_contratos"}
+    ligero["path_contratos"] = str(destino)
+    return ligero
+
+
+def _archivo_cola_en_disco(entrada: dict, localidad: str, tipo: str) -> dict:
+    """Garantiza path en disco; si solo hay bytes en memoria, los persiste."""
+    nombre = entrada.get("name") or f"{tipo}_{localidad}.xlsx"
+    if entrada.get("path") and Path(entrada["path"]).is_file():
+        return {"name": nombre, "path": entrada["path"]}
+    datos = entrada.get("bytes")
+    if datos:
+        carpeta = _directorio_archivos_sesion()
+        destino = carpeta / sanitizar_nombre_archivo(f"{tipo}_{localidad}_{nombre}")
+        destino.write_bytes(datos)
+        return {"name": nombre, "path": str(destino)}
+    return {"name": nombre}
+
+
+def _asegurar_cola_en_disco(cola: list) -> list:
+    """Cola lista para procesar: cada Contratos/Matriz con archivo legible en disco."""
+    refs = []
+    for item in cola:
+        loc = item["localidad"]
+        refs.append({
+            "localidad": loc,
+            "contratos": _archivo_cola_en_disco(item.get("contratos") or {}, loc, "contratos"),
+            "matriz": _archivo_cola_en_disco(item.get("matriz") or {}, loc, "matriz"),
+        })
+    return refs
+
+
+def _validar_archivos_accesibles(cola: list) -> list[str]:
+    errores = []
+    for item in cola:
+        loc = item["localidad"]
+        for clave, etiqueta in (("contratos", "Contratos"), ("matriz", "Matriz")):
+            ent = item.get(clave) or {}
+            if not entrada_cola_tiene_archivo(ent):
+                errores.append(f"**{loc}** — Falta el archivo de {etiqueta}.")
+                continue
+            if not bytes_archivo_cola(ent):
+                errores.append(
+                    f"**{loc}** — No se pudo leer {etiqueta} "
+                    f"(`{ent.get('name', '')}`). Vuelva a subirlo a la cola."
+                )
+    return errores
+
+
+def _es_ruta_meta_detalle(ruta: str) -> bool:
+    return Path(ruta).name == _ARCHIVO_META_DETALLE
+
+
+def _borrar_cruce_detalle_en_disco() -> None:
+    ruta = st.session_state.pop(_CLAVE_RUTA_DETALLE, None)
+    carpeta = _directorio_archivos_sesion()
+    if ruta:
+        try:
+            Path(ruta).unlink(missing_ok=True)
+        except OSError:
+            pass
+    for f in carpeta.glob("detalle_*.pkl"):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    legacy = carpeta / "cruce_detalle.pkl"
+    if legacy.is_file():
+        try:
+            legacy.unlink()
+        except OSError:
+            pass
+    st.session_state.cruce_detalle = []
+
+
+def _persistir_cruce_detalle(detalle: list) -> None:
+    """Detalle en disco por localidad (F5 no carga todo si no hace falta)."""
+    carpeta = _directorio_archivos_sesion()
+    _borrar_cruce_detalle_en_disco()
+    por_loc: dict[str, list] = {}
+    for fila in detalle:
+        loc = str(fila.get("Localidad") or "_sin_loc")
+        por_loc.setdefault(loc, []).append(fila)
+    indice: list[tuple[str, str]] = []
+    for loc, rows in por_loc.items():
+        ruta_loc = carpeta / sanitizar_nombre_archivo(f"detalle_{loc}.pkl")
+        with open(ruta_loc, "wb") as f:
+            pickle.dump(rows, f, protocol=4)
+        indice.append((loc, str(ruta_loc)))
+    meta = carpeta / _ARCHIVO_META_DETALLE
+    with open(meta, "wb") as f:
+        pickle.dump(indice, f, protocol=4)
+    st.session_state[_CLAVE_RUTA_DETALLE] = str(meta)
+    st.session_state.cruce_detalle = []
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_cruce_detalle_cache(ruta: str, modificado: float) -> list:
+    del modificado
+    with open(ruta, "rb") as f:
+        return pickle.load(f)
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_indice_detalle_cache(ruta_meta: str, modificado: float) -> list[tuple[str, str]]:
+    del modificado
+    with open(ruta_meta, "rb") as f:
+        return pickle.load(f)
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_detalle_completo_desde_meta(ruta_meta: str, modificado: float) -> list:
+    del modificado
+    out: list = []
+    for _loc, ruta in _cargar_indice_detalle_cache(
+        ruta_meta, Path(ruta_meta).stat().st_mtime
+    ):
+        p = Path(ruta)
+        if p.is_file():
+            out.extend(_cargar_cruce_detalle_cache(str(p), p.stat().st_mtime))
+    return out
+
+
+def obtener_cruce_detalle_localidad(localidad: str) -> list:
+    inline = st.session_state.get("cruce_detalle") or []
+    if inline:
+        return [d for d in inline if d.get("Localidad") == localidad]
+    ruta = st.session_state.get(_CLAVE_RUTA_DETALLE)
+    if not ruta or not Path(ruta).is_file():
+        return []
+    p = Path(ruta)
+    if _es_ruta_meta_detalle(str(p)):
+        for loc, ruta_loc in _cargar_indice_detalle_cache(str(p), p.stat().st_mtime):
+            if loc == localidad:
+                pl = Path(ruta_loc)
+                if pl.is_file():
+                    return list(_cargar_cruce_detalle_cache(str(pl), pl.stat().st_mtime))
+        return []
+    return [
+        d
+        for d in _cargar_cruce_detalle_cache(str(p), p.stat().st_mtime)
+        if d.get("Localidad") == localidad
+    ]
+
+
+def obtener_cruce_detalle() -> list:
+    inline = st.session_state.get("cruce_detalle") or []
+    if inline:
+        return list(inline)
+    ruta = st.session_state.get(_CLAVE_RUTA_DETALLE)
+    if not ruta or not Path(ruta).is_file():
+        return []
+    p = Path(ruta)
+    if _es_ruta_meta_detalle(str(p)):
+        return list(_cargar_detalle_completo_desde_meta(str(p), p.stat().st_mtime))
+    return list(_cargar_cruce_detalle_cache(str(p), p.stat().st_mtime))
+
+
+def informe_requiere_detalle_cruce(informe: list) -> bool:
+    return any(_localidad_requiere_detalle_cruce(i) for i in informe)
+
+
+def establecer_cruce_detalle(detalle: list) -> None:
+    if not detalle:
+        _borrar_cruce_detalle_en_disco()
+        return
+    _persistir_cruce_detalle(detalle)
+
+
+def dataframe_consolidado():
+    detalle = obtener_cruce_detalle()
+    if not detalle:
+        return pd.DataFrame()
+    return pd.DataFrame(detalle)
+
+
+def _purgar_uploaders_obsoletos() -> None:
+    """Cada «Añadir a cola» deja Excels en claves viejas del file_uploader (F5 más lento)."""
+    uk = int(st.session_state.get("upload_key", 0))
+    for key in list(st.session_state.keys()):
+        for pref in _PREFIJOS_WIDGET_ARCHIVO:
+            if not key.startswith(pref):
+                continue
+            try:
+                if int(key[len(pref) :]) != uk:
+                    st.session_state.pop(key, None)
+            except ValueError:
+                pass
+
+
+def _aligerar_sesion_archivos_pesados() -> None:
+    """Migra sesiones viejas que guardaban ZIP/Excel como bytes (F5 muy lento)."""
+    zip_info = st.session_state.get("zip_descarga_contratos")
+    if zip_info and zip_info.get("data") and not zip_info.get("path"):
+        carpeta = _directorio_archivos_sesion()
+        nombre = zip_info.get("nombre") or "contratos.zip"
+        ruta = carpeta / sanitizar_nombre_archivo(nombre)
+        ruta.write_bytes(zip_info["data"])
+        st.session_state.zip_descarga_contratos = {
+            "path": str(ruta),
+            "nombre": nombre,
+            "mime": zip_info.get("mime", "application/zip"),
+        }
+
+    act = st.session_state.get("contratos_actualizados") or {}
+    if act and any((d or {}).get("bytes_contratos") for d in act.values()):
+        st.session_state.contratos_actualizados = {
+            loc: _guardar_contratos_en_disco(loc, dict(datos))
+            for loc, datos in act.items()
+        }
+
+    work = st.session_state.get("consolidacion_work")
+    if work and work.get("cola"):
+        work["cola"] = _asegurar_cola_en_disco(work["cola"])
+        ca = work.get("contratos_actualizados") or {}
+        if ca and any((d or {}).get("bytes_contratos") for d in ca.values()):
+            for loc, datos in ca.items():
+                work["contratos_actualizados"][loc] = _guardar_contratos_en_disco(
+                    loc, dict(datos)
+                )
+
+
+def _resumen_ligero_desde_informe(informe: list) -> dict:
+    return {
+        "n_localidades": len(informe),
+        "sin_resolver": sum(i.get("sin_resolver", 0) for i in informe),
+        "total_contratos": sum(i.get("total_contratos", 0) for i in informe),
+        "total_ok": sum(i.get("contratos_ok", 0) for i in informe),
+        "cxp_total": sum(i.get("cxp_total", 0) for i in informe),
+        "titulo_mes": st.session_state.get("titulo_saldo_corte", ""),
+        "procesado_en": st.session_state.get("last_processed_at", ""),
+    }
+
+
+def _persistir_snapshot_consolidacion() -> None:
+    """Informe y stats fuera de session_state (F5 liviano)."""
+    informe = st.session_state.get("cruce_informe") or []
+    if not informe and not st.session_state.get("processed"):
+        return
+    snapshot = {
+        "informe": informe,
+        "file_stats": st.session_state.get("file_stats") or [],
+        "cruce_resumen_global": st.session_state.get("cruce_resumen_global") or [],
+        "fecha_analisis": st.session_state.get("fecha_analisis"),
+        "last_processed_at": st.session_state.get("last_processed_at"),
+        "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
+    }
+    ruta = _directorio_archivos_sesion() / "consolidacion_snapshot.pkl"
+    with open(ruta, "wb") as f:
+        pickle.dump(snapshot, f, protocol=4)
+    st.session_state[_CLAVE_SNAPSHOT] = str(ruta)
+    st.session_state[_CLAVE_RESUMEN_LIGERO] = _resumen_ligero_desde_informe(informe)
+    st.session_state.cruce_informe = []
+    st.session_state.file_stats = []
+    st.session_state.cruce_resumen_global = []
+
+
+@st.cache_data(show_spinner=False)
+def _cargar_snapshot_consolidacion_cache(ruta: str, modificado: float) -> dict:
+    del modificado
+    with open(ruta, "rb") as f:
+        return pickle.load(f)
+
+
+def _cargar_snapshot_consolidacion() -> dict:
+    if st.session_state.get("cruce_informe"):
+        return {
+            "informe": st.session_state.get("cruce_informe") or [],
+            "file_stats": st.session_state.get("file_stats") or [],
+            "cruce_resumen_global": st.session_state.get("cruce_resumen_global") or [],
+            "fecha_analisis": st.session_state.get("fecha_analisis"),
+            "last_processed_at": st.session_state.get("last_processed_at"),
+            "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
+        }
+    ruta = st.session_state.get(_CLAVE_SNAPSHOT)
+    if ruta and Path(ruta).is_file():
+        p = Path(ruta)
+        return _cargar_snapshot_consolidacion_cache(str(p), p.stat().st_mtime)
+    return {
+        "informe": [],
+        "file_stats": [],
+        "cruce_resumen_global": [],
+        "fecha_analisis": st.session_state.get("fecha_analisis"),
+        "last_processed_at": st.session_state.get("last_processed_at"),
+        "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
+    }
+
+
+def _informe_para_ui() -> list:
+    inline = st.session_state.get("cruce_informe") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("informe") or [])
+
+
+def _stats_para_ui() -> list:
+    inline = st.session_state.get("file_stats") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("file_stats") or [])
+
+
+def _resumen_global_para_ui() -> list:
+    inline = st.session_state.get("cruce_resumen_global") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("cruce_resumen_global") or [])
+
+
+def _borrar_snapshot_consolidacion() -> None:
+    ruta = st.session_state.pop(_CLAVE_SNAPSHOT, None)
+    if ruta:
+        try:
+            Path(ruta).unlink(missing_ok=True)
+        except OSError:
+            pass
+    st.session_state.pop(_CLAVE_RESUMEN_LIGERO, None)
+
+
+def _externalizar_reporte_en_sesion() -> None:
+    payload = st.session_state.get("reporte_ejecucion")
+    if not payload or not payload.get("tabla"):
+        return
+    ruta = _directorio_archivos_sesion() / "reporte_ejecucion.pkl"
+    with open(ruta, "wb") as f:
+        pickle.dump(payload, f, protocol=4)
+    st.session_state[_CLAVE_RUTA_REPORTE] = str(ruta)
+    st.session_state.pop("reporte_ejecucion", None)
+
+
+def _compactar_sesion_para_f5() -> None:
+    """Reduce lo que Streamlit serializa en cada recarga (F5)."""
+    if st.session_state.get("cruce_detalle"):
+        _persistir_cruce_detalle(list(st.session_state.cruce_detalle))
+    if st.session_state.get("processed") and st.session_state.get("cruce_informe"):
+        _persistir_snapshot_consolidacion()
+    st.session_state.pop("consolidated_df", None)
+    st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = False
+    _externalizar_reporte_en_sesion()
+    _purgar_uploaders_obsoletos()
+    _aligerar_sesion_archivos_pesados()
+
+
+def entrada_cola_tiene_archivo(entrada: dict | None) -> bool:
+    if not entrada:
+        return False
+    return bool(entrada.get("bytes") or entrada.get("path"))
+
+
+def _regenerar_zip_descarga_contratos() -> None:
+    """Genera el ZIP en disco; en sesión solo ruta + nombre (F5 liviano)."""
+    contratos_act = st.session_state.get("contratos_actualizados") or {}
+    if not contratos_act:
+        st.session_state.pop("zip_descarga_contratos", None)
+        return
+    fecha_dl = st.session_state.get("fecha_analisis") or fecha_referencia_analisis()
+    try:
+        datos, nombre, mime = empaquetar_descarga_contratos(contratos_act, fecha_dl)
+    except ValueError:
+        st.session_state.pop("zip_descarga_contratos", None)
+        return
+    carpeta = _directorio_archivos_sesion()
+    ruta = carpeta / sanitizar_nombre_archivo(nombre)
+    ruta.write_bytes(datos)
+    st.session_state.zip_descarga_contratos = {
+        "path": str(ruta),
+        "nombre": nombre,
+        "mime": mime,
+    }
+
+
+def _vaciar_cola_tras_consolidar() -> None:
+    """Libera memoria y acelera recargas; los resultados ya quedaron en la consolidación."""
+    for item in st.session_state.get("cola_localidades", []):
+        _borrar_archivo_cola_en_disco(item.get("contratos"))
+        _borrar_archivo_cola_en_disco(item.get("matriz"))
+    st.session_state.cola_localidades = []
+    st.session_state.cola_ejecucion = []
+    st.session_state.upload_key = int(st.session_state.get("upload_key", 0)) + 1
+
+
 def empaquetar_descarga_contratos(
     contratos_actualizados: dict,
     fecha: datetime | date | None = None,
@@ -795,7 +1225,7 @@ def empaquetar_descarga_contratos(
             nombre = nombre_descarga_contratos_actualizado(
                 loc, data.get("nombre_contratos", ""), f
             )
-            zf.writestr(nombre, data["bytes_contratos"])
+            zf.writestr(nombre, bytes_contratos_de_salida(data))
     buf.seek(0)
     mes = mes_capitalizado(f)
     zip_nombre = sanitizar_nombre_archivo(
@@ -862,9 +1292,10 @@ def _localidad_requiere_detalle_cruce(loc_info: dict) -> bool:
 def mostrar_informe_cruce_consolidado(
     informe: list,
     titulo_mes: str,
-    detalle_todo: list,
+    *,
+    cargar_tablas_detalle: bool = True,
 ) -> None:
-    """Resumen conciso del cruce; detalle bajo demanda."""
+    """Resumen conciso del cruce; tablas de fallback solo si hace falta."""
     total_contratos = sum(i.get("total_contratos", 0) for i in informe)
     total_ok = sum(i.get("contratos_ok", 0) for i in informe)
 
@@ -908,19 +1339,10 @@ def mostrar_informe_cruce_consolidado(
             "- **Pestañas vacías / «NO TIENE»:** no se modifican."
         )
 
-    detalle_por_loc = {
-        loc: [
-            d
-            for d in detalle_todo
-            if d.get("Localidad") == loc
-            and d.get("Método") == METODOS_LABEL["match_saldo_contrato"]
-        ]
-        for loc in {i["localidad"] for i in informe}
-    }
-
     locales_detalle = [loc for loc in informe if _localidad_requiere_detalle_cruce(loc)]
-    if locales_detalle:
-        st.markdown("**Detalle por localidad**")
+    if not locales_detalle:
+        return
+    st.markdown("**Detalle por localidad**")
     for loc_info in locales_detalle:
         loc = loc_info["localidad"]
         sin_loc = loc_info.get("sin_resolver", 0)
@@ -946,7 +1368,13 @@ def mostrar_informe_cruce_consolidado(
                     use_container_width=True,
                     hide_index=True,
                 )
-            detalle_loc = detalle_por_loc.get(loc, [])
+            detalle_loc = []
+            if cargar_tablas_detalle:
+                detalle_loc = [
+                    d
+                    for d in obtener_cruce_detalle_localidad(loc)
+                    if d.get("Método") == METODOS_LABEL["match_saldo_contrato"]
+                ]
             if detalle_loc:
                 st.markdown(
                     "**Fallback por Saldo Final** — la apropiación en Contratos no coincide "
@@ -1004,11 +1432,12 @@ def dataframe_sin_resolver(detalle: list) -> pd.DataFrame:
 
 def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
     """Aplica saldos elegidos a Contratos y actualiza el estado de la consolidación."""
-    detalle = list(st.session_state.get("cruce_detalle", []))
+    detalle = list(obtener_cruce_detalle())
     contratos_act = dict(st.session_state.get("contratos_actualizados", {}))
     fecha = st.session_state.get("fecha_analisis") or fecha_referencia_analisis()
     titulo_mes = titulo_saldo_corte(fecha)
-    informe = list(st.session_state.get("cruce_informe", []))
+    snap = _cargar_snapshot_consolidacion()
+    informe = list(snap.get("informe") or [])
 
     localidades_con_pendientes = {
         loc
@@ -1034,13 +1463,14 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
 
     for loc in sorted(localidades_con_pendientes):
         bytes_nuevos, detalle = aplicar_desempate_en_contratos(
-            contratos_act[loc]["bytes_contratos"],
+            bytes_contratos_de_salida(contratos_act[loc]),
             fecha,
             mapa,
             detalle,
             loc,
         )
         contratos_act[loc]["bytes_contratos"] = bytes_nuevos
+        contratos_act[loc] = _guardar_contratos_en_disco(loc, contratos_act[loc])
         stats_loc = recalcular_estadisticas_localidad(
             [f for f in detalle if f.get("Localidad") == loc],
             titulo_mes,
@@ -1051,15 +1481,13 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
                 informe[i] = {**info, **stats_loc}
                 break
 
-    st.session_state.cruce_detalle = detalle
+    establecer_cruce_detalle(detalle)
     st.session_state.contratos_actualizados = contratos_act
-    st.session_state.cruce_informe = informe
-    st.session_state.consolidated_df = pd.DataFrame(detalle) if detalle else pd.DataFrame()
 
     conteo_global: dict[str, int] = {}
     for info in informe:
         _agregar_conteo_global(conteo_global, info.get("conteo", {}))
-    st.session_state.cruce_resumen_global = [
+    resumen_global = [
         {
             "Método": METODOS_LABEL.get(codigo, codigo),
             "Contratos": cantidad,
@@ -1068,14 +1496,22 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
         if cantidad > 0
     ]
 
-    for s in st.session_state.get("file_stats", []):
+    file_stats = list(snap.get("file_stats") or _stats_para_ui())
+    for s in file_stats:
         if s.get("Archivo") == "Contratos (Cps por depurar)":
             loc = s.get("Localidad")
             info = next((i for i in informe if i["localidad"] == loc), None)
             if info:
                 s["CXP (suma mes)"] = info["cxp_total"]
 
+    st.session_state.cruce_informe = informe
+    st.session_state.file_stats = file_stats
+    st.session_state.cruce_resumen_global = resumen_global
+    _persistir_snapshot_consolidacion()
+
     _reset_estado_desempate_wizard()
+    st.session_state.zip_descarga_listo = False
+    _regenerar_zip_descarga_contratos()
     return True, []
 
 
@@ -1228,7 +1664,10 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
 
 def consolidacion_lista_para_descarga() -> bool:
     """True si no hay pendientes sin resolver."""
-    informe = st.session_state.get("cruce_informe", [])
+    resumen = st.session_state.get(_CLAVE_RESUMEN_LIGERO)
+    if resumen is not None:
+        return int(resumen.get("sin_resolver", 0)) == 0
+    informe = _informe_para_ui()
     return sum(i.get("sin_resolver", 0) for i in informe) == 0
 
 
@@ -1418,9 +1857,9 @@ def leer_hoja_matriz(
     """Lee la hoja MATRIZ OXP; detecta contraseña incorrecta."""
     try:
         header_pd = kwargs.get("header", MATRIZ_HEADER_FILA)
-        # Saldo Final (col. V) suele ser fórmula; leer caché ANTES de quitar_autofiltros (openpyxl.save lo borra).
+        # Sin openpyxl.save: preserva caché de fórmulas en Saldo Final (col. V).
         valores_saldo: list = []
-        libro = abrir_matriz_excel(file_bytes, password, nombre_archivo)
+        libro = _bytes_matriz_sin_reguardar(file_bytes, password)
         df = pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
         )
@@ -1428,10 +1867,9 @@ def leer_hoja_matriz(
             candidatos = ("Saldo Final", "SALDO FINAL", "Saldo final")
             col_df = next((c for c in candidatos if c in df.columns), None)
             if col_df:
+                libro.seek(0)
                 valores_saldo = _columna_matriz_data_only(
-                    _bytes_matriz_sin_reguardar(file_bytes, password),
-                    header_pd,
-                    "Saldo Final",
+                    libro, header_pd, "Saldo Final"
                 )
                 if _cuenta_celdas_numericas(valores_saldo) < max(
                     3, int(len(df) * 0.01)
@@ -1562,7 +2000,9 @@ def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool,
         nm = item["matriz"]["name"]
         try:
             _probar_contrasena_matriz(
-                item["matriz"]["bytes"], password_matriz, item["matriz"]["name"]
+                bytes_archivo_cola(item["matriz"]),
+                password_matriz,
+                item["matriz"]["name"],
             )
         except ValueError as e:
             errores.append(f"**{loc}** — Matriz **{nm}**: {e}")
@@ -1571,8 +2011,15 @@ def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool,
     return len(errores) == 0, errores
 
 
-def validar_cola_archivos(cola: list, password_matriz: str) -> tuple[bool, list[str]]:
-    errores = []
+def validar_cola_archivos(
+    cola: list,
+    password_matriz: str,
+    *,
+    verificar_texto_localidad: bool = True,
+) -> tuple[bool, list[str]]:
+    errores = list(_validar_archivos_accesibles(cola))
+    if errores:
+        return False, errores
 
     pwd_ok, errores_pwd = validar_contrasena_matrices(cola, password_matriz)
     if not pwd_ok:
@@ -1590,9 +2037,9 @@ def validar_cola_archivos(cola: list, password_matriz: str) -> tuple[bool, list[
         ok_nm, msg_nm = validar_nombre_matriz(nm)
         if not ok_nm:
             errores.append(f"**{loc}** — {msg_nm}")
-        else:
+        elif verificar_texto_localidad:
             ok_m, msg_m = validar_localidad_en_hoja_matriz(
-                item["matriz"]["bytes"], password_matriz, loc, nm
+                bytes_archivo_cola(item["matriz"]), password_matriz, loc, nm
             )
             if not ok_m:
                 errores.append(f"**{loc}** — {msg_m}")
@@ -1603,11 +2050,14 @@ def validar_cola_archivos(cola: list, password_matriz: str) -> tuple[bool, list[
 def file_to_buffer(uploaded_file) -> dict:
     data = uploaded_file.getvalue()
     data = sanitizar_excel_sin_filtros(data, uploaded_file.name)
-    return {"bytes": data, "name": uploaded_file.name}
+    carpeta = _directorio_archivos_sesion()
+    destino = carpeta / sanitizar_nombre_archivo(uploaded_file.name)
+    destino.write_bytes(data)
+    return {"path": str(destino), "name": uploaded_file.name}
 
 
 def buffer_to_file(entry: dict):
-    return BytesIO(entry["bytes"])
+    return BytesIO(bytes_archivo_cola(entry))
 
 
 def read_contratos(file_like, name: str, localidad: str):
@@ -1808,7 +2258,7 @@ def construir_tabla_resumen(
                     }
                 ])
             )
-    detalle = st.session_state.get("cruce_detalle") or []
+    detalle = obtener_cruce_detalle()
     filas_sr = filas_sin_resolver(detalle)
     if filas_sr and consolidacion_lista_para_descarga():
         partes.append(
@@ -1908,8 +2358,8 @@ def entrada_desde_formulario(localidad, contratos, matriz) -> dict:
 
 
 def item_tiene_contratos_y_matriz(item: dict) -> bool:
-    tiene_c = bool(item.get("contratos") and item["contratos"].get("bytes"))
-    tiene_m = bool(item.get("matriz") and item["matriz"].get("bytes"))
+    tiene_c = entrada_cola_tiene_archivo(item.get("contratos"))
+    tiene_m = entrada_cola_tiene_archivo(item.get("matriz"))
     return tiene_c and tiene_m
 
 
@@ -1917,9 +2367,9 @@ def validar_archivos_en_cola(cola: list) -> tuple[bool, list[str]]:
     errores = []
     for item in cola:
         loc = item.get("localidad", "Localidad")
-        if not item.get("contratos") or not item["contratos"].get("bytes"):
+        if not entrada_cola_tiene_archivo(item.get("contratos")):
             errores.append(f"**{loc}** — Falta el archivo de Contratos plan de choque.")
-        if not item.get("matriz") or not item["matriz"].get("bytes"):
+        if not entrada_cola_tiene_archivo(item.get("matriz")):
             errores.append(f"**{loc}** — Falta el archivo de Matriz.")
     return len(errores) == 0, errores
 
@@ -1934,7 +2384,23 @@ def puede_ejecutar_cola(cola: list) -> bool:
     return bool(cola) and all(item_tiene_contratos_y_matriz(i) for i in cola)
 
 
+def _borrar_archivo_cola_en_disco(entrada: dict | None) -> None:
+    if not entrada:
+        return
+    ruta = entrada.get("path")
+    if not ruta:
+        return
+    try:
+        Path(ruta).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def quitar_de_cola(localidad: str) -> None:
+    for item in st.session_state.cola_localidades:
+        if item.get("localidad") == localidad:
+            _borrar_archivo_cola_en_disco(item.get("contratos"))
+            _borrar_archivo_cola_en_disco(item.get("matriz"))
     st.session_state.cola_localidades = [
         i for i in st.session_state.cola_localidades if i["localidad"] != localidad
     ]
@@ -1942,17 +2408,24 @@ def quitar_de_cola(localidad: str) -> None:
 
 def limpiar_resultado_consolidado():
     st.session_state.processed = False
-    st.session_state.consolidated_df = None
+    st.session_state.pop("consolidated_df", None)
     st.session_state.file_stats = []
     st.session_state.last_processed_at = None
     st.session_state.error_ultima_ejecucion = None
     st.session_state.errores_ejecucion = []
     st.session_state.fecha_analisis = None
     st.session_state.cruce_informe = []
-    st.session_state.cruce_detalle = []
+    _borrar_cruce_detalle_en_disco()
+    _borrar_snapshot_consolidacion()
+    st.session_state.pop(_CLAVE_MOSTRAR_RESULTADOS, None)
     st.session_state.contratos_actualizados = {}
     st.session_state.cruce_resumen_global = []
     st.session_state.titulo_saldo_corte = ""
+    st.session_state.pop("consolidacion_work", None)
+    st.session_state.pop("zip_descarga_contratos", None)
+    st.session_state.pop("zip_descarga_listo", None)
+    st.session_state.pop(_CLAVE_RUTA_REPORTE, None)
+    st.session_state.pop("reporte_ejecucion", None)
     _reset_estado_desempate_wizard()
 
 
@@ -1963,24 +2436,41 @@ def _agregar_conteo_global(acumulado: dict, conteo: dict) -> None:
 
 def _guardar_reporte_en_sesion(reporte: ReporteEjecucion) -> None:
     if not reporte.tiene_casos():
-        st.session_state.reporte_ejecucion = None
+        st.session_state.pop("reporte_ejecucion", None)
+        st.session_state.pop(_CLAVE_RUTA_REPORTE, None)
         return
     df = reporte.a_dataframe()
-    st.session_state.reporte_ejecucion = {
+    payload = {
         "texto": reporte.generar_texto(),
         "tabla": df.to_dict("records"),
         "resumen": reporte.resumen,
         "generado": datetime.now().isoformat(timespec="seconds"),
     }
+    ruta = _directorio_archivos_sesion() / "reporte_ejecucion.pkl"
+    with open(ruta, "wb") as f:
+        pickle.dump(payload, f, protocol=4)
+    st.session_state[_CLAVE_RUTA_REPORTE] = str(ruta)
+    st.session_state.pop("reporte_ejecucion", None)
+
+
+def _cargar_reporte_ejecucion() -> dict | None:
+    legacy = st.session_state.get("reporte_ejecucion")
+    if legacy and legacy.get("tabla"):
+        return legacy
+    ruta = st.session_state.get(_CLAVE_RUTA_REPORTE)
+    if ruta and Path(ruta).is_file():
+        with open(ruta, "rb") as f:
+            return pickle.load(f)
+    return None
 
 
 def mostrar_reporte_tecnico_admin() -> None:
     """Solo casos no previstos del sistema (para quien mantiene el código)."""
-    payload = st.session_state.get("reporte_ejecucion")
+    payload = _cargar_reporte_ejecucion()
     if not payload or not payload.get("tabla"):
         return
 
-    with st.expander("Casos no previstos (para soporte técnico)", expanded=True):
+    with st.expander("Casos no previstos (para soporte técnico)", expanded=False):
         st.caption(payload.get("resumen", ""))
         nombre_archivo = (
             f"casos_no_previstos_{payload.get('generado', 'ejecucion')}.txt"
@@ -2000,19 +2490,271 @@ def mostrar_reporte_tecnico_admin() -> None:
         )
 
 
-FRACCION_PROGRESO_VALIDACION = 0.1
+# Barra: % por etapa (suma 100%), y cada etapa de localidad se divide entre N localidades.
+# Ej.: Matriz 30 % con 2 localidades → 15 % de la barra por cada una en esa etapa.
+PESO_ETAPA_VALIDACION = 0.10
+PESOS_ETAPAS_LOCALIDAD = (0.30, 0.30, 0.30)  # Matriz, Cruce, Guardar Excel
+NOMBRES_ETAPA_LOCALIDAD = ("Matriz", "Cruce", "Guardar Excel")
+DETALLE_ETAPA_LOCALIDAD = (
+    "leyendo Matriz…",
+    "cruzando contratos con Matriz…",
+    "guardando Excel actualizado…",
+)
+_NUM_SUBETAPAS = len(PESOS_ETAPAS_LOCALIDAD)
+_PESO_TRABAJO_LOCALIDADES = sum(PESOS_ETAPAS_LOCALIDAD)
+
+
+def _peso_paso_localidad(num_localidades: int) -> float:
+    n = max(int(num_localidades), 1)
+    return _PESO_TRABAJO_LOCALIDADES / (n * _NUM_SUBETAPAS)
+
+
+def _progreso_consolidacion(
+    num_localidades: int,
+    *,
+    fraccion_validacion: float | None = None,
+    pasos_localidad_hechos: int | None = None,
+) -> float:
+    """
+    pasos_localidad_hechos: sub-etapas ya completadas (0 … N×3).
+    Cada sub-etapa aporta (peso_etapa / num_localidades) a la barra total.
+    """
+    if fraccion_validacion is not None:
+        return PESO_ETAPA_VALIDACION * min(max(fraccion_validacion, 0.0), 1.0)
+    if pasos_localidad_hechos is not None:
+        pasos = min(max(int(pasos_localidad_hechos), 0), max(num_localidades, 1) * _NUM_SUBETAPAS)
+        return PESO_ETAPA_VALIDACION + pasos * _peso_paso_localidad(num_localidades)
+    return 1.0
+
+
+def _texto_barra_consolidacion(
+    localidad: str,
+    indice_localidad: int,
+    total_localidades: int,
+    subetapa_idx: int,
+) -> str:
+    nombre_etapa = NOMBRES_ETAPA_LOCALIDAD[subetapa_idx]
+    pct_etapa = int(PESOS_ETAPAS_LOCALIDAD[subetapa_idx] * 100)
+    pct_loc = pct_etapa // max(total_localidades, 1)
+    detalle = DETALLE_ETAPA_LOCALIDAD[subetapa_idx]
+    return (
+        f"{localidad} ({indice_localidad + 1}/{total_localidades}) · "
+        f"Etapa {nombre_etapa} ({pct_etapa} % del total, {pct_loc} % por localidad): {detalle}"
+    )
 
 
 def _actualizar_barra_progreso(progress, valor: float, texto: str) -> None:
-    """Actualiza la barra y fuerza un refresco mínimo de la interfaz."""
+    """Actualiza la barra (sin bloquear la ejecución en Streamlit Cloud)."""
     if progress is None:
         return
     progress.progress(min(max(valor, 0.0), 1.0), text=texto)
-    time.sleep(0.05)
 
 
-def _fraccion_en_rango(inicio: float, fin: float, parte: float) -> float:
-    return inicio + (fin - inicio) * min(max(parte, 0.0), 1.0)
+def _omitir_formulario_entrada() -> bool:
+    """Solo durante un run activo (Continuar o paso siguiente), no al abrir la página."""
+    return bool(st.session_state.get("ejecutar_consolidacion_ahora"))
+
+
+def _sanear_sesion_consolidacion() -> None:
+    """Evita quedar colgado si la sesión quedó a medias tras F5 o un cierre."""
+    if st.session_state.get("consolidacion_work") and not st.session_state.get(
+        "ejecutar_consolidacion_ahora"
+    ):
+        st.session_state.consolidacion_en_curso = False
+        st.session_state.pendiente_consolidacion = False
+    if st.session_state.get("pendiente_consolidacion") and not st.session_state.get(
+        "ejecutar_consolidacion_ahora"
+    ):
+        st.session_state.pendiente_consolidacion = False
+
+
+def _reporte_con_casos_guardados(casos: list) -> ReporteEjecucion:
+    reporte = ReporteEjecucion()
+    for datos in casos:
+        reporte.casos.append(CasoNoPrevisto(**datos))
+    return reporte
+
+
+def _procesar_localidad_en_work(
+    work: dict,
+    item: dict,
+    reporte: ReporteEjecucion,
+    progress,
+    indice: int,
+    total: int,
+) -> None:
+    """Cruza una localidad y acumula el resultado en work."""
+    pwd = work["pwd"]
+    ahora = work["ahora"]
+    titulo_mes = work["titulo_mes"]
+    localidad = item["localidad"]
+    pasos_previos = indice * _NUM_SUBETAPAS
+
+    _actualizar_barra_progreso(
+        progress,
+        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos),
+        _texto_barra_consolidacion(localidad, indice, total, 0),
+    )
+
+    try:
+        df_matriz = leer_hoja_matriz(
+            bytes_archivo_cola(item["matriz"]),
+            pwd,
+            item["matriz"]["name"],
+            header=MATRIZ_HEADER_FILA,
+        )
+    except ValueError as e:
+        work["errores"].append(f"**{localidad}** — Matriz: {e}")
+        reporte.desde_excepcion(
+            e,
+            localidad=localidad,
+            archivo=item["matriz"]["name"],
+            fase="lectura_matriz",
+        )
+        return
+    except Exception as e:
+        work["errores"].append(f"**{localidad}** — Matriz: no se pudo leer ({e})")
+        reporte.desde_excepcion(
+            e,
+            localidad=localidad,
+            archivo=item["matriz"]["name"],
+            fase="lectura_matriz",
+        )
+        return
+
+    _actualizar_barra_progreso(
+        progress,
+        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 1),
+        _texto_barra_consolidacion(localidad, indice, total, 1),
+    )
+
+    try:
+        resultado = procesar_localidad_cxp(
+            bytes_archivo_cola(item["contratos"]),
+            df_matriz,
+            localidad,
+            ahora,
+            item["contratos"]["name"],
+            item["matriz"]["name"],
+        )
+    except ValueError as e:
+        work["errores"].append(f"**{localidad}** — Contratos: {e}")
+        reporte.desde_excepcion(
+            e,
+            localidad=localidad,
+            archivo=item["contratos"]["name"],
+            fase="procesamiento_contratos",
+        )
+        return
+    except Exception as e:
+        work["errores"].append(
+            f"**{localidad}** — Contratos: no se pudo procesar ({e})"
+        )
+        reporte.desde_excepcion(
+            e,
+            localidad=localidad,
+            archivo=item["contratos"]["name"],
+            fase="procesamiento_contratos",
+        )
+        return
+
+    _actualizar_barra_progreso(
+        progress,
+        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 2),
+        _texto_barra_consolidacion(localidad, indice, total, 2),
+    )
+
+    registrar_resultado_localidad(reporte, item, resultado)
+    _agregar_conteo_global(work["conteo_global"], resultado["conteo"])
+    work["informe_localidades"].append({
+        "localidad": localidad,
+        "columna_mes": resultado["columna_mes"],
+        "accion_columna": resultado["accion_columna"],
+        "total_contratos": resultado["total_contratos"],
+        "contratos_ok": resultado["contratos_ok"],
+        "sin_resolver": resultado["sin_resolver"],
+        "cxp_total": resultado["cxp_total"],
+        "resumen_metodos": resultado["resumen_metodos"],
+        "conteo": resultado["conteo"],
+        "advertencias_suspendidos": resultado.get("advertencias_suspendidos", []),
+    })
+    work["detalle_global"].extend(resultado["detalle"])
+    work["contratos_actualizados"][localidad] = _guardar_contratos_en_disco(
+        localidad, resultado
+    )
+    work["stats"].extend([
+        {
+            "Localidad": localidad,
+            "Archivo": f"Contratos ({resultado.get('hoja_cruce', 'Cps/Caja por depurar')})",
+            "Nombre": item["contratos"]["name"],
+            "Filas": resultado["total_contratos"],
+            "CXP (suma mes)": resultado["cxp_total"],
+            f"Columna {titulo_mes}": resultado["accion_columna"],
+        },
+        {
+            "Localidad": localidad,
+            "Archivo": "Matriz",
+            "Nombre": item["matriz"]["name"],
+            "Filas": len(df_matriz),
+        },
+    ])
+
+    _actualizar_barra_progreso(
+        progress,
+        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 3),
+        f"{localidad} ({indice + 1}/{total}): localidad terminada.",
+    )
+
+
+def _aplicar_work_a_sesion(work: dict) -> bool:
+    errores = work["errores"]
+    informe = work["informe_localidades"]
+    total = len(work["cola"])
+    titulo_mes = work["titulo_mes"]
+    ahora = work["ahora"]
+
+    if errores:
+        st.session_state.errores_ejecucion = list(errores)
+        st.session_state.pop("consolidacion_work", None)
+        st.session_state.processed = False
+        return False
+
+    if len(informe) != total:
+        st.session_state.errores_ejecucion = [
+            f"**{item['localidad']}** — no se pudo consolidar (revise los mensajes anteriores)."
+            for item in work["cola"]
+            if item["localidad"] not in {x["localidad"] for x in informe}
+        ]
+        st.session_state.pop("consolidacion_work", None)
+        st.session_state.processed = False
+        return False
+
+    conteo_global = work["conteo_global"]
+    detalle_global = work["detalle_global"]
+    resumen_global = [
+        {
+            "Método": METODOS_LABEL.get(codigo, codigo),
+            "Contratos": cantidad,
+        }
+        for codigo, cantidad in sorted(conteo_global.items(), key=lambda x: -x[1])
+        if cantidad > 0
+    ]
+
+    st.session_state.cruce_informe = informe
+    establecer_cruce_detalle(detalle_global)
+    st.session_state.contratos_actualizados = work["contratos_actualizados"]
+    st.session_state.cruce_resumen_global = resumen_global
+    st.session_state.file_stats = work["stats"]
+    st.session_state.processed = True
+    st.session_state.fecha_analisis = ahora
+    st.session_state.last_processed_at = formato_fecha_colombia(ahora, con_hora=True)
+    st.session_state.titulo_saldo_corte = titulo_mes
+    _reset_estado_desempate_wizard()
+    st.session_state.zip_descarga_listo = False
+    _regenerar_zip_descarga_contratos()
+    _persistir_snapshot_consolidacion()
+    st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+    return True
 
 
 def ejecutar_consolidacion(
@@ -2023,6 +2765,7 @@ def ejecutar_consolidacion(
     fraccion_inicio: float = 0.0,
     fraccion_fin: float = 1.0,
 ):
+    del fraccion_inicio, fraccion_fin
     stats, errores = [], []
     informe_localidades = []
     detalle_global = []
@@ -2032,26 +2775,19 @@ def ejecutar_consolidacion(
     ahora = datetime.now()
     titulo_mes = titulo_saldo_corte(ahora)
 
-    _actualizar_barra_progreso(
-        progress,
-        fraccion_inicio,
-        "Iniciando cruce por localidad…",
-    )
-
     for i, item in enumerate(cola):
         localidad = item["localidad"]
-        base = i / total
-        tercio = 1.0 / (total * 3)
+        pasos_previos = i * _NUM_SUBETAPAS
 
         _actualizar_barra_progreso(
             progress,
-            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base),
-            f"{localidad} ({i + 1}/{len(cola)}): leyendo Matriz…",
+            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos),
+            _texto_barra_consolidacion(localidad, i, total, 0),
         )
 
         try:
             df_matriz = leer_hoja_matriz(
-                item["matriz"]["bytes"],
+                bytes_archivo_cola(item["matriz"]),
                 password_matriz,
                 item["matriz"]["name"],
                 header=MATRIZ_HEADER_FILA,
@@ -2077,13 +2813,13 @@ def ejecutar_consolidacion(
 
         _actualizar_barra_progreso(
             progress,
-            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base + tercio),
-            f"{localidad}: cruzando contratos con Matriz…",
+            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 1),
+            _texto_barra_consolidacion(localidad, i, total, 1),
         )
 
         try:
             resultado = procesar_localidad_cxp(
-                item["contratos"]["bytes"],
+                bytes_archivo_cola(item["contratos"]),
                 df_matriz,
                 localidad,
                 ahora,
@@ -2111,8 +2847,8 @@ def ejecutar_consolidacion(
 
         _actualizar_barra_progreso(
             progress,
-            _fraccion_en_rango(fraccion_inicio, fraccion_fin, base + 2 * tercio),
-            f"{localidad}: guardando Excel actualizado…",
+            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 2),
+            _texto_barra_consolidacion(localidad, i, total, 2),
         )
 
         registrar_resultado_localidad(reporte, item, resultado)
@@ -2130,7 +2866,9 @@ def ejecutar_consolidacion(
             "advertencias_suspendidos": resultado.get("advertencias_suspendidos", []),
         })
         detalle_global.extend(resultado["detalle"])
-        contratos_actualizados[localidad] = resultado
+        contratos_actualizados[localidad] = _guardar_contratos_en_disco(
+            localidad, resultado
+        )
 
         stats.extend([
             {
@@ -2151,13 +2889,13 @@ def ejecutar_consolidacion(
 
         _actualizar_barra_progreso(
             progress,
-            _fraccion_en_rango(fraccion_inicio, fraccion_fin, (i + 1) / total),
-            f"{localidad}: listo.",
+            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 3),
+            f"{localidad} ({i + 1}/{total}): localidad terminada.",
         )
 
     _actualizar_barra_progreso(
         progress,
-        fraccion_fin,
+        1.0,
         "Consolidación por localidad terminada.",
     )
     if progress is not None:
@@ -2182,69 +2920,184 @@ def ejecutar_consolidacion(
     ]
 
     st.session_state.cruce_informe = informe_localidades
-    st.session_state.cruce_detalle = detalle_global
+    establecer_cruce_detalle(detalle_global)
     st.session_state.contratos_actualizados = contratos_actualizados
     st.session_state.cruce_resumen_global = resumen_global
     st.session_state.file_stats = stats
-    st.session_state.consolidated_df = (
-        pd.DataFrame(detalle_global) if detalle_global else pd.DataFrame()
-    )
     st.session_state.processed = True
     st.session_state.fecha_analisis = ahora
     st.session_state.last_processed_at = formato_fecha_colombia(ahora, con_hora=True)
     st.session_state.titulo_saldo_corte = titulo_mes
     _reset_estado_desempate_wizard()
+    _persistir_snapshot_consolidacion()
+    st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
     return True
 
 
-def consolidacion_activa() -> bool:
+def _consolidacion_corriendo() -> bool:
     return bool(
-        st.session_state.get("consolidacion_en_curso")
-        or st.session_state.get("abrir_dialogo")
+        st.session_state.get("ejecutar_consolidacion_ahora")
+        or st.session_state.get("consolidacion_en_curso")
     )
 
 
-def procesar_consolidacion(cola_run: list, pwd: str):
-    n = len(cola_run)
-    st.session_state.consolidacion_en_curso = True
-    try:
-        limpiar_resultado_consolidado()
-        reporte = ReporteEjecucion()
-        progress = st.progress(0, text="Validando archivos y contraseña…")
+def _limpiar_estado_consolidacion_bloqueado() -> None:
+    """Evita quedar con el botón deshabilitado si una ejecución anterior se interrumpió."""
+    if st.session_state.get("consolidacion_en_curso") and not st.session_state.get(
+        "ejecutar_consolidacion_ahora"
+    ):
+        st.session_state.consolidacion_en_curso = False
 
-        nombres_ok, errores_nombres = validar_cola_archivos(cola_run, pwd)
+
+def _consumir_disparador_consolidacion() -> bool:
+    """True si el usuario pulsó Continuar en el paso anterior."""
+    if st.session_state.pop("pendiente_consolidacion", False):
+        return True
+    if st.session_state.pop("iniciar_consolidacion", False):
+        return True
+    return False
+
+
+def _resolver_cola_para_ejecutar() -> list:
+    cola = st.session_state.get("cola_ejecucion") or []
+    if not cola:
+        base = st.session_state.get("cola_localidades") or []
+        if base:
+            cola = cola_para_ejecutar(base)
+            st.session_state.cola_ejecucion = cola
+    return _asegurar_cola_en_disco(cola) if cola else []
+
+
+def _ejecutar_consolidacion_si_pendiente(progress=None) -> None:
+    if not st.session_state.get("ejecutar_consolidacion_ahora"):
+        return
+    work = st.session_state.get("consolidacion_work")
+    disparo = _consumir_disparador_consolidacion()
+    if not disparo and not work:
+        st.session_state.ejecutar_consolidacion_ahora = False
+        st.session_state.consolidacion_en_curso = False
+        return
+    if disparo:
+        cola = _resolver_cola_para_ejecutar()
+        if not cola:
+            st.session_state.ejecutar_consolidacion_ahora = False
+            st.session_state.consolidacion_en_curso = False
+            if progress is not None:
+                progress.empty()
+            st.error(
+                "No hay cola de ejecución. Pulse **Ejecutar consolidación** de nuevo "
+                "y luego **Continuar**."
+            )
+            return
+        pwd = st.session_state.get("pwd_matriz", "")
+        procesar_consolidacion(cola, pwd, progress=progress, reiniciar=True)
+    else:
+        cola = _asegurar_cola_en_disco(work["cola"])
+        pwd = work["pwd"]
+        procesar_consolidacion(cola, pwd, progress=progress, reiniciar=False)
+
+
+def procesar_consolidacion(
+    cola_run: list,
+    pwd: str,
+    progress=None,
+    *,
+    reiniciar: bool = True,
+):
+    n = len(cola_run)
+    if n == 0:
+        st.error("La cola está vacía. Añada localidades con Contratos y Matriz.")
+        return
+    st.session_state.consolidacion_en_curso = True
+    if progress is None:
+        progress = st.progress(0, text="Preparando consolidación…")
+    try:
+        work = st.session_state.get("consolidacion_work")
+        if reiniciar or work is None:
+            limpiar_resultado_consolidado()
+            cola_run = _asegurar_cola_en_disco(cola_run)
+            _actualizar_barra_progreso(
+                progress,
+                _progreso_consolidacion(n, fraccion_validacion=0.0),
+                f"Etapa Validación ({int(PESO_ETAPA_VALIDACION * 100)} % del total): "
+                "revisando archivos y contraseña…",
+            )
+            nombres_ok, errores_nombres = validar_cola_archivos(
+                cola_run,
+                pwd,
+                verificar_texto_localidad=False,
+            )
+            if not nombres_ok:
+                st.session_state.ejecutar_consolidacion_ahora = False
+                reporte = ReporteEjecucion()
+                reporte.cerrar(False)
+                if any(es_error_contrasena(e) for e in errores_nombres):
+                    st.error(
+                        "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
+                    )
+                else:
+                    st.error(
+                        "No se consolidaron las localidades correctamente. Revise los archivos."
+                    )
+                for detalle in errores_nombres:
+                    st.markdown(f"- {detalle}")
+                _actualizar_barra_progreso(
+                    progress,
+                    0.0,
+                    "Validación detenida. Corrija los puntos anteriores.",
+                )
+                return
+
+            ahora = datetime.now()
+            work = {
+                "cola": cola_run,
+                "idx": 0,
+                "pwd": pwd,
+                "reporte_casos": [],
+                "stats": [],
+                "informe_localidades": [],
+                "detalle_global": [],
+                "contratos_actualizados": {},
+                "conteo_global": {},
+                "errores": [],
+                "ahora": ahora,
+                "titulo_mes": titulo_saldo_corte(ahora),
+            }
+            st.session_state.consolidacion_work = work
+            _actualizar_barra_progreso(
+                progress,
+                _progreso_consolidacion(n, fraccion_validacion=1.0),
+                f"Validación lista ({n} localidad/es). Iniciando cruces…",
+            )
+        else:
+            work["cola"] = _asegurar_cola_en_disco(work["cola"])
+            st.session_state.consolidacion_work = work
+
+        work = st.session_state.consolidacion_work
+        total = len(work["cola"])
+
+        while work["idx"] < total:
+            idx = work["idx"]
+            reporte_paso = ReporteEjecucion()
+            _procesar_localidad_en_work(
+                work, work["cola"][idx], reporte_paso, progress, idx, total
+            )
+            work["reporte_casos"].extend(c.a_dict() for c in reporte_paso.casos)
+            work["idx"] = idx + 1
+
         _actualizar_barra_progreso(
             progress,
-            FRACCION_PROGRESO_VALIDACION,
-            "Validación lista. Iniciando cruces…",
+            1.0,
+            "Consolidación por localidad terminada.",
         )
+        progress.empty()
 
-        if not nombres_ok:
-            progress.empty()
-            reporte.cerrar(False)
-            if any(es_error_contrasena(e) for e in errores_nombres):
-                st.error(
-                    "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
-                )
-            else:
-                st.error(
-                    "No se consolidaron las localidades correctamente. Revise los archivos."
-                )
-            for detalle in errores_nombres:
-                st.markdown(f"- {detalle}")
-            return
-
-        exito = ejecutar_consolidacion(
-            cola_run,
-            pwd,
-            reporte,
-            progress=progress,
-            fraccion_inicio=FRACCION_PROGRESO_VALIDACION,
-            fraccion_fin=1.0,
-        )
+        reporte = _reporte_con_casos_guardados(work["reporte_casos"])
+        exito = _aplicar_work_a_sesion(work)
         localidades_ok = len(st.session_state.get("cruce_informe", []))
         reporte.cerrar(exito, localidades_ok, n)
         _guardar_reporte_en_sesion(reporte)
+        st.session_state.pop("consolidacion_work", None)
 
         if exito and st.session_state.processed:
             titulo_mes = st.session_state.get("titulo_saldo_corte", "")
@@ -2258,23 +3111,26 @@ def procesar_consolidacion(cola_run: list, pwd: str):
             )
             if sin_res:
                 msg += f" Pendiente: **{sin_res}** desempate(s) manual(es)."
+            _vaciar_cola_tras_consolidar()
+            msg += " La cola de entrada se vació para acelerar la app al recargar (F5)."
             st.success(msg)
         else:
-            limpiar_resultado_consolidado()
             errores_ej = st.session_state.pop("errores_ejecucion", [])
-            todos_errores = errores_ej
-            if any(es_error_contrasena(e) for e in todos_errores):
+            if any(es_error_contrasena(e) for e in errores_ej):
                 st.error(
                     "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
                 )
             else:
                 st.error("No se consolidaron las localidades correctamente.")
-            for detalle in todos_errores:
+            for detalle in errores_ej:
                 st.markdown(f"- {detalle}")
 
-        mostrar_reporte_tecnico_admin()  # solo si hubo casos no previstos
+        mostrar_reporte_tecnico_admin()
     finally:
         st.session_state.consolidacion_en_curso = False
+        # Si aún hay trabajo pendiente (st.rerun al siguiente paso), mantener el flag.
+        if st.session_state.get("consolidacion_work") is None:
+            st.session_state.ejecutar_consolidacion_ahora = False
 
 
 def render_solicitud_contrasena_matriz() -> None:
@@ -2299,7 +3155,9 @@ def render_solicitud_contrasena_matriz() -> None:
             ):
                 st.session_state.pwd_matriz = pwd.strip() if pwd else ""
                 st.session_state.abrir_dialogo = False
-                st.session_state.iniciar_consolidacion = True
+                st.session_state.pop("consolidacion_work", None)
+                st.session_state.pendiente_consolidacion = True
+                st.session_state.ejecutar_consolidacion_ahora = True
                 st.rerun()
         with col_cancel:
             if st.button(
@@ -2308,11 +3166,119 @@ def render_solicitud_contrasena_matriz() -> None:
                 key="btn_pwd_matriz_cancelar",
             ):
                 st.session_state.abrir_dialogo = False
+                st.session_state.pop("consolidacion_work", None)
+                st.session_state.pendiente_consolidacion = False
+                st.session_state.ejecutar_consolidacion_ahora = False
                 st.rerun()
 
 
 if not st.session_state.get("acceso_autorizado"):
     render_portada_acceso()
+    st.stop()
+
+@st.cache_resource(show_spinner=False)
+def _dependencias_consolidacion():
+    """Una sola carga por proceso del servidor (no en cada F5)."""
+    import msoffcrypto
+    import msoffcrypto.exceptions as ms_exceptions
+    import pandas as pd
+
+    import cxp_cruce
+
+    from cxp_cruce import (
+        METODOS_LABEL,
+        aplicar_desempate_en_contratos,
+        clave_desde_detalle,
+        claves_pendientes_localidad,
+        procesar_localidad_cxp,
+        quitar_autofiltros_xlsx,
+        recalcular_estadisticas_localidad,
+        resolver_hoja_cruce_cxp,
+        titulo_saldo_corte,
+        validar_desempate_completo,
+    )
+    from reporte_ejecucion import (
+        CasoNoPrevisto,
+        ReporteEjecucion,
+        registrar_resultado_localidad,
+    )
+
+    return {
+        "pd": pd,
+        "msoffcrypto": msoffcrypto,
+        "ms_exceptions": ms_exceptions,
+        "cxp_cruce": cxp_cruce,
+        "METODOS_LABEL": METODOS_LABEL,
+        "aplicar_desempate_en_contratos": aplicar_desempate_en_contratos,
+        "clave_desde_detalle": clave_desde_detalle,
+        "claves_pendientes_localidad": claves_pendientes_localidad,
+        "procesar_localidad_cxp": procesar_localidad_cxp,
+        "quitar_autofiltros_xlsx": quitar_autofiltros_xlsx,
+        "recalcular_estadisticas_localidad": recalcular_estadisticas_localidad,
+        "resolver_hoja_cruce_cxp": resolver_hoja_cruce_cxp,
+        "titulo_saldo_corte": titulo_saldo_corte,
+        "validar_desempate_completo": validar_desempate_completo,
+        "CasoNoPrevisto": CasoNoPrevisto,
+        "ReporteEjecucion": ReporteEjecucion,
+        "registrar_resultado_localidad": registrar_resultado_localidad,
+    }
+
+
+def _necesita_dependencias_pesadas() -> bool:
+    if st.session_state.get("ejecutar_consolidacion_ahora"):
+        return True
+    if st.session_state.get("cola_localidades") or st.session_state.get("consolidacion_work"):
+        return True
+    if st.session_state.get("abrir_dialogo"):
+        return True
+    if st.session_state.get("processed") and st.session_state.get(
+        _CLAVE_MOSTRAR_RESULTADOS, False
+    ):
+        return True
+    return False
+
+
+def _inicializar_dependencias_modulo() -> None:
+    global pd, msoffcrypto, ms_exceptions, cxp_cruce, METODOS_LABEL
+    global aplicar_desempate_en_contratos, clave_desde_detalle
+    global claves_pendientes_localidad, procesar_localidad_cxp, quitar_autofiltros_xlsx
+    global recalcular_estadisticas_localidad, resolver_hoja_cruce_cxp, titulo_saldo_corte
+    global validar_desempate_completo, CasoNoPrevisto, ReporteEjecucion
+    global registrar_resultado_localidad
+    if globals().get("_DEPS_MODULO_LISTAS"):
+        return
+    dep = _dependencias_consolidacion()
+    pd = dep["pd"]
+    msoffcrypto = dep["msoffcrypto"]
+    ms_exceptions = dep["ms_exceptions"]
+    cxp_cruce = dep["cxp_cruce"]
+    METODOS_LABEL = dep["METODOS_LABEL"]
+    aplicar_desempate_en_contratos = dep["aplicar_desempate_en_contratos"]
+    clave_desde_detalle = dep["clave_desde_detalle"]
+    claves_pendientes_localidad = dep["claves_pendientes_localidad"]
+    procesar_localidad_cxp = dep["procesar_localidad_cxp"]
+    quitar_autofiltros_xlsx = dep["quitar_autofiltros_xlsx"]
+    recalcular_estadisticas_localidad = dep["recalcular_estadisticas_localidad"]
+    resolver_hoja_cruce_cxp = dep["resolver_hoja_cruce_cxp"]
+    titulo_saldo_corte = dep["titulo_saldo_corte"]
+    validar_desempate_completo = dep["validar_desempate_completo"]
+    CasoNoPrevisto = dep["CasoNoPrevisto"]
+    ReporteEjecucion = dep["ReporteEjecucion"]
+    registrar_resultado_localidad = dep["registrar_resultado_localidad"]
+    globals()["_DEPS_MODULO_LISTAS"] = True
+
+
+if _necesita_dependencias_pesadas():
+    _inicializar_dependencias_modulo()
+
+_limpiar_estado_consolidacion_bloqueado()
+_sanear_sesion_consolidacion()
+if not st.session_state.get("ejecutar_consolidacion_ahora"):
+    _compactar_sesion_para_f5()
+
+_barra_consolidacion = None
+if st.session_state.get("ejecutar_consolidacion_ahora"):
+    _barra_consolidacion = st.progress(0, text="Iniciando consolidación…")
 
 # ── Título ─────────────────────────────────────────────────────────────────────
 st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
@@ -2321,87 +3287,142 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-uk = st.session_state.upload_key
+_omitir_formulario = _omitir_formulario_entrada()
 
-# ── Formulario ─────────────────────────────────────────────────────────────────
-with st.container(border=True):
-    st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
-    st.caption(
-        "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
-        "correspondiente por localidad."
-    )
-
-    st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
-    localidad = st.selectbox(
-        "Localidad",
-        options=[SELECCION_LOCALIDAD] + LOCALIDADES,
-        index=0,
-        label_visibility="collapsed",
-        key="select_localidad",
-    )
-
+if _omitir_formulario:
+    cola_ej = st.session_state.get("cola_ejecucion") or []
+    if not cola_ej and st.session_state.get("consolidacion_work"):
+        cola_ej = st.session_state.consolidacion_work.get("cola", [])
+    if cola_ej:
+        nombres = ", ".join(item["localidad"] for item in cola_ej)
+        st.info(
+            f"Consolidación en curso ({len(cola_ej)} localidad/es): **{nombres}**. "
+            "No cierre esta pestaña hasta ver el resultado."
+        )
+    else:
+        st.info("Consolidación en curso. No cierre esta pestaña hasta ver el resultado.")
+    _ejecutar_consolidacion_si_pendiente(_barra_consolidacion)
     st.divider()
 
-    st.markdown(
-        '<p class="field-label"><span class="field-num">1</span> Contratos plan de choque</p>',
-        unsafe_allow_html=True,
-    )
-    archivo_contratos = st.file_uploader(
-        "Contratos plan de choque",
-        type=["xlsx", "xls"],
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-        key=f"uploader_contratos_{uk}",
-        help="Un solo archivo Excel (.xlsx o .xls).",
-    )
-    if archivo_contratos:
-        st.markdown(f'<p class="file-ok">✓ {archivo_contratos.name}</p>', unsafe_allow_html=True)
+uk = st.session_state.upload_key
 
-    st.markdown(
-        '<p class="field-label"><span class="field-num">2</span> Matriz</p>',
-        unsafe_allow_html=True,
-    )
-    archivo_matriz = st.file_uploader(
-        "Matriz",
-        type=["xlsx", "xls"],
-        accept_multiple_files=False,
-        label_visibility="collapsed",
-        key=f"uploader_matriz_{uk}",
-        help="Un solo archivo Excel. Hoja MATRIZ OXP.",
-    )
-    if archivo_matriz:
-        st.markdown(f'<p class="file-ok">✓ {archivo_matriz.name}</p>', unsafe_allow_html=True)
-
-form_ok = formulario_completo(localidad, archivo_contratos, archivo_matriz)
-
-add_clicked = st.button(
-    "Añadir a cola de consolidados",
-    type="secondary",
-    use_container_width=True,
-    help="Guarda la localidad y los archivos en la cola. Luego puede cargar la siguiente.",
-)
-
-if add_clicked:
-    if not form_ok:
+_trabajo_pausado = st.session_state.get("consolidacion_work")
+if not _omitir_formulario and _trabajo_pausado:
+    _idx = _trabajo_pausado.get("idx", 0)
+    _total = len(_trabajo_pausado.get("cola", []))
+    with st.container(border=True):
         st.warning(
-            "Complete la localidad y los dos archivos antes de añadir el consolidado a la cola."
+            f"Quedó una consolidación interrumpida (**{_idx}/{_total}** localidades procesadas)."
         )
-    elif any(item["localidad"] == localidad for item in st.session_state.cola_localidades):
-        st.warning(f"**{localidad}** ya está en la cola. Quítela o elija otra localidad.")
-    else:
-        st.session_state.cola_localidades.append(
-            entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
+        c_reanudar, c_descartar = st.columns(2)
+        with c_reanudar:
+            if st.button(
+                "Reanudar consolidación",
+                type="primary",
+                use_container_width=True,
+                key="btn_reanudar_consolidacion",
+            ):
+                st.session_state.ejecutar_consolidacion_ahora = True
+                st.session_state.consolidacion_en_curso = True
+                st.session_state.pendiente_consolidacion = False
+                st.rerun()
+        with c_descartar:
+            if st.button(
+                "Descartar y empezar de nuevo",
+                use_container_width=True,
+                key="btn_descartar_consolidacion",
+            ):
+                st.session_state.pop("consolidacion_work", None)
+                st.session_state.pendiente_consolidacion = False
+                st.session_state.ejecutar_consolidacion_ahora = False
+                st.rerun()
+
+if not _omitir_formulario:
+    # ── Formulario ─────────────────────────────────────────────────────────────
+    with st.container(border=True):
+        st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
+        st.caption(
+            "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
+            "correspondiente por localidad."
         )
-        st.session_state.upload_key += 1
-        # No asignar a key de widget: borrar para que el selectbox vuelva al índice 0.
-        if "select_localidad" in st.session_state:
-            del st.session_state["select_localidad"]
-        st.toast(f"{localidad} añadido a la cola", icon="➕")
-        st.rerun()
+
+        st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
+        localidad = st.selectbox(
+            "Localidad",
+            options=[SELECCION_LOCALIDAD] + LOCALIDADES,
+            index=0,
+            label_visibility="collapsed",
+            key=f"select_localidad_{uk}",
+        )
+
+        st.divider()
+
+        st.markdown(
+            '<p class="field-label"><span class="field-num">1</span> Contratos plan de choque</p>',
+            unsafe_allow_html=True,
+        )
+        archivo_contratos = st.file_uploader(
+            "Contratos plan de choque",
+            type=["xlsx", "xls"],
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+            key=f"uploader_contratos_{uk}",
+            help="Un solo archivo Excel (.xlsx o .xls).",
+        )
+        if archivo_contratos:
+            st.markdown(
+                f'<p class="file-ok">✓ {archivo_contratos.name}</p>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown(
+            '<p class="field-label"><span class="field-num">2</span> Matriz</p>',
+            unsafe_allow_html=True,
+        )
+        archivo_matriz = st.file_uploader(
+            "Matriz",
+            type=["xlsx", "xls"],
+            accept_multiple_files=False,
+            label_visibility="collapsed",
+            key=f"uploader_matriz_{uk}",
+            help="Un solo archivo Excel. Hoja MATRIZ OXP.",
+        )
+        if archivo_matriz:
+            st.markdown(
+                f'<p class="file-ok">✓ {archivo_matriz.name}</p>',
+                unsafe_allow_html=True,
+            )
+
+        form_ok = formulario_completo(localidad, archivo_contratos, archivo_matriz)
+
+        add_clicked = st.button(
+            "Añadir a cola de consolidados",
+            type="secondary",
+            use_container_width=True,
+            help="Guarda la localidad y los archivos en la cola. Luego puede cargar la siguiente.",
+        )
+
+    if add_clicked:
+        if not form_ok:
+            st.warning(
+                "Complete la localidad y los dos archivos antes de añadir el consolidado a la cola."
+            )
+        elif any(
+            item["localidad"] == localidad for item in st.session_state.cola_localidades
+        ):
+            st.warning(f"**{localidad}** ya está en la cola. Quítela o elija otra localidad.")
+        else:
+            st.session_state.cola_localidades.append(
+                entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
+            )
+            st.session_state.upload_key += 1
+            _purgar_uploaders_obsoletos()
+            st.toast(f"{localidad} añadido a la cola", icon="➕")
+            st.rerun()
 
 # ── Cola pendiente ─────────────────────────────────────────────────────────────
 cola = st.session_state.cola_localidades
-if cola:
+if not _omitir_formulario and cola:
     st.markdown(
         f'<p class="section-title">Cola de consolidados ({len(cola)})</p>',
         unsafe_allow_html=True,
@@ -2438,16 +3459,17 @@ if cola:
         st.rerun()
 
 st.divider()
-if consolidacion_activa():
-    st.caption("Consolidación en curso. Espere a que termine la barra de avance.")
-run_clicked = st.button(
-    "Ejecutar consolidación",
-    type="primary",
-    use_container_width=True,
-    key="btn_ejecutar_consolidacion",
-    disabled=consolidacion_activa(),
-    help="Procesa todos los consolidados de la cola.",
-)
+run_clicked = False
+if st.session_state.get("abrir_dialogo"):
+    render_solicitud_contrasena_matriz()
+elif not _consolidacion_corriendo():
+    run_clicked = st.button(
+        "Ejecutar consolidación",
+        type="primary",
+        use_container_width=True,
+        key="btn_ejecutar_consolidacion",
+        help="Procesa todos los consolidados de la cola.",
+    )
 
 if run_clicked:
     if not puede_ejecutar_cola(st.session_state.cola_localidades):
@@ -2468,26 +3490,19 @@ if run_clicked:
         else:
             st.session_state.cola_ejecucion = cola_ejec
             st.session_state.abrir_dialogo = True
+            st.session_state.pendiente_consolidacion = False
             st.rerun()
 
-if st.session_state.get("abrir_dialogo"):
-    render_solicitud_contrasena_matriz()
-elif st.session_state.get("iniciar_consolidacion"):
-    st.session_state.iniciar_consolidacion = False
-    procesar_consolidacion(
-        st.session_state.cola_ejecucion,
-        st.session_state.pwd_matriz,
-    )
-
-# ── Resultados ─────────────────────────────────────────────────────────────────
-if st.session_state.processed:
-    stats = st.session_state.file_stats
-    informe = st.session_state.get("cruce_informe", [])
-    titulo_mes = st.session_state.get("titulo_saldo_corte", "")
+def _render_panel_resultados_completos() -> None:
+    """Tablas, desempate y descargas (solo cuando el usuario lo pide o tras consolidar)."""
+    snap = _cargar_snapshot_consolidacion()
+    stats = snap.get("file_stats") or []
+    informe = snap.get("informe") or []
+    st.session_state.cruce_resumen_global = snap.get("cruce_resumen_global") or []
+    titulo_mes = snap.get("titulo_saldo_corte") or st.session_state.get("titulo_saldo_corte", "")
     etiqueta_cxp = titulo_mes or "Saldo de corte"
-
-    fecha_analisis = st.session_state.get("fecha_analisis")
-    procesado_en = st.session_state.get("last_processed_at", "")
+    fecha_analisis = snap.get("fecha_analisis") or st.session_state.get("fecha_analisis")
+    procesado_en = snap.get("last_processed_at") or st.session_state.get("last_processed_at", "")
 
     st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
     if titulo_mes or procesado_en or fecha_analisis:
@@ -2533,10 +3548,17 @@ if st.session_state.processed:
             unsafe_allow_html=True,
         )
 
-    detalle_todo = st.session_state.get("cruce_detalle", [])
-    mostrar_informe_cruce_consolidado(informe, titulo_mes, detalle_todo)
+    requiere_detalle = sin_resolver > 0 or informe_requiere_detalle_cruce(informe)
+    mostrar_informe_cruce_consolidado(
+        informe,
+        titulo_mes,
+        cargar_tablas_detalle=requiere_detalle,
+    )
     descargas_ok = consolidacion_lista_para_descarga()
 
+    detalle_todo: list = []
+    if sin_resolver > 0:
+        detalle_todo = obtener_cruce_detalle()
     if sin_resolver > 0 and detalle_todo:
         st.markdown('<p class="section-title">Contratos sin resolver</p>', unsafe_allow_html=True)
         st.error(
@@ -2592,16 +3614,33 @@ if st.session_state.processed:
             st.caption(
                 "Disponible cuando **Sin resolver** sea 0 (complete el desempate manual arriba)."
             )
-        datos_dl, nombre_dl, mime_dl = empaquetar_descarga_contratos(contratos_act, fecha_dl)
-        st.download_button(
-            label="Descargar Contratos actualizados (ZIP)",
-            data=datos_dl,
-            file_name=nombre_dl,
-            mime=mime_dl,
-            key="dl_contratos_todas",
-            use_container_width=True,
-            disabled=not descargas_ok,
-        )
+        zip_info = st.session_state.get("zip_descarga_contratos")
+        nombre_dl = (zip_info or {}).get("nombre") or "contratos.zip"
+        mime_dl = (zip_info or {}).get("mime") or "application/zip"
+        ruta_zip = (zip_info or {}).get("path")
+        if descargas_ok and ruta_zip and Path(ruta_zip).is_file():
+            if not st.session_state.get("zip_descarga_listo"):
+                if st.button(
+                    "Preparar descarga ZIP",
+                    use_container_width=True,
+                    key="btn_preparar_zip_contratos",
+                ):
+                    st.session_state.zip_descarga_listo = True
+                    st.rerun()
+            else:
+                datos_dl = _leer_binario_desde_ruta(
+                    ruta_zip, Path(ruta_zip).stat().st_mtime
+                )
+                st.download_button(
+                    label="Descargar Contratos actualizados (ZIP)",
+                    data=datos_dl,
+                    file_name=nombre_dl,
+                    mime=mime_dl,
+                    key="dl_contratos_todas",
+                    use_container_width=True,
+                )
+        elif descargas_ok:
+            st.caption("Pulse **Preparar descarga ZIP** cuando quiera bajar los archivos.")
         with st.expander("Archivos incluidos en la descarga"):
             for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
                 st.markdown(
@@ -2627,11 +3666,7 @@ if st.session_state.processed:
         disabled=not descargas_ok,
     ):
         try:
-            df_export = (
-                st.session_state.consolidated_df
-                if st.session_state.consolidated_df is not None
-                else pd.DataFrame()
-            )
+            df_export = dataframe_consolidado()
             rutas = guardar_archivos_salida(df_export, stats)
             st.session_state.ultima_descarga = [str(r) for r in rutas]
             st.toast("2 archivos guardados en Descargas", icon="✅")
@@ -2642,3 +3677,53 @@ if st.session_state.processed:
             )
         except (OSError, ValueError) as e:
             st.error(f"No se pudo guardar en Descargas: {e}")
+
+    if st.button(
+        "Ocultar resultados (recarga más rápida)",
+        use_container_width=True,
+        key="btn_ocultar_resultados_completos",
+    ):
+        st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = False
+        st.rerun()
+
+
+# ── Resultados ─────────────────────────────────────────────────────────────────
+if st.session_state.processed:
+    resumen_ligero = st.session_state.get(_CLAVE_RESUMEN_LIGERO) or {}
+    if not resumen_ligero:
+        snap_tmp = _cargar_snapshot_consolidacion()
+        informe_tmp = snap_tmp.get("informe") or []
+        if informe_tmp:
+            resumen_ligero = _resumen_ligero_desde_informe(informe_tmp)
+            st.session_state[_CLAVE_RESUMEN_LIGERO] = resumen_ligero
+
+    if not st.session_state.get(_CLAVE_MOSTRAR_RESULTADOS):
+        st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
+        n_loc = resumen_ligero.get("n_localidades", 0)
+        sin_r = resumen_ligero.get("sin_resolver", 0)
+        titulo_mes = resumen_ligero.get("titulo_mes") or st.session_state.get(
+            "titulo_saldo_corte", ""
+        )
+        st.success(
+            f"Consolidación lista: **{n_loc}** localidad(es), "
+            f"**{resumen_ligero.get('total_ok', 0)}/{resumen_ligero.get('total_contratos', 0)}** "
+            f"contratos cruzados"
+            + (f", **{sin_r}** sin resolver" if sin_r else "")
+            + (f". Columna **{titulo_mes}**." if titulo_mes else ".")
+        )
+        st.caption(
+            "Tras F5 la pantalla se mantiene liviana. Pulse el botón para cargar tablas, "
+            "desempate y descargas."
+        )
+        if st.button(
+            "Mostrar resultados completos",
+            type="primary",
+            use_container_width=True,
+            key="btn_mostrar_resultados_completos",
+        ):
+            st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+            _inicializar_dependencias_modulo()
+            st.rerun()
+    else:
+        _inicializar_dependencias_modulo()
+        _render_panel_resultados_completos()
