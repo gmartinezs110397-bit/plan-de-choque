@@ -2546,6 +2546,7 @@ def mostrar_reporte_tecnico_admin() -> None:
             data=payload.get("texto", ""),
             file_name=nombre_archivo,
             mime="text/plain",
+            key="dl_reporte_casos_no_previstos",
             use_container_width=True,
         )
         st.dataframe(
@@ -3158,7 +3159,12 @@ def procesar_consolidacion(
             for detalle in errores_ej:
                 st.markdown(f"- {detalle}")
 
-        mostrar_reporte_tecnico_admin()
+        # Evita duplicar el download_button si luego se pinta el panel completo.
+        if not (
+            exito
+            and st.session_state.get(_CLAVE_MOSTRAR_RESULTADOS)
+        ):
+            mostrar_reporte_tecnico_admin()
     finally:
         st.session_state.consolidacion_en_curso = False
         # Si aún hay trabajo pendiente (st.rerun al siguiente paso), mantener el flag.
