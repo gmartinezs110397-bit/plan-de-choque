@@ -25,9 +25,9 @@ from hoja_liquidados_con_saldo import (
 )
 from hoja_proximos_a_perder import resolver_hoja_proximos_a_perder
 from hoja_suspendidos import (
-    _columna_estado_mes_en_hoja,
     _columna_saldo_mes_en_hoja,
     _fila_totales_seguimiento,
+    _resolver_columnas_mes_seguimiento,
     resolver_hoja_suspendidos,
 )
 from hoja_tramites_sectores import resolver_hoja_tramites_sectores
@@ -104,8 +104,7 @@ def _leer_totales_hoja_par(
     Conteo (col. estado) y suma (col. saldo) del mes.
     Suspendidos, Próximos a perder y Trámites sectores: pie de lista.
     """
-    col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
-    col_estado = _columna_estado_mes_en_hoja(ws, fecha)
+    col_saldo, col_estado = _resolver_columnas_mes_seguimiento(ws, fecha)
     if not col_saldo or not col_estado:
         return None, None
     fila_c = fila_conteo if fila_conteo is not None else _fila_totales_seguimiento(ws)

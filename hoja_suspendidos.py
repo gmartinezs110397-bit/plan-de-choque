@@ -257,6 +257,61 @@ def _columna_estado_mes_en_hoja(ws, fecha: datetime | date) -> int | None:
     return _indice_columna_titulos(ws, _titulos_estado_equivalentes(fecha))
 
 
+def _estado_adyacente_a_saldo(
+    col_saldo: int,
+    col_prev_saldo: int | None,
+    col_prev_estado: int | None,
+    ws,
+) -> int | None:
+    """Estado del mes suele ir al lado del saldo (mismo offset que el par anterior)."""
+    if col_prev_saldo and col_prev_estado:
+        offset = col_prev_estado - col_prev_saldo
+        cand = col_saldo + offset
+        if 1 <= cand <= ws.max_column:
+            return cand
+    cand = col_saldo + 1
+    return cand if cand <= ws.max_column else None
+
+
+def _resolver_columnas_mes_seguimiento(
+    ws,
+    fecha: datetime | date,
+) -> tuple[int | None, int | None]:
+    """
+    Columnas saldo y estado del mes de ejecución (misma lógica que _asegurar_columnas_mes).
+    Usar al leer totales (Estrategias) cuando el encabezado de estado falta o no forma par.
+    """
+    _normalizar_titulos_mes_cortos(ws, fecha)
+    col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
+    col_estado = _columna_estado_mes_en_hoja(ws, fecha)
+
+    col_prev_saldo, col_prev_estado = _par_mes_anterior(
+        ws, fecha, col_saldo or 0, col_estado or 0
+    )
+
+    inf_s, inf_e = _inferir_columnas_mes_actual(
+        ws, fecha, col_prev_saldo, col_prev_estado
+    )
+    if inf_s and inf_e:
+        usar_inferido = col_saldo is None or col_estado is None
+        if not usar_inferido and col_saldo and col_estado:
+            fila_hdr = _fila_encabezado_hoja_datos(ws)
+            t_s = str(_celda_para_escribir(ws, fila_hdr, col_saldo).value or "").strip()
+            t_e = str(_celda_para_escribir(ws, fila_hdr, col_estado).value or "").strip()
+            usar_inferido = not t_s or not t_e
+        if usar_inferido:
+            col_saldo, col_estado = inf_s, inf_e
+
+    if col_saldo and not col_estado:
+        col_estado = _estado_adyacente_a_saldo(
+            col_saldo, col_prev_saldo, col_prev_estado, ws
+        )
+    if col_estado and not col_saldo:
+        col_saldo = col_estado - 1 if col_estado > 1 else None
+
+    return col_saldo, col_estado
+
+
 def _reforzar_titulos_pares_mes_seguimiento(ws, anio: int) -> None:
     """Asegura títulos SALDO/ESTADO del mes tras copiar estilos de encabezado."""
     fila_hdr = _fila_encabezado_hoja_datos(ws)
@@ -614,29 +669,12 @@ def _asegurar_columnas_mes(
     """
     Devuelve (col_saldo, col_estado, col_prev_saldo, col_prev_estado, columnas_nuevas).
     """
-    _normalizar_titulos_mes_cortos(ws, fecha)
-    col_saldo = _columna_saldo_mes_en_hoja(ws, fecha)
-    col_estado = _columna_estado_mes_en_hoja(ws, fecha)
+    col_saldo, col_estado = _resolver_columnas_mes_seguimiento(ws, fecha)
     columnas_nuevas = col_saldo is None or col_estado is None
 
     col_prev_saldo, col_prev_estado = _par_mes_anterior(
         ws, fecha, col_saldo or 0, col_estado or 0
     )
-
-    inf_s, inf_e = _inferir_columnas_mes_actual(
-        ws, fecha, col_prev_saldo, col_prev_estado
-    )
-    if inf_s and inf_e:
-        fila_hdr_tmp = _fila_encabezado_hoja_datos(ws)
-        usar_inferido = col_saldo is None or col_estado is None
-        if not usar_inferido:
-            t_s = str(_celda_para_escribir(ws, fila_hdr_tmp, col_saldo).value or "").strip()
-            t_e = str(_celda_para_escribir(ws, fila_hdr_tmp, col_estado).value or "").strip()
-            usar_inferido = not t_s or not t_e
-        if usar_inferido:
-            col_saldo = inf_s
-            col_estado = inf_e
-            columnas_nuevas = False
 
     siguiente = _ultima_columna_con_datos(ws) + 1
     if col_saldo is None:
@@ -1138,6 +1176,7 @@ __all__ = [
     "titulo_estado_suspendidos",
     "titulo_saldo_suspendidos",
     "_fila_totales_seguimiento",
+    "_resolver_columnas_mes_seguimiento",
     "_rango_filas_datos_seguimiento",
     "_leer_total_reportado_mes_anterior",
 ]
