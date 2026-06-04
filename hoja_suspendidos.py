@@ -289,6 +289,32 @@ def _columnas_par_mes_siguiente(
     return col_prev_saldo + 2, col_prev_saldo + 3
 
 
+def _par_columnas_valido_mes_actual(
+    ws,
+    fila_hdr: int,
+    col_saldo: int,
+    col_estado: int,
+    mes_actual: int,
+) -> bool:
+    """True si el par puede ser el mes en curso (sin título o ya titulado como ese mes)."""
+    if col_estado > ws.max_column or col_saldo < 1:
+        return False
+    for col in (col_saldo, col_estado):
+        val = _celda_para_escribir(ws, fila_hdr, col).value
+        if val is None or not str(val).strip():
+            continue
+        mes = _mes_desde_titulo(str(val))
+        if mes is not None and mes != mes_actual:
+            return False
+    tit_s = str(_celda_para_escribir(ws, fila_hdr, col_saldo).value or "").strip()
+    tit_e = str(_celda_para_escribir(ws, fila_hdr, col_estado).value or "").strip()
+    if not tit_s and not tit_e:
+        return True
+    mes_s = _mes_desde_titulo(tit_s)
+    mes_e = _mes_desde_titulo(tit_e)
+    return (mes_s == mes_actual) or (mes_e == mes_actual)
+
+
 def _inferir_columnas_mes_actual(
     ws,
     fecha: datetime | date,
@@ -296,36 +322,26 @@ def _inferir_columnas_mes_actual(
     col_prev_estado: int | None,
 ) -> tuple[int | None, int | None]:
     """
-    Par saldo/estado recién creado sin título (p. ej. Q/R tras P).
-    Evita duplicar columnas al final cuando ya hay datos pero faltan encabezados.
+    Par saldo/estado del mes actual sin encabezado (Trámites, Próximos, Suspendidos).
+    Busca el primer par consecutivo tras el mes anterior.
     """
     if not col_prev_saldo or not col_prev_estado:
         return None, None
     fila_hdr = _fila_encabezado_hoja_datos(ws)
     mes_actual = _fecha_datetime(fecha).month
-    col_saldo, col_estado = _columnas_par_mes_siguiente(col_prev_saldo, col_prev_estado)
-    if col_estado > ws.max_column:
-        return None, None
+    inicio = max(col_prev_saldo, col_prev_estado) + 1
 
-    for col in (col_saldo, col_estado):
-        val = _celda_para_escribir(ws, fila_hdr, col).value
-        if val is None or not str(val).strip():
-            continue
-        mes = _mes_desde_titulo(str(val))
-        if mes is not None and mes != mes_actual:
-            return None, None
+    fijo = _columnas_par_mes_siguiente(col_prev_saldo, col_prev_estado)
+    if _par_columnas_valido_mes_actual(ws, fila_hdr, fijo[0], fijo[1], mes_actual):
+        return fijo
 
-    tit_s = _celda_para_escribir(ws, fila_hdr, col_saldo).value
-    tit_e = _celda_para_escribir(ws, fila_hdr, col_estado).value
-    if (tit_s and str(tit_s).strip()) or (tit_e and str(tit_e).strip()):
-        mes_s = _mes_desde_titulo(str(tit_s or ""))
-        mes_e = _mes_desde_titulo(str(tit_e or ""))
-        if (mes_s and mes_s == mes_actual) or (mes_e and mes_e == mes_actual):
-            return col_saldo, col_estado
-        if mes_s or mes_e:
-            return None, None
-
-    return col_saldo, col_estado
+    for col_s in range(inicio, ws.max_column):
+        col_e = col_s + 1
+        if col_e > ws.max_column:
+            break
+        if _par_columnas_valido_mes_actual(ws, fila_hdr, col_s, col_e, mes_actual):
+            return col_s, col_e
+    return None, None
 
 
 def _par_mes_anterior(
@@ -607,13 +623,19 @@ def _asegurar_columnas_mes(
         ws, fecha, col_saldo or 0, col_estado or 0
     )
 
-    if col_saldo is None or col_estado is None:
-        inf_s, inf_e = _inferir_columnas_mes_actual(
-            ws, fecha, col_prev_saldo, col_prev_estado
-        )
-        if inf_s and inf_e:
-            col_saldo = col_saldo or inf_s
-            col_estado = col_estado or inf_e
+    inf_s, inf_e = _inferir_columnas_mes_actual(
+        ws, fecha, col_prev_saldo, col_prev_estado
+    )
+    if inf_s and inf_e:
+        fila_hdr_tmp = _fila_encabezado_hoja_datos(ws)
+        usar_inferido = col_saldo is None or col_estado is None
+        if not usar_inferido:
+            t_s = str(_celda_para_escribir(ws, fila_hdr_tmp, col_saldo).value or "").strip()
+            t_e = str(_celda_para_escribir(ws, fila_hdr_tmp, col_estado).value or "").strip()
+            usar_inferido = not t_s or not t_e
+        if usar_inferido:
+            col_saldo = inf_s
+            col_estado = inf_e
             columnas_nuevas = False
 
     siguiente = _ultima_columna_con_datos(ws) + 1
@@ -1098,6 +1120,10 @@ def actualizar_hoja_suspendidos(
             f"Suspendidos: el conteo real ({conteo_real}) supera al mes anterior "
             f"({conteo_mostrar}); en el total se dejó el valor del mes anterior."
         )
+
+    _restaurar_titulos_mes_actual(
+        ws, col_saldo, col_estado, fecha, col_prev_saldo, col_prev_estado
+    )
 
     _autoajustar_columna_suspendidos(ws, col_saldo, titulo_saldo_suspendidos(fecha))
     _autoajustar_columna_suspendidos(ws, col_estado, titulo_estado_suspendidos(fecha))

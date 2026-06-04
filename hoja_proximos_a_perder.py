@@ -26,6 +26,7 @@ from hoja_suspendidos import (
     _autoajustar_columna_suspendidos,
     _escribir_totales_pie_seguimiento,
     _fila_totales_seguimiento,
+    _restaurar_titulos_mes_actual,
     _tope_conteo_estado_mes_anterior,
     _rango_filas_datos_seguimiento,
     _suma_saldos_columna,
@@ -231,6 +232,10 @@ def actualizar_hoja_proximos_a_perder(
             f"Próximos a perder: el conteo real ({conteo_real}) supera al mes anterior "
             f"({conteo_mostrar}); en el total se dejó el valor del mes anterior."
         )
+
+    _restaurar_titulos_mes_actual(
+        ws, col_saldo, col_estado, fecha, col_prev_saldo, col_prev_estado
+    )
 
     _autoajustar_columna_suspendidos(ws, col_saldo, titulo_saldo_suspendidos(fecha))
     _autoajustar_columna_suspendidos(ws, col_estado, titulo_estado_suspendidos(fecha))
