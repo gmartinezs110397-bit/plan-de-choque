@@ -1251,13 +1251,22 @@ def procesar_localidad_cxp(
     fecha_analisis: datetime,
     nombre_contratos: str = "",
     nombre_matriz: str = "",
+    *,
+    avance: callable | None = None,
 ) -> dict[str, Any]:
+    def _fase(msg: str) -> None:
+        if avance:
+            avance(msg)
+
     titulo_mes = titulo_saldo_corte(fecha_analisis)
+    _fase("Cruce · índice Matriz")
     _, mapa_k4, grupos_k3 = preparar_indice_matriz(df_matriz, localidad)
 
+    _fase("Cruce · abriendo Contratos")
     libro = pd.ExcelFile(BytesIO(contratos_bytes))
     nombre_hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
 
+    _fase("Cruce · leyendo Contratos")
     df_c = pd.read_excel(
         BytesIO(contratos_bytes), sheet_name=nombre_hoja, header=HEADER_CONTRATOS
     )
@@ -1288,10 +1297,24 @@ def procesar_localidad_cxp(
     saldos_mes: list[float] = []
     valores_excel: dict[int, float | None] = {}
 
+    filas_datos = sum(
+        1
+        for _, row in df_c.iterrows()
+        if not pd.isna(row[col_nombre]) and str(row[col_nombre]).strip()
+    )
+    cada = max(1, filas_datos // 4) if filas_datos else 1
+    procesadas = 0
+    bloque_fila = 0
+
     for i, (_, row) in enumerate(df_c.iterrows()):
         nombre = row[col_nombre]
         if pd.isna(nombre) or not str(nombre).strip():
             continue
+
+        procesadas += 1
+        if avance and procesadas > 0 and procesadas % cada == 0 and bloque_fila < 4:
+            bloque_fila += 1
+            _fase(f"Cruce · filas ({bloque_fila}/4)")
 
         saldo, metodo, texto_det = buscar_saldo_matriz(
             mapa_k4,
@@ -1337,9 +1360,11 @@ def procesar_localidad_cxp(
     from hoja_liquidados_con_saldo import preparar_mapa_k4_saldo_matriz
     from hoja_suspendidos import preparar_mapa_k3_saldo_estado
 
+    _fase("Cruce · hojas seguimiento")
     mapa_k3_suspendidos = preparar_mapa_k3_saldo_estado(df_matriz, localidad)
     mapa_k4_liquidados = preparar_mapa_k4_saldo_matriz(df_matriz, localidad)
 
+    _fase("Excel · guardando")
     bytes_export, advertencias_hojas, observaciones = (
         exportar_contratos_preservando_formato(
             contratos_bytes,

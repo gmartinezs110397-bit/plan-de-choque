@@ -1867,10 +1867,10 @@ def leer_hoja_matriz(
         # Sin openpyxl.save: preserva caché de fórmulas en Saldo Final (col. V).
         valores_saldo: list = []
         if avance:
-            avance("Abriendo Matriz (contraseña)…")
+            avance("Matriz · abrir")
         libro = _bytes_matriz_sin_reguardar(file_bytes, password)
         if avance:
-            avance("Leyendo hoja MATRIZ OXP…")
+            avance("Matriz · leer hoja")
         df = pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", **kwargs
         )
@@ -1879,7 +1879,7 @@ def leer_hoja_matriz(
             col_df = next((c for c in candidatos if c in df.columns), None)
             if col_df:
                 if avance:
-                    avance("Leyendo columna Saldo Final…")
+                    avance("Matriz · Saldo Final")
                 libro.seek(0)
                 valores_saldo = _columna_matriz_data_only(
                     libro, header_pd, "Saldo Final"
@@ -2017,20 +2017,13 @@ def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool,
     return len(errores) == 0, errores
 
 
-def validar_cola_archivos(
+def _validar_nombres_en_cola(
     cola: list,
     password_matriz: str,
     *,
     verificar_texto_localidad: bool = True,
 ) -> tuple[bool, list[str]]:
-    errores = list(_validar_archivos_accesibles(cola))
-    if errores:
-        return False, errores
-
-    pwd_ok, errores_pwd = validar_contrasena_matrices(cola, password_matriz)
-    if not pwd_ok:
-        return False, errores_pwd
-
+    errores: list[str] = []
     for item in cola:
         loc = item["localidad"]
         nc = item["contratos"]["name"]
@@ -2051,6 +2044,27 @@ def validar_cola_archivos(
                 errores.append(f"**{loc}** — {msg_m}")
 
     return len(errores) == 0, errores
+
+
+def validar_cola_archivos(
+    cola: list,
+    password_matriz: str,
+    *,
+    verificar_texto_localidad: bool = True,
+) -> tuple[bool, list[str]]:
+    errores = list(_validar_archivos_accesibles(cola))
+    if errores:
+        return False, errores
+
+    pwd_ok, errores_pwd = validar_contrasena_matrices(cola, password_matriz)
+    if not pwd_ok:
+        return False, errores_pwd
+
+    return _validar_nombres_en_cola(
+        cola,
+        password_matriz,
+        verificar_texto_localidad=verificar_texto_localidad,
+    )
 
 
 def file_to_buffer(uploaded_file) -> dict:
@@ -2496,56 +2510,44 @@ def mostrar_reporte_tecnico_admin() -> None:
         )
 
 
-# Barra: % por etapa (suma 100%), y cada etapa de localidad se divide entre N localidades.
-# Ej.: Matriz 30 % con 2 localidades → 15 % de la barra por cada una en esa etapa.
-PESO_ETAPA_VALIDACION = 0.10
-PESOS_ETAPAS_LOCALIDAD = (0.30, 0.30, 0.30)  # Matriz, Cruce, Guardar Excel
-NOMBRES_ETAPA_LOCALIDAD = ("Matriz", "Cruce", "Guardar Excel")
-DETALLE_ETAPA_LOCALIDAD = (
-    "leyendo Matriz…",
-    "cruzando contratos con Matriz…",
-    "guardando Excel actualizado…",
-)
-_NUM_SUBETAPAS = len(PESOS_ETAPAS_LOCALIDAD)
-_PESO_TRABAJO_LOCALIDADES = sum(PESOS_ETAPAS_LOCALIDAD)
+# Barra por pasos iguales (más movimiento visible); texto: localidad + fase.
+_PASOS_VALIDACION = 4
+_PASOS_POR_LOCALIDAD = 14  # 3 Matriz + 9 Cruce/Excel + 2 cierre
 
 
-def _peso_paso_localidad(num_localidades: int) -> float:
+def _barra_nueva(num_localidades: int) -> dict:
     n = max(int(num_localidades), 1)
-    return _PESO_TRABAJO_LOCALIDADES / (n * _NUM_SUBETAPAS)
+    return {"paso": 0, "total": _PASOS_VALIDACION + n * _PASOS_POR_LOCALIDAD}
 
 
-def _progreso_consolidacion(
-    num_localidades: int,
-    *,
-    fraccion_validacion: float | None = None,
-    pasos_localidad_hechos: int | None = None,
-) -> float:
-    """
-    pasos_localidad_hechos: sub-etapas ya completadas (0 … N×3).
-    Cada sub-etapa aporta (peso_etapa / num_localidades) a la barra total.
-    """
-    if fraccion_validacion is not None:
-        return PESO_ETAPA_VALIDACION * min(max(fraccion_validacion, 0.0), 1.0)
-    if pasos_localidad_hechos is not None:
-        pasos = min(max(int(pasos_localidad_hechos), 0), max(num_localidades, 1) * _NUM_SUBETAPAS)
-        return PESO_ETAPA_VALIDACION + pasos * _peso_paso_localidad(num_localidades)
-    return 1.0
-
-
-def _texto_barra_consolidacion(
-    localidad: str,
-    indice_localidad: int,
-    total_localidades: int,
-    subetapa_idx: int,
+def _texto_fase_barra(
+    fase: str,
+    localidad: str | None = None,
+    indice: int = 0,
+    total: int = 0,
 ) -> str:
-    nombre_etapa = NOMBRES_ETAPA_LOCALIDAD[subetapa_idx]
-    pct_etapa = int(PESOS_ETAPAS_LOCALIDAD[subetapa_idx] * 100)
-    pct_loc = pct_etapa // max(total_localidades, 1)
-    detalle = DETALLE_ETAPA_LOCALIDAD[subetapa_idx]
-    return (
-        f"{localidad} ({indice_localidad + 1}/{total_localidades}) · "
-        f"Etapa {nombre_etapa} ({pct_etapa} % del total, {pct_loc} % por localidad): {detalle}"
+    if localidad and total:
+        return f"{localidad} ({indice + 1}/{total}) · {fase}"
+    if localidad:
+        return f"{localidad} · {fase}"
+    return fase
+
+
+def _barra_tick(
+    barra: dict,
+    progress,
+    fase: str,
+    *,
+    localidad: str | None = None,
+    indice: int = 0,
+    total: int = 0,
+) -> None:
+    barra["paso"] = int(barra.get("paso", 0)) + 1
+    valor = barra["paso"] / max(int(barra.get("total", 1)), 1)
+    _actualizar_barra_progreso(
+        progress,
+        min(valor, 1.0),
+        _texto_fase_barra(fase, localidad, indice, total),
     )
 
 
@@ -2594,21 +2596,17 @@ def _procesar_localidad_en_work(
     ahora = work["ahora"]
     titulo_mes = work["titulo_mes"]
     localidad = item["localidad"]
-    pasos_previos = indice * _NUM_SUBETAPAS
+    barra = work["_barra"]
 
-    prog_ini = _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos)
-
-    def _avance_lectura_matriz(detalle: str) -> None:
-        _actualizar_barra_progreso(
+    def tick(fase: str) -> None:
+        _barra_tick(
+            barra,
             progress,
-            prog_ini,
-            (
-                f"{localidad} ({indice + 1}/{total}) · Etapa Matriz: {detalle} "
-                "(puede tardar 1–5 min en archivos grandes; la barra avanza al terminar)."
-            ),
+            fase,
+            localidad=localidad,
+            indice=indice,
+            total=total,
         )
-
-    _avance_lectura_matriz("leyendo Matriz…")
 
     try:
         df_matriz = leer_hoja_matriz(
@@ -2616,7 +2614,7 @@ def _procesar_localidad_en_work(
             pwd,
             item["matriz"]["name"],
             header=MATRIZ_HEADER_FILA,
-            avance=_avance_lectura_matriz,
+            avance=tick,
         )
     except ValueError as e:
         work["errores"].append(f"**{localidad}** — Matriz: {e}")
@@ -2637,12 +2635,6 @@ def _procesar_localidad_en_work(
         )
         return
 
-    _actualizar_barra_progreso(
-        progress,
-        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 1),
-        _texto_barra_consolidacion(localidad, indice, total, 1),
-    )
-
     try:
         resultado = procesar_localidad_cxp(
             bytes_archivo_cola(item["contratos"]),
@@ -2651,6 +2643,7 @@ def _procesar_localidad_en_work(
             ahora,
             item["contratos"]["name"],
             item["matriz"]["name"],
+            avance=tick,
         )
     except ValueError as e:
         work["errores"].append(f"**{localidad}** — Contratos: {e}")
@@ -2673,12 +2666,7 @@ def _procesar_localidad_en_work(
         )
         return
 
-    _actualizar_barra_progreso(
-        progress,
-        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 2),
-        _texto_barra_consolidacion(localidad, indice, total, 2),
-    )
-
+    tick("Excel · aplicado")
     registrar_resultado_localidad(reporte, item, resultado)
     _agregar_conteo_global(work["conteo_global"], resultado["conteo"])
     work["informe_localidades"].append({
@@ -2714,11 +2702,7 @@ def _procesar_localidad_en_work(
         },
     ])
 
-    _actualizar_barra_progreso(
-        progress,
-        _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 3),
-        f"{localidad} ({indice + 1}/{total}): localidad terminada.",
-    )
+    tick("Localidad · lista")
 
 
 def _aplicar_work_a_sesion(work: dict) -> bool:
@@ -2789,16 +2773,20 @@ def ejecutar_consolidacion(
     total = len(cola) or 1
     ahora = datetime.now()
     titulo_mes = titulo_saldo_corte(ahora)
+    barra = _barra_nueva(total)
 
     for i, item in enumerate(cola):
         localidad = item["localidad"]
-        pasos_previos = i * _NUM_SUBETAPAS
 
-        _actualizar_barra_progreso(
-            progress,
-            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos),
-            _texto_barra_consolidacion(localidad, i, total, 0),
-        )
+        def tick(fase: str) -> None:
+            _barra_tick(
+                barra,
+                progress,
+                fase,
+                localidad=localidad,
+                indice=i,
+                total=total,
+            )
 
         try:
             df_matriz = leer_hoja_matriz(
@@ -2806,6 +2794,7 @@ def ejecutar_consolidacion(
                 password_matriz,
                 item["matriz"]["name"],
                 header=MATRIZ_HEADER_FILA,
+                avance=tick,
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Matriz: {e}")
@@ -2826,12 +2815,6 @@ def ejecutar_consolidacion(
             )
             continue
 
-        _actualizar_barra_progreso(
-            progress,
-            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 1),
-            _texto_barra_consolidacion(localidad, i, total, 1),
-        )
-
         try:
             resultado = procesar_localidad_cxp(
                 bytes_archivo_cola(item["contratos"]),
@@ -2840,6 +2823,7 @@ def ejecutar_consolidacion(
                 ahora,
                 item["contratos"]["name"],
                 item["matriz"]["name"],
+                avance=tick,
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Contratos: {e}")
@@ -2860,12 +2844,7 @@ def ejecutar_consolidacion(
             )
             continue
 
-        _actualizar_barra_progreso(
-            progress,
-            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 2),
-            _texto_barra_consolidacion(localidad, i, total, 2),
-        )
-
+        tick("Excel · aplicado")
         registrar_resultado_localidad(reporte, item, resultado)
         _agregar_conteo_global(conteo_global, resultado["conteo"])
         informe_localidades.append({
@@ -2902,17 +2881,9 @@ def ejecutar_consolidacion(
             },
         ])
 
-        _actualizar_barra_progreso(
-            progress,
-            _progreso_consolidacion(total, pasos_localidad_hechos=pasos_previos + 3),
-            f"{localidad} ({i + 1}/{total}): localidad terminada.",
-        )
+        tick("Localidad · lista")
 
-    _actualizar_barra_progreso(
-        progress,
-        1.0,
-        "Consolidación por localidad terminada.",
-    )
+    _barra_tick(barra, progress, "Consolidación · terminada")
     if progress is not None:
         progress.empty()
 
@@ -3031,17 +3002,25 @@ def procesar_consolidacion(
         if reiniciar or work is None:
             limpiar_resultado_consolidado()
             cola_run = _asegurar_cola_en_disco(cola_run)
-            _actualizar_barra_progreso(
-                progress,
-                _progreso_consolidacion(n, fraccion_validacion=0.0),
-                f"Etapa Validación ({int(PESO_ETAPA_VALIDACION * 100)} % del total): "
-                "revisando archivos y contraseña…",
-            )
-            nombres_ok, errores_nombres = validar_cola_archivos(
-                cola_run,
-                pwd,
-                verificar_texto_localidad=False,
-            )
+            barra = _barra_nueva(n)
+            _barra_tick(barra, progress, "Validación · archivos")
+            errores_acceso = _validar_archivos_accesibles(cola_run)
+            if errores_acceso:
+                nombres_ok, errores_nombres = False, errores_acceso
+            else:
+                _barra_tick(barra, progress, "Validación · contraseña Matriz")
+                pwd_ok, errores_pwd = validar_contrasena_matrices(cola_run, pwd)
+                if not pwd_ok:
+                    nombres_ok, errores_nombres = False, errores_pwd
+                else:
+                    _barra_tick(barra, progress, "Validación · nombres")
+                    nombres_ok, errores_nombres = _validar_nombres_en_cola(
+                        cola_run,
+                        pwd,
+                        verificar_texto_localidad=False,
+                    )
+            if nombres_ok:
+                _barra_tick(barra, progress, "Validación · lista")
             if not nombres_ok:
                 st.session_state.ejecutar_consolidacion_ahora = False
                 reporte = ReporteEjecucion()
@@ -3077,15 +3056,13 @@ def procesar_consolidacion(
                 "errores": [],
                 "ahora": ahora,
                 "titulo_mes": titulo_saldo_corte(ahora),
+                "_barra": barra,
             }
             st.session_state.consolidacion_work = work
-            _actualizar_barra_progreso(
-                progress,
-                _progreso_consolidacion(n, fraccion_validacion=1.0),
-                f"Validación lista ({n} localidad/es). Iniciando cruces…",
-            )
         else:
             work["cola"] = _asegurar_cola_en_disco(work["cola"])
+            if "_barra" not in work:
+                work["_barra"] = _barra_nueva(len(work["cola"]))
             st.session_state.consolidacion_work = work
 
         work = st.session_state.consolidacion_work
@@ -3100,11 +3077,7 @@ def procesar_consolidacion(
             work["reporte_casos"].extend(c.a_dict() for c in reporte_paso.casos)
             work["idx"] = idx + 1
 
-        _actualizar_barra_progreso(
-            progress,
-            1.0,
-            "Consolidación por localidad terminada.",
-        )
+        _barra_tick(work.get("_barra", _barra_nueva(total)), progress, "Consolidación · terminada")
         progress.empty()
 
         reporte = _reporte_con_casos_guardados(work["reporte_casos"])
