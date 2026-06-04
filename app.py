@@ -1730,6 +1730,7 @@ def sanitizar_excel_sin_filtros(data: bytes, nombre_archivo: str) -> bytes:
     """Quita filtros de Excel .xlsx/.xlsm al subir (Contratos)."""
     if not str(nombre_archivo).lower().endswith((".xlsx", ".xlsm")):
         return data
+    _inicializar_dependencias_modulo()
     return quitar_autofiltros_xlsx(data)
 
 
@@ -3232,6 +3233,13 @@ def _necesita_dependencias_pesadas() -> bool:
     if st.session_state.get("processed") and st.session_state.get(
         _CLAVE_MOSTRAR_RESULTADOS, False
     ):
+        return True
+    if st.session_state.get("acceso_autorizado"):
+        # Formulario / añadir a cola: hace falta quitar_autofiltros, pandas, etc.
+        if st.session_state.get("processed") and not st.session_state.get(
+            _CLAVE_MOSTRAR_RESULTADOS, False
+        ):
+            return False  # F5 rápido: solo resumen tras consolidar
         return True
     return False
 
