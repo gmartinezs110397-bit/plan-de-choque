@@ -25,8 +25,7 @@ def ajustar_contratos_cps(entrada: Path, salida: Path) -> None:
     wb = load_workbook(BytesIO(raw))
     nombre = cxp.resolver_hoja_cruce_cxp(wb.sheetnames)
     ws = wb[nombre]
-    cxp._liberar_tablas_excel_cps(ws)
-    cxp._aplicar_encabezados_saldo_mes_alternos(ws, datetime.now())
+    cxp._aplicar_encabezados_saldo_mes_alternos_cps(ws, datetime.now())
     out = BytesIO()
     wb.save(out)
     out.seek(0)

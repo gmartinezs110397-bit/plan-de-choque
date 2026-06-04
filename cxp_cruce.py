@@ -858,9 +858,23 @@ def _ultima_columna_con_datos(ws) -> int:
 
 
 _MESES_POR_NOMBRE = {_normalizar(m): i + 1 for i, m in enumerate(MESES_ES)}
-FILL_ENCABEZADO_AZUL = PatternFill(fill_type="solid", fgColor="BDD7EE")
-FILL_ENCABEZADO_AMARILLO = PatternFill(fill_type="solid", fgColor=AMARILLO_TITULO)
+_FILL_AZUL_RGB = "FFBDD7EE"
+_FILL_AMARILLO_RGB = "FF" + AMARILLO_TITULO
+FILL_ENCABEZADO_AZUL = PatternFill(
+    start_color=_FILL_AZUL_RGB,
+    end_color=_FILL_AZUL_RGB,
+    fill_type="solid",
+)
+FILL_ENCABEZADO_AMARILLO = PatternFill(
+    start_color=_FILL_AMARILLO_RGB,
+    end_color=_FILL_AMARILLO_RGB,
+    fill_type="solid",
+)
 _OOXML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_REEMPLAZOS_RGB_FILL_TRANSPARENTE = (
+    ("00BDD7EE", _FILL_AZUL_RGB),
+    ("00FFD966", _FILL_AMARILLO_RGB),
+)
 
 
 def _mes_numero_desde_titulo_columna(titulo: str) -> int | None:
@@ -911,9 +925,12 @@ def _es_columna_saldo_mes(titulo: str) -> bool:
     )
 
 
-def _listar_columnas_saldo_mes(ws) -> list[tuple[int, int]]:
+def _listar_columnas_saldo_mes(
+    ws, fila_hdr: int | None = None
+) -> list[tuple[int, int]]:
     """(columna, mes) ordenados — Liquidados (fila 1-2) y Cps (fila 3), una columna por mes."""
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    if fila_hdr is None:
+        fila_hdr = _fila_encabezado_hoja_datos(ws)
     columnas: dict[int, int] = {}
     for col in range(1, ws.max_column + 1):
         val = ws.cell(fila_hdr, col).value
@@ -970,24 +987,56 @@ def _aplicar_merge_encabezado_columna(
     ws.merge_cells(objetivo)
 
 
+def _asignar_fill_titulo_columna(
+    ws, fila_hdr: int, col: int, fill: PatternFill
+) -> None:
+    """Fill en el título y en todo el rango combinado (necesario en Cps fila 3)."""
+    celda = _celda_para_escribir(ws, fila_hdr, col)
+    celda.fill = fill
+    coord = celda.coordinate
+    for rango in ws.merged_cells.ranges:
+        if coord in rango:
+            for fila in range(rango.min_row, rango.max_row + 1):
+                for columna in range(rango.min_col, rango.max_col + 1):
+                    ws.cell(fila, columna).fill = fill
+            break
+
+
 def _aplicar_encabezados_saldo_mes_alternos(
-    ws, fecha: datetime | date
+    ws,
+    fecha: datetime | date,
+    *,
+    fila_hdr: int | None = None,
 ) -> None:
     """
     Alternancia azul/amarillo en columnas solo SALDO.
     Liquidados: encabezado en fila 1-2 (combinado). Cps: fila 3.
     """
     anio = _fecha_datetime(fecha).year
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    if fila_hdr is None:
+        fila_hdr = _fila_encabezado_hoja_datos(ws)
     fila_ini, fila_fin = _filas_encabezado_vertical(ws, fila_hdr)
-    cols = _listar_columnas_saldo_mes(ws)
+    cols = _listar_columnas_saldo_mes(ws, fila_hdr)
     if not cols:
         return
     for col, mes_num in cols:
-        celda = _celda_para_escribir(ws, fila_hdr, col)
         _aplicar_merge_encabezado_columna(ws, col, fila_ini, fila_fin)
-        celda.fill = _fill_encabezado_por_mes(mes_num)
-        celda.value = titulo_saldo_corte_para_mes(anio, mes_num)
+        _asignar_fill_titulo_columna(
+            ws, fila_hdr, col, _fill_encabezado_por_mes(mes_num)
+        )
+        _celda_para_escribir(ws, fila_hdr, col).value = titulo_saldo_corte_para_mes(
+            anio, mes_num
+        )
+
+
+def _aplicar_encabezados_saldo_mes_alternos_cps(
+    ws, fecha: datetime | date
+) -> None:
+    """Misma lógica que Liquidados; fila 3 fija + sin tablas Excel."""
+    _liberar_tablas_excel_cps(ws)
+    _aplicar_encabezados_saldo_mes_alternos(
+        ws, fecha, fila_hdr=_fila_titulos_corte_cps(ws)
+    )
 
 
 def _copiar_estilo_columna_hoja(
@@ -1019,12 +1068,15 @@ def _copiar_ancho_columna_hoja(ws, col_origen: int, col_destino: int) -> None:
         ws.column_dimensions[letra_destino].width = ancho
 
 
-def _columna_saldo_mes_anterior_hoja(ws, col_saldo: int) -> int | None:
-    cols = _listar_columnas_saldo_mes(ws)
+def _columna_saldo_mes_anterior_hoja(
+    ws, col_saldo: int, fila_hdr: int | None = None
+) -> int | None:
+    if fila_hdr is None:
+        fila_hdr = _fila_encabezado_hoja_datos(ws)
+    cols = _listar_columnas_saldo_mes(ws, fila_hdr)
     for i, (col, _) in enumerate(cols):
         if col == col_saldo and i > 0:
             return cols[i - 1][0]
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
     for col_cand in range(col_saldo - 1, 0, -1):
         val = ws.cell(fila_hdr, col_cand).value
         if val is None or not str(val).strip():
@@ -1044,12 +1096,368 @@ def _liberar_tablas_excel_cps(ws) -> None:
         tablas.clear()
 
 
+def _resolver_hoja_cps_en_zip(contenido: bytes) -> tuple[str, str] | None:
+    """(nombre_hoja, ruta xl/worksheets/sheetN.xml) dentro del zip."""
+    ns_main = _OOXML_NS
+    ns_rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    ns_pkg = "http://schemas.openxmlformats.org/package/2006/relationships"
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            wb_xml = zin.read("xl/workbook.xml")
+            rels_xml = zin.read("xl/_rels/workbook.xml.rels")
+        wb_root = ET.fromstring(wb_xml)
+        rels_root = ET.fromstring(rels_xml)
+        targets = {
+            rel.get("Id"): rel.get("Target")
+            for rel in rels_root.findall(f"{{{ns_pkg}}}Relationship")
+        }
+        for hoja in HOJAS_CRUCE_CXP:
+            for sheet in wb_root.findall(f".//{{{ns_main}}}sheet"):
+                if sheet.get("name") != hoja:
+                    continue
+                rid = sheet.get(f"{{{ns_rel}}}id")
+                target = targets.get(rid) if rid else None
+                if not target:
+                    continue
+                path = target.replace("\\", "/").lstrip("/")
+                if not path.startswith("xl/"):
+                    path = f"xl/{path}"
+                return hoja, path
+    except Exception:
+        return None
+    return None
+
+
+def _cargar_shared_strings_xlsx(contenido: bytes) -> list[str]:
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/sharedStrings.xml" not in zin.namelist():
+                return []
+            root = ET.fromstring(zin.read("xl/sharedStrings.xml"))
+        cadenas: list[str] = []
+        for si in root.findall(f".//{{{_OOXML_NS}}}si"):
+            trozos = [
+                (t.text or "")
+                for t in si.findall(f".//{{{_OOXML_NS}}}t")
+            ]
+            cadenas.append("".join(trozos))
+        return cadenas
+    except Exception:
+        return []
+
+
+def _titulo_desde_fragmento_celda_xml(
+    fragmento: str, shared_strings: list[str] | None = None
+) -> str:
+    partes = re.findall(r"<t[^>]*>([^<]*)</t>", fragmento)
+    if partes:
+        return "".join(partes).strip()
+    if not shared_strings:
+        return ""
+    m = re.search(r"<v>(\d+)</v>", fragmento)
+    if not m:
+        return ""
+    idx = int(m.group(1))
+    if 0 <= idx < len(shared_strings):
+        return str(shared_strings[idx]).strip()
+    return ""
+
+
+def _coords_rgb_titulos_saldo_cps_desde_xml(contenido: bytes) -> list[tuple[str, str]]:
+    """Títulos SALDO fila 3 leyendo sheet XML + sharedStrings (tras xlsx-fixer)."""
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return []
+    _, sheet_path = resuelto
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            sheet_txt = zin.read(sheet_path).decode("utf-8", errors="replace")
+    except Exception:
+        return []
+    shared = _cargar_shared_strings_xlsx(contenido)
+    fila = _fila_encabezado_contratos()
+    items: list[tuple[str, str]] = []
+    row_m = re.search(rf'<row r="{fila}"[^>]*>(.*?)</row>', sheet_txt, re.DOTALL)
+    cuerpo_fila = row_m.group(1) if row_m else sheet_txt
+    pat_celda = r'<c r="([A-Z]+\d+)"[^>]*>(.*?)</c>'
+    for m in re.finditer(pat_celda, cuerpo_fila, re.DOTALL):
+        coord = m.group(1)
+        fila_m = re.search(r"(\d+)$", coord)
+        if not fila_m or int(fila_m.group(1)) != fila:
+            continue
+        titulo = _titulo_desde_fragmento_celda_xml(m.group(2), shared)
+        if not _es_columna_saldo_mes(titulo):
+            continue
+        mes = _mes_numero_desde_titulo_columna(titulo)
+        if mes is None:
+            continue
+        rgb = _FILL_AMARILLO_RGB if (mes % 2) else _FILL_AZUL_RGB
+        items.append((coord, rgb))
+    return items
+
+
+def _coords_rgb_titulos_saldo_cps(contenido: bytes) -> list[tuple[str, str]]:
+    items = _coords_rgb_titulos_saldo_cps_desde_xml(contenido)
+    if items:
+        return items
+    try:
+        wb = load_workbook(BytesIO(contenido), read_only=True, data_only=True)
+        nombre = resolver_hoja_cruce_cxp(list(wb.sheetnames))
+        ws = wb[nombre]
+        fila_hdr = _fila_titulos_corte_cps(ws)
+        for col, mes in _listar_columnas_saldo_mes(ws, fila_hdr):
+            coord = ws.cell(fila_hdr, col).coordinate
+            rgb = _FILL_AMARILLO_RGB if (mes % 2) else _FILL_AZUL_RGB
+            items.append((coord, rgb))
+        wb.close()
+    except Exception:
+        return []
+    return items
+
+
+def _asegurar_fill_rgb_en_styles(fills_elem, rgb: str) -> int:
+    for i, fill in enumerate(fills_elem.findall(f"{{{_OOXML_NS}}}fill")):
+        xml = ET.tostring(fill, encoding="unicode")
+        if f'rgb="{rgb}"' in xml:
+            return i
+    nuevo = ET.Element(f"{{{_OOXML_NS}}}fill")
+    pf = ET.SubElement(
+        nuevo,
+        f"{{{_OOXML_NS}}}patternFill",
+        {"patternType": "solid"},
+    )
+    ET.SubElement(pf, f"{{{_OOXML_NS}}}fgColor", {"rgb": rgb})
+    ET.SubElement(pf, f"{{{_OOXML_NS}}}bgColor", {"rgb": rgb})
+    fills_elem.append(nuevo)
+    fills_elem.set("count", str(len(fills_elem.findall(f"{{{_OOXML_NS}}}fill"))))
+    return len(fills_elem.findall(f"{{{_OOXML_NS}}}fill")) - 1
+
+
+def _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido: bytes) -> bytes:
+    """Fuerza fillId + applyFill en fila 3 (openpyxl/xlsx-fixer no bastan en Cps)."""
+    items = _coords_rgb_titulos_saldo_cps(contenido)
+    if not items:
+        return contenido
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return contenido
+    _, sheet_path = resuelto
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles_data = zin.read("xl/styles.xml")
+            sheet_data = zin.read(sheet_path)
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name not in ("xl/styles.xml", sheet_path)
+            }
+
+        root = ET.fromstring(styles_data)
+        fills_elem = root.find(f"{{{_OOXML_NS}}}fills")
+        cell_xfs = root.find(f"{{{_OOXML_NS}}}cellXfs")
+        if fills_elem is None or cell_xfs is None:
+            return contenido
+
+        xfs = cell_xfs.findall(f"{{{_OOXML_NS}}}xf")
+        fill_azul = _asegurar_fill_rgb_en_styles(fills_elem, _FILL_AZUL_RGB)
+        fill_amarillo = _asegurar_fill_rgb_en_styles(fills_elem, _FILL_AMARILLO_RGB)
+        cell_xfs.set("count", str(len(xfs)))
+
+        sheet_txt = sheet_data.decode("utf-8", errors="replace")
+
+        for coord, rgb in items:
+            fill_id = fill_azul if rgb == _FILL_AZUL_RGB else fill_amarillo
+            pat = rf'(<c r="{re.escape(coord)}"[^>]*)(>)'
+            m = re.search(pat, sheet_txt)
+            if not m:
+                continue
+            tag_head = m.group(1)
+            sid_m = re.search(r'\ss="(\d+)"', tag_head)
+            if sid_m:
+                sid = int(sid_m.group(1))
+            else:
+                base = xfs[0] if xfs else None
+                font_id = base.get("fontId", "0") if base is not None else "0"
+                border_id = base.get("borderId", "0") if base is not None else "0"
+                num_fmt = base.get("numFmtId", "0") if base is not None else "0"
+                nuevo_xf = ET.Element(
+                    f"{{{_OOXML_NS}}}xf",
+                    {
+                        "numFmtId": num_fmt,
+                        "fontId": font_id,
+                        "fillId": str(fill_id),
+                        "borderId": border_id,
+                        "applyFill": "1",
+                        "applyAlignment": "1",
+                        "pivotButton": "0",
+                        "quotePrefix": "0",
+                        "xfId": "0",
+                    },
+                )
+                cell_xfs.append(nuevo_xf)
+                xfs = cell_xfs.findall(f"{{{_OOXML_NS}}}xf")
+                sid = len(xfs) - 1
+                cell_xfs.set("count", str(len(xfs)))
+                if sid_m:
+                    tag_head = re.sub(r'\ss="\d+"', f' s="{sid}"', tag_head)
+                else:
+                    tag_head = tag_head + f' s="{sid}"'
+
+            if sid < len(xfs):
+                xf = xfs[sid]
+                xf.set("fillId", str(fill_id))
+                xf.set("applyFill", "1")
+
+            if sid_m:
+                new_tag = re.sub(r'\ss="\d+"', f' s="{sid}"', tag_head) + m.group(2)
+            else:
+                new_tag = tag_head + m.group(2)
+            sheet_txt = sheet_txt[: m.start()] + new_tag + sheet_txt[m.end() :]
+
+        new_styles = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", new_styles)
+            zout.writestr(sheet_path, sheet_txt.encode("utf-8"))
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
+def _aplicar_apply_fill_cellxfs_en_xlsx(contenido: bytes, style_ids: set[int]) -> bytes:
+    if not style_ids:
+        return contenido
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles_data = zin.read("xl/styles.xml")
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name != "xl/styles.xml"
+            }
+
+        root = ET.fromstring(styles_data)
+        cell_xfs = root.find(f"{{{_OOXML_NS}}}cellXfs")
+        if cell_xfs is None:
+            return contenido
+        for i, xf in enumerate(cell_xfs.findall(f"{{{_OOXML_NS}}}xf")):
+            if i in style_ids:
+                xf.set("applyFill", "1")
+
+        new_styles = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", new_styles)
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
+def _style_ids_desde_coords_en_sheet(
+    contenido: bytes, sheet_path: str, coords: list[str]
+) -> set[int]:
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            sheet = zin.read(sheet_path).decode("utf-8", errors="replace")
+        ids: set[int] = set()
+        for coord in coords:
+            m = re.search(rf'<c r="{re.escape(coord)}" s="(\d+)"', sheet)
+            if m:
+                ids.add(int(m.group(1)))
+        return ids
+    except Exception:
+        return set()
+
+
+def _parchear_fills_rgb_opacos_xlsx(contenido: bytes) -> bytes:
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            if "xl/styles.xml" not in zin.namelist():
+                return contenido
+            styles = zin.read("xl/styles.xml").decode("utf-8")
+            rest = {
+                name: zin.read(name)
+                for name in zin.namelist()
+                if name != "xl/styles.xml"
+            }
+        for viejo, nuevo in _REEMPLAZOS_RGB_FILL_TRANSPARENTE:
+            styles = styles.replace(f'rgb="{viejo}"', f'rgb="{nuevo}"')
+        buf_out = BytesIO()
+        with zipfile.ZipFile(buf_out, "w", zipfile.ZIP_DEFLATED) as zout:
+            zout.writestr("xl/styles.xml", styles.encode("utf-8"))
+            for name, data in rest.items():
+                zout.writestr(name, data)
+        return buf_out.getvalue()
+    except Exception:
+        return contenido
+
+
+def _aplicar_colores_encabezados_cps_xlsx(contenido: bytes) -> bytes:
+    """Refuerzo XML solo Cps fila 3 (tras openpyxl + xlsx-fixer)."""
+    contenido = _parchear_fills_rgb_opacos_xlsx(contenido)
+    contenido = _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido)
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if resuelto:
+        _, sheet_path = resuelto
+        coords = [c for c, _ in _coords_rgb_titulos_saldo_cps(contenido)]
+        style_ids = _style_ids_desde_coords_en_sheet(contenido, sheet_path, coords)
+        if style_ids:
+            contenido = _aplicar_apply_fill_cellxfs_en_xlsx(contenido, style_ids)
+            contenido = _sincronizar_xf_titulos_saldo_cps_en_xlsx(contenido)
+            contenido = _parchear_fills_rgb_opacos_xlsx(contenido)
+    return contenido
+
+
+def _encabezados_saldo_cps_coloreados(contenido: bytes) -> bool:
+    items = _coords_rgb_titulos_saldo_cps(contenido)
+    if not items:
+        return False
+    resuelto = _resolver_hoja_cps_en_zip(contenido)
+    if not resuelto:
+        return False
+    _, sheet_path = resuelto
+    try:
+        with zipfile.ZipFile(BytesIO(contenido), "r") as zin:
+            st = zin.read("xl/styles.xml").decode("utf-8", errors="replace")
+            sheet = zin.read(sheet_path).decode("utf-8", errors="replace")
+        block = re.search(r"<cellXfs[^>]*>(.*)</cellXfs>", st, re.DOTALL)
+        xfs = re.findall(r"<xf\b[^>]*>", block.group(1) if block else "")
+        fills = re.findall(r"<fill>.*?</fill>", st, re.DOTALL)
+        for coord, rgb in items:
+            m = re.search(rf'<c r="{re.escape(coord)}" s="(\d+)"', sheet)
+            if not m:
+                return False
+            sid = int(m.group(1))
+            if sid >= len(xfs) or 'applyFill="1"' not in xfs[sid]:
+                return False
+            fid_m = re.search(r'fillId="(\d+)"', xfs[sid])
+            if not fid_m:
+                return False
+            fid = int(fid_m.group(1))
+            if fid >= len(fills):
+                return False
+            fill_xml = fills[fid].upper()
+            tono = rgb[-6:].upper()
+            if tono not in fill_xml:
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> int:
     """Nueva columna SALDO del mes: mismo criterio que Liquidados (estilo desde mes anterior)."""
-    _liberar_tablas_excel_cps(ws)
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    fila_hdr = _fila_titulos_corte_cps(ws)
     nueva_col = _ultima_columna_con_datos(ws) + 1
-    cols = _listar_columnas_saldo_mes(ws)
+    cols = _listar_columnas_saldo_mes(ws, fila_hdr)
     col_prev = cols[-1][0] if cols else None
     fila_datos = _fila_inicio_datos_hoja(ws)
 
@@ -1069,7 +1477,7 @@ def _agregar_columna_corte_en_hoja(ws, titulo: str, fecha: datetime | date) -> i
             _copiar_estilo_celda(ws.cell(fila, col_sf), ws.cell(fila, nueva_col))
 
     _celda_para_escribir(ws, fila_hdr, nueva_col).value = titulo
-    _aplicar_encabezados_saldo_mes_alternos(ws, fecha)
+    _aplicar_encabezados_saldo_mes_alternos_cps(ws, fecha)
     _celda_para_escribir(ws, fila_hdr, nueva_col).value = titulo
     return nueva_col
 
@@ -1194,7 +1602,8 @@ def _quitar_enlaces_externos_xlsx(contenido: bytes) -> bytes:
 
 def _finalizar_xlsx_contratos(contenido: bytes) -> bytes:
     contenido = _quitar_enlaces_externos_xlsx(contenido)
-    return compatibilizar_xlsx_excel_mac(contenido)
+    contenido = compatibilizar_xlsx_excel_mac(contenido)
+    return _aplicar_colores_encabezados_cps_xlsx(contenido)
 
 
 def compatibilizar_xlsx_excel_mac(contenido: bytes) -> bytes:
@@ -1268,13 +1677,13 @@ def exportar_contratos_preservando_formato(
     titulo_corte = titulo_columna or titulo_saldo_corte(fecha_analisis)
     col_corte, titulo_usado = _indice_columna_corte_en_hoja(ws, fecha_analisis)
     col_estilo = _columna_estilo_saldo_final(ws)
+    fila_hdr_cps = _fila_titulos_corte_cps(ws)
     if col_corte is None:
         col_corte = _agregar_columna_corte_en_hoja(ws, titulo_corte, fecha_analisis)
     else:
-        fila_hdr = _fila_encabezado_hoja_datos(ws)
-        _celda_para_escribir(ws, fila_hdr, col_corte).value = titulo_corte
+        _celda_para_escribir(ws, fila_hdr_cps, col_corte).value = titulo_corte
 
-    col_prev = _columna_saldo_mes_anterior_hoja(ws, col_corte)
+    col_prev = _columna_saldo_mes_anterior_hoja(ws, col_corte, fila_hdr_cps)
     col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
 
     for fila, valor in valores_por_fila.items():
@@ -1288,11 +1697,8 @@ def exportar_contratos_preservando_formato(
 
     _actualizar_resumen_filas_1_2(ws, col_corte, col_prev)
     _ajustar_ancho_columna_corte(ws, col_corte, col_estilo, titulo_usado or titulo_corte)
-    _liberar_tablas_excel_cps(ws)
-    _aplicar_encabezados_saldo_mes_alternos(ws, fecha_analisis)
-    _celda_para_escribir(ws, _fila_encabezado_hoja_datos(ws), col_corte).value = (
-        titulo_usado or titulo_corte
-    )
+    _aplicar_encabezados_saldo_mes_alternos_cps(ws, fecha_analisis)
+    _celda_para_escribir(ws, fila_hdr_cps, col_corte).value = titulo_usado or titulo_corte
 
     if mapa_k3_suspendidos is not None:
         nombre_susp = resolver_hoja_suspendidos(nombres_hojas)
@@ -1555,6 +1961,14 @@ def procesar_localidad_cxp(
             mapa_k4_liquidados=mapa_k4_liquidados,
         )
     )
+    if not _encabezados_saldo_cps_coloreados(bytes_export):
+        bytes_export = _aplicar_colores_encabezados_cps_xlsx(bytes_export)
+        if not _encabezados_saldo_cps_coloreados(bytes_export):
+            observaciones.append(
+                "Cps por depurar: no se pudieron aplicar los colores de encabezado "
+                "SALDO (fila 3). Descargue de nuevo o avise al administrador."
+            )
+
     out = BytesIO()
     out.write(bytes_export)
     out.seek(0)
