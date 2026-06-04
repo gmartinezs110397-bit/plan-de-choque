@@ -12,7 +12,6 @@ from datetime import datetime, date
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
@@ -316,11 +315,9 @@ def init_session_state():
         "file_stats": [],
         "last_processed_at": None,
         "upload_key": 0,
-        "abrir_dialogo": False,
         "pendiente_consolidacion": False,
         "consolidacion_en_curso": False,
         "ejecutar_consolidacion_ahora": False,
-        "pwd_matriz": "",
         "cola_ejecucion": [],
         "error_ultima_ejecucion": None,
         "errores_ejecucion": [],
@@ -332,246 +329,12 @@ def init_session_state():
         "titulo_saldo_corte": "",
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
-        "acceso_autorizado": False,
+        "acceso_autorizado": True,
         "reporte_ejecucion": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = val
-
-
-def contrasena_acceso_esperada() -> str | None:
-    """Contraseña en .streamlit/secrets.toml (local) o Secrets de Streamlit Cloud."""
-    try:
-        if st.secrets.get("sin_contrasena_acceso") in (True, "true", "1", "yes", "si", "sí"):
-            return None
-        valor = st.secrets.get("contrasena_acceso")
-        if valor is None:
-            valor = st.secrets.get("codigo_acceso")
-        if valor is None:
-            return None
-        texto = str(valor).strip()
-        return texto if texto else None
-    except Exception:
-        return None
-
-
-CLAVE_INPUT_CONTRASENA = "input_contrasena_portada"
-CLAVE_VER_CONTRASENA = "ver_contrasena_portada"
-
-
-def _componente_teclado_portada_acceso(clave_widget: str) -> None:
-    """Foco y captura de teclas (components.html suele funcionar mejor que st.html en Cloud)."""
-    selector = f".st-key-{clave_widget} input"
-    caja = ".st-key-portada_acceso_box"
-    components.html(
-        f"""
-        <script>
-        (function () {{
-          const selector = "{selector}";
-          const caja = "{caja}";
-
-          function documentos() {{
-            const docs = [];
-            const vistos = new Set();
-            function agregar(doc) {{
-              if (!doc || vistos.has(doc)) return;
-              vistos.add(doc);
-              docs.push(doc);
-            }}
-            agregar(document);
-            try {{ agregar(window.parent.document); }} catch (err) {{}}
-            try {{
-              window.parent.document.querySelectorAll("iframe").forEach(function (f) {{
-                try {{ agregar(f.contentDocument); }} catch (err) {{}}
-              }});
-            }} catch (err) {{}}
-            return docs;
-          }}
-
-          function buscarInput() {{
-            for (const doc of documentos()) {{
-              let el = doc.querySelector(selector);
-              if (el) return el;
-              const box = doc.querySelector(caja);
-              if (box) {{
-                el = box.querySelector('[data-testid="stTextInput"] input');
-                if (el) return el;
-              }}
-              const form = doc.querySelector('form[data-testid="stForm"]');
-              if (form) {{
-                el = form.querySelector("input");
-                if (el) return el;
-              }}
-            }}
-            return null;
-          }}
-
-          function configurar(el) {{
-            if (!el || el.dataset.pcAcceso === "1") return;
-            el.dataset.pcAcceso = "1";
-            el.setAttribute("autofocus", "");
-            el.setAttribute("inputmode", "numeric");
-            el.setAttribute("autocomplete", "one-time-code");
-          }}
-
-          function enfocar() {{
-            const el = buscarInput();
-            if (!el) return false;
-            configurar(el);
-            try {{
-              el.focus({{ preventScroll: true }});
-              el.click();
-            }} catch (err) {{}}
-            return true;
-          }}
-
-          function insertarTexto(el, ch) {{
-            const proto = window.HTMLInputElement.prototype;
-            const desc = Object.getOwnPropertyDescriptor(proto, "value");
-            const next = el.value + ch;
-            if (desc && desc.set) desc.set.call(el, next);
-            else el.value = next;
-            try {{
-              el.dispatchEvent(new InputEvent("input", {{
-                bubbles: true,
-                inputType: "insertText",
-                data: ch,
-              }}));
-            }} catch (err) {{
-              el.dispatchEvent(new Event("input", {{ bubbles: true }}));
-            }}
-          }}
-
-          function activoEsOtroInput() {{
-            const el = buscarInput();
-            for (const doc of documentos()) {{
-              const ae = doc.activeElement;
-              if (!ae) continue;
-              if (ae === el) return false;
-              const tag = (ae.tagName || "").toUpperCase();
-              if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
-            }}
-            return false;
-          }}
-
-          function manejarTecla(e) {{
-            if (activoEsOtroInput()) return;
-            const el = buscarInput();
-            if (!el) return;
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
-            if (e.key === "Tab" || e.key === "Escape" || e.key.startsWith("Arrow")) return;
-
-            if (e.key === "Enter") {{
-              for (const doc of documentos()) {{
-                if (doc.activeElement === el) return;
-              }}
-              e.preventDefault();
-              e.stopPropagation();
-              enfocar();
-              const form = el.closest("form");
-              const btn = form && (
-                form.querySelector('button[kind="primaryFormSubmit"]') ||
-                form.querySelector('button[type="submit"]') ||
-                form.querySelector("button")
-              );
-              if (btn) btn.click();
-              return;
-            }}
-
-            if (e.key.length !== 1) return;
-            e.preventDefault();
-            e.stopPropagation();
-            enfocar();
-            insertarTexto(el, e.key);
-          }}
-
-          function vincular(doc) {{
-            if (!doc || doc.documentElement.dataset.pcAccesoTeclas === "1") return;
-            doc.documentElement.dataset.pcAccesoTeclas = "1";
-            doc.addEventListener("keydown", manejarTecla, true);
-          }}
-
-          function iniciar() {{
-            documentos().forEach(vincular);
-            let intentos = 0;
-            const timer = setInterval(function () {{
-              enfocar();
-              if (++intentos > 40) clearInterval(timer);
-            }}, 50);
-            try {{
-              const obs = new MutationObserver(enfocar);
-              obs.observe(window.parent.document.body, {{
-                childList: true,
-                subtree: true,
-              }});
-            }} catch (err) {{}}
-          }}
-
-          iniciar();
-        }})();
-        </script>
-        """,
-        height=0,
-    )
-
-
-def render_portada_acceso() -> None:
-    """Pantalla de ingreso; detiene la app hasta contraseña correcta."""
-    contrasena_ok = contrasena_acceso_esperada()
-    st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="app-subtitle">Ingrese la contraseña para continuar</p>',
-        unsafe_allow_html=True,
-    )
-
-    with st.container(border=True, key="portada_acceso_box"):
-        mostrar_texto = bool(st.session_state.get(CLAVE_VER_CONTRASENA, False))
-        clase_campo = f".st-key-{CLAVE_INPUT_CONTRASENA}"
-        st.markdown(
-            f"""
-            <style>
-            .st-key-portada_acceso_box {clase_campo} input {{
-                -webkit-text-security: {"none" if mostrar_texto else "disc"};
-            }}
-            div[data-testid="InputInstructions"] > span {{
-                display: none !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-        with st.form(
-            "form_contrasena_acceso",
-            clear_on_submit=False,
-            enter_to_submit=True,
-        ):
-            ingresado = st.text_input(
-                "Contraseña",
-                type="default",
-                placeholder="Contraseña",
-                key=CLAVE_INPUT_CONTRASENA,
-                label_visibility="collapsed",
-                autocomplete="one-time-code",
-            )
-            st.checkbox("Mostrar contraseña", key=CLAVE_VER_CONTRASENA)
-            enviado = st.form_submit_button(
-                "Entrar",
-                type="primary",
-                use_container_width=True,
-            )
-        _componente_teclado_portada_acceso(CLAVE_INPUT_CONTRASENA)
-
-    if enviado:
-        texto = str(st.session_state.get(CLAVE_INPUT_CONTRASENA, ingresado)).strip()
-        if texto == contrasena_ok:
-            st.session_state.acceso_autorizado = True
-            st.rerun()
-        st.session_state[CLAVE_INPUT_CONTRASENA] = ""
-        st.error("Contraseña incorrecta.")
-        st.rerun()
-
-    st.stop()
 
 
 init_session_state()
@@ -1695,60 +1458,38 @@ def verificar_lectura_matriz(libro: BytesIO) -> None:
     libro.seek(0)
 
 
-def abrir_matriz_excel(file_bytes: bytes, password: str, nombre_archivo: str = "") -> BytesIO:
-    """
-    Abre la Matriz (nunca Contratos).
-    - Si está protegida: usa la contraseña (obligatoria y debe ser correcta).
-    - Si no está protegida: abre sin contraseña.
-    """
-    pwd = str(password).strip() if password else ""
+def _error_matriz_protegida(nombre_archivo: str = "") -> ValueError:
+    etiqueta = f"Matriz **{nombre_archivo}**" if nombre_archivo else "Matriz"
+    return ValueError(
+        f"{etiqueta}: está protegida con contraseña. "
+        "Ábrala en Excel, guárdela sin protección y súbala de nuevo."
+    )
+
+
+def abrir_matriz_excel(file_bytes: bytes, nombre_archivo: str = "") -> BytesIO:
+    """Abre la Matriz desbloqueada (nunca Contratos)."""
     etiqueta = f"Matriz **{nombre_archivo}**" if nombre_archivo else "Matriz"
     raw = BytesIO(file_bytes)
     office = msoffcrypto.OfficeFile(raw)
-
     if office.is_encrypted():
-        if not pwd:
-            raise ValueError("Ingrese la contraseña de la Matriz.")
-        dec = BytesIO()
-        raw.seek(0)
-        try:
-            office.load_key(password=pwd)
-            office.decrypt(dec)
-        except (ms_exceptions.InvalidKeyError, ms_exceptions.DecryptionError):
-            raise ValueError("Contraseña incorrecta.") from None
-        try:
-            verificar_lectura_matriz(dec)
-        except Exception:
-            raise ValueError("Contraseña incorrecta.") from None
-        dec.seek(0)
-        return dec
-
+        raise _error_matriz_protegida(nombre_archivo)
     raw.seek(0)
     try:
         verificar_lectura_matriz(raw)
     except Exception as e:
         raise ValueError(f"{etiqueta}: no se pudo leer ({e})") from e
-    raw.seek(0)
     return BytesIO(file_bytes)
 
 
-def _bytes_matriz_sin_reguardar(file_bytes: bytes, password: str) -> BytesIO:
+def _bytes_matriz_sin_reguardar(
+    file_bytes: bytes,
+    nombre_archivo: str = "",
+) -> BytesIO:
     """Abre la Matriz sin pasar por openpyxl.save (preserva caché de fórmulas en col. V)."""
     raw = BytesIO(file_bytes)
     office = msoffcrypto.OfficeFile(raw)
     if office.is_encrypted():
-        pwd = str(password).strip() if password else ""
-        if not pwd:
-            raise ValueError("Ingrese la contraseña de la Matriz.")
-        dec = BytesIO()
-        raw.seek(0)
-        try:
-            office.load_key(password=pwd)
-            office.decrypt(dec)
-        except (ms_exceptions.InvalidKeyError, ms_exceptions.DecryptionError):
-            raise ValueError("Contraseña incorrecta.") from None
-        dec.seek(0)
-        return dec
+        raise _error_matriz_protegida(nombre_archivo)
     return BytesIO(file_bytes)
 
 
@@ -1896,20 +1637,19 @@ def _columna_matriz_data_only(
 
 def leer_hoja_matriz(
     file_bytes: bytes,
-    password: str,
     nombre_archivo: str = "",
     *,
     avance: callable | None = None,
     **kwargs,
 ) -> pd.DataFrame:
-    """Lee la hoja MATRIZ OXP; detecta contraseña incorrecta."""
+    """Lee la hoja MATRIZ OXP (archivo sin protección por contraseña)."""
     try:
         header_pd = kwargs.get("header", MATRIZ_HEADER_FILA)
         # Sin openpyxl.save: preserva caché de fórmulas en Saldo Final (col. V).
         valores_saldo: list = []
         if avance:
             avance("Matriz · abrir")
-        libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+        libro = _bytes_matriz_sin_reguardar(file_bytes, nombre_archivo)
         if avance:
             avance("Matriz · leer hoja")
         df = pd.read_excel(
@@ -1954,21 +1694,19 @@ def leer_hoja_matriz(
     except Exception as e:
         err = str(e).lower()
         if "zip" in err or "bad magic" in err or "not a zip" in err:
-            raise ValueError("Contraseña incorrecta.") from e
+            raise _error_matriz_protegida(nombre_archivo) from e
         raise ValueError(f"No se pudo leer la hoja {SHEET_MATRIZ}: {e}") from e
 
 
-def es_error_contrasena(mensaje: str) -> bool:
+def es_error_matriz_protegida(mensaje: str) -> bool:
     m = normalizar(mensaje)
-    return "contrasena incorrecta" in m or "ingrese la contrasena" in m
+    return "protegida" in m and "contrasena" in m
 
 
-def _probar_contrasena_matriz(
-    file_bytes: bytes, password: str, nombre_archivo: str = ""
-) -> None:
-    """Valida contraseña sin re-guardar el Excel (evita lectura lenta duplicada)."""
+def _probar_matriz_abierta(file_bytes: bytes, nombre_archivo: str = "") -> None:
+    """Comprueba que la Matriz se puede leer sin contraseña."""
     try:
-        libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+        libro = _bytes_matriz_sin_reguardar(file_bytes, nombre_archivo)
         libro.seek(0)
         pd.read_excel(
             libro, sheet_name=SHEET_MATRIZ, engine="openpyxl", nrows=1
@@ -1978,16 +1716,16 @@ def _probar_contrasena_matriz(
     except Exception as e:
         err = str(e).lower()
         if "zip" in err or "bad magic" in err or "not a zip" in err:
-            raise ValueError("Contraseña incorrecta.") from e
+            raise _error_matriz_protegida(nombre_archivo) from e
         etiqueta = f"Matriz **{nombre_archivo}**" if nombre_archivo else "Matriz"
         raise ValueError(f"{etiqueta}: no se pudo abrir ({e})") from e
 
 
-def _valores_columna_a_matriz(file_bytes: bytes, password: str) -> list[str]:
+def _valores_columna_a_matriz(file_bytes: bytes, nombre_archivo: str = "") -> list[str]:
     """Columna A desde fila 8 (solo validación de localidad)."""
     from openpyxl import load_workbook
 
-    libro = _bytes_matriz_sin_reguardar(file_bytes, password)
+    libro = _bytes_matriz_sin_reguardar(file_bytes, nombre_archivo)
     libro.seek(0)
     wb = load_workbook(libro, read_only=True, data_only=True)
     try:
@@ -2001,10 +1739,12 @@ def _valores_columna_a_matriz(file_bytes: bytes, password: str) -> list[str]:
         wb.close()
 
 
-def texto_localidad_en_matriz(file_bytes: bytes, password: str, nombre_archivo: str = "") -> str:
+def texto_localidad_en_matriz(
+    file_bytes: bytes,
+    nombre_archivo: str = "",
+) -> str:
     """Lee columna A desde fila 8 en MATRIZ OXP."""
-    del nombre_archivo
-    return " ".join(_valores_columna_a_matriz(file_bytes, password))
+    return " ".join(_valores_columna_a_matriz(file_bytes, nombre_archivo))
 
 
 def validar_nombre_contratos(nombre_archivo: str, localidad: str) -> tuple[bool, str]:
@@ -2026,10 +1766,12 @@ def validar_nombre_matriz(nombre_archivo: str) -> tuple[bool, str]:
 
 
 def validar_localidad_en_hoja_matriz(
-    file_bytes: bytes, password: str, localidad: str, nombre_archivo: str
+    file_bytes: bytes,
+    localidad: str,
+    nombre_archivo: str,
 ) -> tuple[bool, str]:
     try:
-        texto = texto_localidad_en_matriz(file_bytes, password, nombre_archivo)
+        texto = texto_localidad_en_matriz(file_bytes, nombre_archivo)
     except ValueError as e:
         return False, f"**{localidad}** — Matriz **{nombre_archivo}**: {e}"
     except Exception as e:
@@ -2050,16 +1792,15 @@ def validar_localidad_en_hoja_matriz(
     return True, ""
 
 
-def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool, list[str]]:
-    """Prueba la contraseña únicamente en los bytes del archivo Matriz."""
+def validar_matrices_desbloqueadas(cola: list) -> tuple[bool, list[str]]:
+    """Comprueba que cada Matriz se puede abrir sin contraseña."""
     errores = []
     for item in cola:
         loc = item["localidad"]
         nm = item["matriz"]["name"]
         try:
-            _probar_contrasena_matriz(
+            _probar_matriz_abierta(
                 bytes_archivo_cola(item["matriz"]),
-                password_matriz,
                 item["matriz"]["name"],
             )
         except ValueError as e:
@@ -2071,7 +1812,6 @@ def validar_contrasena_matrices(cola: list, password_matriz: str) -> tuple[bool,
 
 def _validar_nombres_en_cola(
     cola: list,
-    password_matriz: str,
     *,
     verificar_texto_localidad: bool = True,
 ) -> tuple[bool, list[str]]:
@@ -2090,7 +1830,7 @@ def _validar_nombres_en_cola(
             errores.append(f"**{loc}** — {msg_nm}")
         elif verificar_texto_localidad:
             ok_m, msg_m = validar_localidad_en_hoja_matriz(
-                bytes_archivo_cola(item["matriz"]), password_matriz, loc, nm
+                bytes_archivo_cola(item["matriz"]), loc, nm
             )
             if not ok_m:
                 errores.append(f"**{loc}** — {msg_m}")
@@ -2100,7 +1840,6 @@ def _validar_nombres_en_cola(
 
 def validar_cola_archivos(
     cola: list,
-    password_matriz: str,
     *,
     verificar_texto_localidad: bool = True,
 ) -> tuple[bool, list[str]]:
@@ -2108,13 +1847,12 @@ def validar_cola_archivos(
     if errores:
         return False, errores
 
-    pwd_ok, errores_pwd = validar_contrasena_matrices(cola, password_matriz)
-    if not pwd_ok:
-        return False, errores_pwd
+    mat_ok, errores_mat = validar_matrices_desbloqueadas(cola)
+    if not mat_ok:
+        return False, errores_mat
 
     return _validar_nombres_en_cola(
         cola,
-        password_matriz,
         verificar_texto_localidad=verificar_texto_localidad,
     )
 
@@ -2144,9 +1882,9 @@ def read_contratos(file_like, name: str, localidad: str):
         return None
 
 
-def read_matriz(file_bytes: bytes, password: str, name: str, localidad: str):
+def read_matriz(file_bytes: bytes, name: str, localidad: str):
     try:
-        df = leer_hoja_matriz(file_bytes, password, name)
+        df = leer_hoja_matriz(file_bytes, name)
     except ValueError as e:
         st.session_state.error_ultima_ejecucion = str(e)
         return None
@@ -2644,7 +2382,6 @@ def _procesar_localidad_en_work(
     total: int,
 ) -> None:
     """Cruza una localidad y acumula el resultado en work."""
-    pwd = work["pwd"]
     ahora = work["ahora"]
     titulo_mes = work["titulo_mes"]
     localidad = item["localidad"]
@@ -2663,7 +2400,6 @@ def _procesar_localidad_en_work(
     try:
         df_matriz = leer_hoja_matriz(
             bytes_archivo_cola(item["matriz"]),
-            pwd,
             item["matriz"]["name"],
             header=MATRIZ_HEADER_FILA,
             avance=tick,
@@ -2810,7 +2546,6 @@ def _aplicar_work_a_sesion(work: dict) -> bool:
 
 def ejecutar_consolidacion(
     cola,
-    password_matriz: str,
     reporte: ReporteEjecucion,
     progress=None,
     fraccion_inicio: float = 0.0,
@@ -2843,7 +2578,6 @@ def ejecutar_consolidacion(
         try:
             df_matriz = leer_hoja_matriz(
                 bytes_archivo_cola(item["matriz"]),
-                password_matriz,
                 item["matriz"]["name"],
                 header=MATRIZ_HEADER_FILA,
                 avance=tick,
@@ -3027,17 +2761,14 @@ def _ejecutar_consolidacion_si_pendiente(progress=None) -> None:
                 "y luego **Continuar**."
             )
             return
-        pwd = st.session_state.get("pwd_matriz", "")
-        procesar_consolidacion(cola, pwd, progress=progress, reiniciar=True)
+        procesar_consolidacion(cola, progress=progress, reiniciar=True)
     else:
         cola = _asegurar_cola_en_disco(work["cola"])
-        pwd = work["pwd"]
-        procesar_consolidacion(cola, pwd, progress=progress, reiniciar=False)
+        procesar_consolidacion(cola, progress=progress, reiniciar=False)
 
 
 def procesar_consolidacion(
     cola_run: list,
-    pwd: str,
     progress=None,
     *,
     reiniciar: bool = True,
@@ -3060,15 +2791,14 @@ def procesar_consolidacion(
             if errores_acceso:
                 nombres_ok, errores_nombres = False, errores_acceso
             else:
-                _barra_tick(barra, progress, "Validación · contraseña Matriz")
-                pwd_ok, errores_pwd = validar_contrasena_matrices(cola_run, pwd)
-                if not pwd_ok:
-                    nombres_ok, errores_nombres = False, errores_pwd
+                _barra_tick(barra, progress, "Validación · Matriz desbloqueada")
+                mat_ok, errores_mat = validar_matrices_desbloqueadas(cola_run)
+                if not mat_ok:
+                    nombres_ok, errores_nombres = False, errores_mat
                 else:
                     _barra_tick(barra, progress, "Validación · nombres")
                     nombres_ok, errores_nombres = _validar_nombres_en_cola(
                         cola_run,
-                        pwd,
                         verificar_texto_localidad=False,
                     )
             if nombres_ok:
@@ -3077,9 +2807,10 @@ def procesar_consolidacion(
                 st.session_state.ejecutar_consolidacion_ahora = False
                 reporte = ReporteEjecucion()
                 reporte.cerrar(False)
-                if any(es_error_contrasena(e) for e in errores_nombres):
+                if any(es_error_matriz_protegida(e) for e in errores_nombres):
                     st.error(
-                        "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
+                        "La Matriz está protegida con contraseña. "
+                        "Ábrala en Excel, guárdela sin protección y súbala de nuevo."
                     )
                 else:
                     st.error(
@@ -3098,7 +2829,6 @@ def procesar_consolidacion(
             work = {
                 "cola": cola_run,
                 "idx": 0,
-                "pwd": pwd,
                 "reporte_casos": [],
                 "stats": [],
                 "informe_localidades": [],
@@ -3156,9 +2886,10 @@ def procesar_consolidacion(
             st.success(msg)
         else:
             errores_ej = st.session_state.pop("errores_ejecucion", [])
-            if any(es_error_contrasena(e) for e in errores_ej):
+            if any(es_error_matriz_protegida(e) for e in errores_ej):
                 st.error(
-                    "Contraseña incorrecta. Verifique la clave de la Matriz e intente de nuevo."
+                    "La Matriz está protegida con contraseña. "
+                    "Ábrala en Excel, guárdela sin protección y súbala de nuevo."
                 )
             else:
                 st.error("No se consolidaron las localidades correctamente.")
@@ -3177,53 +2908,6 @@ def procesar_consolidacion(
         if st.session_state.get("consolidacion_work") is None:
             st.session_state.ejecutar_consolidacion_ahora = False
 
-
-def render_solicitud_contrasena_matriz() -> None:
-    """Formulario en página (sin modal) para no bloquear la vista durante la ejecución."""
-    with st.container(border=True):
-        st.markdown("**Contraseña Matriz**")
-        st.caption("Ingrese la contraseña para abrir los archivos de Matriz.")
-        pwd = st.text_input(
-            "Contraseña",
-            type="password",
-            key="pwd_matriz_dialog",
-            placeholder="Ingrese la contraseña de la Matriz",
-            label_visibility="collapsed",
-        )
-        col_ok, col_cancel = st.columns(2)
-        with col_ok:
-            if st.button(
-                "Continuar",
-                type="primary",
-                use_container_width=True,
-                key="btn_pwd_matriz_continuar",
-            ):
-                st.session_state.pwd_matriz = pwd.strip() if pwd else ""
-                st.session_state.abrir_dialogo = False
-                st.session_state.pop("consolidacion_work", None)
-                st.session_state.pendiente_consolidacion = True
-                st.session_state.ejecutar_consolidacion_ahora = True
-                st.rerun()
-        with col_cancel:
-            if st.button(
-                "Cancelar",
-                use_container_width=True,
-                key="btn_pwd_matriz_cancelar",
-            ):
-                st.session_state.abrir_dialogo = False
-                st.session_state.pop("consolidacion_work", None)
-                st.session_state.pendiente_consolidacion = False
-                st.session_state.ejecutar_consolidacion_ahora = False
-                st.rerun()
-
-
-if not st.session_state.get("acceso_autorizado"):
-    if contrasena_acceso_esperada() is None:
-        # App de prueba / Secrets sin contrasena_acceso: entrada directa
-        st.session_state.acceso_autorizado = True
-    else:
-        render_portada_acceso()
-        st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _dependencias_consolidacion():
@@ -3275,8 +2959,6 @@ def _necesita_dependencias_pesadas() -> bool:
     if st.session_state.get("ejecutar_consolidacion_ahora"):
         return True
     if st.session_state.get("cola_localidades") or st.session_state.get("consolidacion_work"):
-        return True
-    if st.session_state.get("abrir_dialogo"):
         return True
     if st.session_state.get("processed") and st.session_state.get(
         _CLAVE_MOSTRAR_RESULTADOS, False
@@ -3400,7 +3082,7 @@ if not _omitir_formulario:
         st.caption(
             "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
             "correspondiente por localidad. En Excel, quite los **filtros/autofiltros** "
-            "de ambos archivos antes de subirlos."
+            "y guarde la **Matriz sin contraseña** (desbloqueada) antes de subirlos."
         )
 
         st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
@@ -3442,7 +3124,10 @@ if not _omitir_formulario:
             accept_multiple_files=False,
             label_visibility="collapsed",
             key=f"uploader_matriz_{uk}",
-            help="Un solo archivo Excel. Hoja MATRIZ OXP.",
+            help=(
+                "Excel sin protección por contraseña (.xlsx o .xls). "
+                "Hoja MATRIZ OXP."
+            ),
         )
         if archivo_matriz:
             st.markdown(
@@ -3517,9 +3202,7 @@ if not _omitir_formulario and cola:
 
 st.divider()
 run_clicked = False
-if st.session_state.get("abrir_dialogo"):
-    render_solicitud_contrasena_matriz()
-elif not _consolidacion_corriendo():
+if not _consolidacion_corriendo():
     run_clicked = st.button(
         "Ejecutar consolidación",
         type="primary",
@@ -3546,8 +3229,9 @@ if run_clicked:
                 st.markdown(f"- {detalle}")
         else:
             st.session_state.cola_ejecucion = cola_ejec
-            st.session_state.abrir_dialogo = True
-            st.session_state.pendiente_consolidacion = False
+            st.session_state.pendiente_consolidacion = True
+            st.session_state.ejecutar_consolidacion_ahora = True
+            st.session_state.pop("consolidacion_work", None)
             st.rerun()
 
 def _render_panel_resultados_completos() -> None:

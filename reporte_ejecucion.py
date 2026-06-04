@@ -144,7 +144,7 @@ class ReporteEjecucion:
 
         lineas.append(
             "Incluye fallos del sistema y pestañas esperadas no encontradas en Contratos. "
-            "Errores de contraseña o contratos sin resolver los ve la operadora en pantalla."
+            "Errores de Matriz protegida o contratos sin resolver los ve la operadora en pantalla."
         )
         return "\n".join(lineas)
 

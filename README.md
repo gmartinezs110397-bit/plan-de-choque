@@ -35,8 +35,8 @@ Consolidación **Matriz OXP** + **Contratos plan de choque** por localidad (Bogo
 ## Publicar (Streamlit Cloud)
 
 1. Repositorio público en GitHub → [share.streamlit.io](https://share.streamlit.io) → `app.py` → Deploy.
-2. Secrets → `contrasena_acceso = "1100"` (o `codigo_acceso` legacy).
-3. La contraseña de la **Matriz** se ingresa al consolidar; no va en GitHub.
+2. No hace falta configurar Secrets de contraseña.
+3. La **Matriz** debe subirse **sin contraseña** (desbloqueada en Excel antes de cargar).
 
 ## Prueba vs app oficial
 
