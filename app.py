@@ -1235,10 +1235,8 @@ def empaquetar_descarga_contratos(
     return buf.getvalue(), zip_nombre, "application/zip"
 
 
-METODOS_SIN_RESOLVER = (
-    METODOS_LABEL["verificar"],
-    METODOS_LABEL["sin_matriz"],
-)
+# Etiquetas fijas (mismas que METODOS_LABEL en cxp_cruce); no importar pandas aquí al arranque.
+METODOS_SIN_RESOLVER = frozenset({"Sin resolver", "Sin fila en matriz"})
 
 
 def filas_sin_resolver(detalle: list) -> list[dict]:
