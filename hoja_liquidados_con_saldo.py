@@ -26,8 +26,11 @@ from cxp_cruce import (
 from hoja_suspendidos import (
     _aplicar_encabezados_saldo_mes_alternos,
     _aplicar_estilo_total_saldo,
+    _aplicar_tope_mes_anterior,
     _columna_saldo_mes_en_hoja,
+    _es_columna_saldo_mes,
     _escribir_total_estado,
+    _listar_columnas_saldo_mes,
     _normalizar_titulos_mes_cortos,
     _rango_filas_datos_seguimiento,
     _ultima_fila_contratista,
@@ -91,22 +94,39 @@ def _columna_saldo_mes_anterior(
     fecha: datetime | date,
     col_saldo: int,
 ) -> int | None:
-    mes_actual = _fecha_datetime(fecha).month
-    from hoja_suspendidos import _listar_columnas_saldo_mes
-
+    """
+    Columna de saldo del mes inmediatamente anterior (a la izquierda en la hoja).
+    """
+    del fecha
     cols = _listar_columnas_saldo_mes(ws)
-    previas = [c for c in cols if c[1] < mes_actual]
-    if previas:
-        return previas[-1][0]
-    if cols:
-        idx = next((i for i, c in enumerate(cols) if c[0] == col_saldo), None)
-        if idx is not None and idx > 0:
-            return cols[idx - 1][0]
-        if cols[-1][0] != col_saldo and len(cols) >= 1:
-            return cols[-1][0]
-        if len(cols) >= 2:
-            return cols[-2][0]
+    for i, (col, _) in enumerate(cols):
+        if col == col_saldo and i > 0:
+            return cols[i - 1][0]
+
+    fila_hdr = _fila_encabezado_hoja_datos(ws)
+    for col_cand in range(col_saldo - 1, 0, -1):
+        val = ws.cell(fila_hdr, col_cand).value
+        if val is None or not str(val).strip():
+            continue
+        if _es_columna_saldo_mes(str(val).strip()):
+            return col_cand
     return None
+
+
+def _leer_conteo_reportado_pie_liquidados(
+    ws,
+    col_saldo: int | None,
+) -> float | None:
+    """Valor del conteo al pie (fila debajo de la suma) en esa columna."""
+    if not col_saldo:
+        return None
+    celda = _celda_para_escribir(ws, _fila_conteo_liquidados(ws), col_saldo)
+    if celda.value in (None, ""):
+        return None
+    try:
+        return float(celda.value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _asegurar_columna_saldo_mes(
@@ -206,9 +226,15 @@ def _actualizar_resumen_liquidados(
     ws,
     col_saldo: int,
     col_prev_saldo: int | None,
-) -> None:
+) -> tuple[int, int]:
+    """Suma al pie; conteo con tope = celda de conteo de la columna inmediatamente anterior."""
     suma = _suma_saldos_columna(ws, col_saldo)
-    conteo = _conteo_con_saldo_distinto_cero(ws, col_saldo)
+    conteo_real = _conteo_con_saldo_distinto_cero(ws, col_saldo)
+    conteo_prev = _leer_conteo_reportado_pie_liquidados(ws, col_prev_saldo)
+    if conteo_prev is None and col_prev_saldo:
+        conteo_prev = float(_conteo_con_saldo_distinto_cero(ws, col_prev_saldo))
+    conteo_mostrar, _ = _aplicar_tope_mes_anterior(conteo_real, conteo_prev)
+    conteo_mostrar = int(conteo_mostrar)
 
     fila_suma = _fila_suma_liquidados(ws)
     fila_conteo = _fila_conteo_liquidados(ws)
@@ -221,7 +247,13 @@ def _actualizar_resumen_liquidados(
             celda_suma, ws, col_saldo, col_prev_saldo, fila_suma
         )
     if not _celda_tiene_formula(celda_conteo):
-        _escribir_total_estado(celda_conteo, conteo)
+        _escribir_total_estado(celda_conteo, conteo_mostrar)
+        if col_prev_saldo:
+            ref = _celda_para_escribir(ws, fila_conteo, col_prev_saldo)
+            if ref.has_style:
+                _copiar_estilo_celda_sin_relleno(ref, celda_conteo)
+
+    return conteo_real, conteo_mostrar
 
 
 def actualizar_hoja_liquidados_con_saldo(
@@ -278,7 +310,15 @@ def actualizar_hoja_liquidados_con_saldo(
         celda_saldo.value = None if saldo is None else saldo
         celda_saldo.fill = PatternFill(fill_type=None)
 
-    _actualizar_resumen_liquidados(ws, col_saldo, col_prev)
+    conteo_real, conteo_mostrar = _actualizar_resumen_liquidados(
+        ws, col_saldo, col_prev
+    )
+    if col_prev and conteo_real > conteo_mostrar:
+        advertencias.append(
+            f"Liquidados con saldo: el conteo real ({conteo_real}) supera al mes anterior "
+            f"({conteo_mostrar}); en el total se dejó el valor de la columna anterior."
+        )
+
     _autoajustar_columna_suspendidos(ws, col_saldo, titulo_saldo_suspendidos(fecha))
 
     return advertencias
