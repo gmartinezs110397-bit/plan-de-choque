@@ -23,8 +23,8 @@ from cxp_cruce import (
     _fecha_datetime,
     preparar_indice_matriz,
 )
+from cxp_cruce import _aplicar_encabezados_saldo_mes_alternos
 from hoja_suspendidos import (
-    _aplicar_encabezados_saldo_mes_alternos,
     _aplicar_estilo_total_saldo,
     _aplicar_tope_mes_anterior,
     _columna_saldo_mes_en_hoja,

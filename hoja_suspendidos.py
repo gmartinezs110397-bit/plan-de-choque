@@ -617,21 +617,10 @@ def _aplicar_encabezados_meses_alternos(ws) -> None:
 
 
 def _aplicar_encabezados_saldo_mes_alternos(ws, fecha: datetime | date) -> None:
-    """
-    Alternancia azul/amarillo por mes en columnas solo SALDO (Liquidados con saldo).
-    """
-    anio = _fecha_datetime(fecha).year
-    fila_hdr = _fila_encabezado_hoja_datos(ws)
-    fila_ini, fila_fin = _filas_encabezado_seguimiento(ws)
-    cols = _listar_columnas_saldo_mes(ws)
-    if not cols:
-        return
+    """Liquidados con saldo y Cps: misma rutina en cxp_cruce (fila 1-2 vs fila 3)."""
+    from cxp_cruce import _aplicar_encabezados_saldo_mes_alternos as _aplicar
 
-    for col, mes_num in cols:
-        celda = _celda_para_escribir(ws, fila_hdr, col)
-        _aplicar_merge_encabezado_columna(ws, col, fila_ini, fila_fin)
-        celda.fill = _fill_encabezado_por_mes(mes_num)
-        celda.value = _titulo_saldo_mes_numero(mes_num, anio)
+    _aplicar(ws, fecha)
 
 
 def _es_suspendido(valor) -> bool:
