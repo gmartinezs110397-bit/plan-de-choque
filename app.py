@@ -220,6 +220,18 @@ st.markdown(
         background: transparent !important;
         background-color: transparent !important;
     }
+    .st-key-consolidacion_sticky_progress {
+        position: fixed !important;
+        top: 0.35rem !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        width: min(960px, calc(100vw - 2rem)) !important;
+        z-index: 999 !important;
+        background: rgba(255, 255, 255, 0.98) !important;
+        padding: 0.15rem 0 0.25rem 0 !important;
+        margin: 0 !important;
+        backdrop-filter: blur(8px);
+    }
 
     /* Acciones principales — fucsia */
     button[kind="primary"],
@@ -2554,7 +2566,7 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
             "Puede aplicar los cambios y continuar con las descargas."
         )
     else:
-        st.info(f"Faltan **{faltan}** incidencia(s) por confirmar (use **Siguiente →**).")
+        st.info(f"Faltan **{faltan}** incidencia(s) por confirmar.")
 
     if st.button(
         "Aplicar selecciones y habilitar descargas",
@@ -4274,7 +4286,8 @@ if not st.session_state.get("ejecutar_consolidacion_ahora"):
 
 _barra_consolidacion = None
 if st.session_state.get("ejecutar_consolidacion_ahora"):
-    _barra_consolidacion = st.progress(0, text="Iniciando consolidación…")
+    with st.container(key="consolidacion_sticky_progress"):
+        _barra_consolidacion = st.progress(0, text="Iniciando consolidación…")
 
 # ── Título ─────────────────────────────────────────────────────────────────────
 st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
