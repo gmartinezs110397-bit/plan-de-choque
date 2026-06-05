@@ -52,6 +52,7 @@ LABEL_A_CODIGO = {v: k for k, v in METODOS_LABEL.items()}
 TIPO_FILA_CONTRATOS = "Contratos"
 TIPO_FILA_CANDIDATO_MATRIZ = "Candidato Matriz"
 COL_OPCION_MATRIZ = "Opción Matriz"
+COL_FILA_EXCEL_CONTRATOS = "Fila Excel Contratos"
 
 
 def _normalizar(texto: str) -> str:
@@ -234,13 +235,24 @@ def clave_fila_contrato(nombre, contrato, anio, apropiacion) -> str:
     return clave_cuatro(nombre, contrato, anio, apropiacion)
 
 
+def _clave_con_fila_excel(clave_base: str, fila_excel) -> str:
+    if fila_excel is None or (isinstance(fila_excel, float) and pd.isna(fila_excel)):
+        return clave_base
+    try:
+        fila = int(float(fila_excel))
+    except (TypeError, ValueError):
+        return clave_base
+    return f"{clave_base}::fila_excel={fila}"
+
+
 def clave_desde_detalle(fila: dict) -> str:
-    return clave_fila_contrato(
+    clave_base = clave_fila_contrato(
         fila["NOMBRE CONTRATISTA"],
         fila["No. de Cto"],
         fila["AÑO SUSCRIPCIÓN"],
         fila["APROPIACION DISPONIBLE"],
     )
+    return _clave_con_fila_excel(clave_base, fila.get(COL_FILA_EXCEL_CONTRATOS))
 
 
 def _es_fila_contratos_revision(fila: dict) -> bool:
@@ -499,13 +511,16 @@ def aplicar_desempate_en_contratos(
         if pd.isna(nombre) or not str(nombre).strip():
             continue
         fila_excel = _fila_inicio_datos_contratos() + i
-        k = clave_fila_contrato(
+        clave_base = clave_fila_contrato(
             nombre, row[col_cto], row[col_anio], row[col_aprop]
         )
-        if k in pendientes and k in mapa_desempate:
-            valores_excel[fila_excel] = mapa_desempate[k]
+        clave_fila = _clave_con_fila_excel(clave_base, fila_excel)
+        if clave_fila in pendientes and clave_fila in mapa_desempate:
+            valores_excel[fila_excel] = mapa_desempate[clave_fila]
+        elif clave_base in pendientes and clave_base in mapa_desempate:
+            valores_excel[fila_excel] = mapa_desempate[clave_base]
 
-    bytes_nuevos, _ = exportar_contratos_preservando_formato(
+    bytes_nuevos, _, _ = exportar_contratos_preservando_formato(
         contratos_bytes,
         fecha_analisis,
         valores_excel,
@@ -1931,6 +1946,7 @@ def procesar_localidad_cxp(
         detalle_filas.append({
             "Tipo fila": TIPO_FILA_CONTRATOS,
             "Localidad": localidad,
+            COL_FILA_EXCEL_CONTRATOS: fila_excel,
             "NOMBRE CONTRATISTA": nombre,
             "No. de Cto": row[col_cto],
             "AÑO SUSCRIPCIÓN": row[col_anio],

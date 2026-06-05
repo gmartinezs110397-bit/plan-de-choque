@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import pickle
+import random
 import re
 import sys
 import tempfile
@@ -58,39 +60,63 @@ st.markdown(
         font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     }
     #MainMenu, footer, header { visibility: hidden; }
+    :root {
+        --pc-pink-25: #fff9fc;
+        --pc-pink-50: #fff1f8;
+        --pc-pink-100: #ffe4f1;
+        --pc-pink-200: #fbcfe8;
+        --pc-pink-300: #f9a8d4;
+        --pc-pink-500: #e0218a;
+        --pc-pink-600: #c2186a;
+        --pc-pink-700: #9d174d;
+        --pc-ink: #5b0a37;
+        --pc-muted: #8a3a63;
+    }
+    [data-testid="stAppViewContainer"] {
+        background: #ffffff !important;
+    }
+    [data-testid="stHeader"] { background: transparent !important; }
     .block-container { padding-top: 1.25rem; max-width: 960px; }
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        background: #ffffff !important;
+        border-color: var(--pc-pink-200) !important;
+        box-shadow: 0 6px 18px rgba(224, 33, 138, 0.05) !important;
+    }
 
     /* Solo ocultar el texto «Press Enter…», no el icono del ojo */
     [data-testid="stFormSubmitInstruction"],
     div[data-testid="InputInstructions"] > span {
         display: none !important;
     }
-    .app-title {
+    h1.app-title,
+    .app-title,
+    .app-title * {
         font-size: 2rem;
         font-weight: 700;
-        color: #0f172a;
+        color: var(--pc-pink-600) !important;
         letter-spacing: -0.03em;
         margin: 0 0 0.35rem 0;
         text-align: center;
     }
-    .app-subtitle {
+    .app-subtitle,
+    .app-subtitle * {
         text-align: center;
-        color: #64748b;
+        color: var(--pc-muted) !important;
         font-size: 0.95rem;
         margin: 0 0 1.75rem 0;
     }
     .form-card-title {
         font-size: 1.05rem;
         font-weight: 600;
-        color: #0f172a;
+        color: var(--pc-ink);
         margin: 0 0 1.25rem 0;
         padding-bottom: 0.75rem;
-        border-bottom: 2px solid #e2e8f0;
+        border-bottom: 2px solid var(--pc-pink-200);
     }
     .field-label {
         font-size: 0.8rem;
         font-weight: 600;
-        color: #475569;
+        color: var(--pc-pink-700);
         text-transform: uppercase;
         letter-spacing: 0.04em;
         margin-bottom: 0.35rem;
@@ -101,25 +127,25 @@ st.markdown(
         justify-content: center;
         width: 1.35rem;
         height: 1.35rem;
-        background: #1e40af;
+        background: var(--pc-pink-500);
         color: white;
         border-radius: 50%;
         font-size: 0.72rem;
         font-weight: 700;
         margin-right: 0.5rem;
     }
-    .file-ok { color: #16a34a; font-size: 0.85rem; font-weight: 500; }
+    .file-ok { color: var(--pc-pink-600); font-size: 0.85rem; font-weight: 500; }
     .section-title {
         font-size: 1rem;
         font-weight: 600;
-        color: #0f172a;
+        color: var(--pc-ink);
         margin: 2rem 0 0.75rem;
         padding-bottom: 0.4rem;
-        border-bottom: 2px solid #e2e8f0;
+        border-bottom: 2px solid var(--pc-pink-200);
     }
     .metric-card {
         background: #fff;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--pc-pink-200);
         border-radius: 8px;
         padding: 0.85rem 0.75rem;
         min-height: 5.25rem;
@@ -127,73 +153,116 @@ st.markdown(
         flex-direction: column;
         justify-content: center;
         overflow: hidden;
+        box-shadow: 0 8px 24px rgba(224, 33, 138, 0.07);
     }
     .metric-label {
         font-size: 0.68rem;
         font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: #64748b;
+        color: var(--pc-muted);
         line-height: 1.25;
         margin-bottom: 0.35rem;
     }
     .metric-value {
         font-size: clamp(1rem, 2.4vw, 1.35rem);
         font-weight: 700;
-        color: #0f172a;
+        color: var(--pc-ink);
         line-height: 1.15;
         white-space: nowrap;
     }
     .metric-value-sm { font-size: clamp(1.05rem, 2.6vw, 1.45rem); }
 
-    /* Select localidad — borde y foco azul (#2563eb, igual que Ejecutar consolidación) */
+    /* Select localidad — borde y foco fucsia */
     [class*="st-key-select_localidad"] [data-baseweb="select"] > div,
     [data-testid="stSelectbox"] [data-baseweb="select"] > div {
-        border-color: #cbd5e1 !important;
+        border-color: var(--pc-pink-200) !important;
         border-radius: 8px !important;
     }
     [class*="st-key-select_localidad"] [data-baseweb="select"]:focus-within > div,
     [class*="st-key-select_localidad"] [data-baseweb="select"]:hover > div,
     [data-testid="stSelectbox"] [data-baseweb="select"]:focus-within > div,
     [data-testid="stSelectbox"] [data-baseweb="select"]:hover > div {
-        border-color: #2563eb !important;
-        box-shadow: 0 0 0 1px #2563eb !important;
+        border-color: var(--pc-pink-500) !important;
+        box-shadow: 0 0 0 1px var(--pc-pink-500) !important;
     }
     div[data-baseweb="popover"] li[role="option"]:hover,
     div[data-baseweb="menu"] li[role="option"]:hover {
-        background-color: #dbeafe !important;
+        background-color: var(--pc-pink-100) !important;
     }
     div[data-baseweb="popover"] li[role="option"][aria-selected="true"],
     div[data-baseweb="menu"] li[role="option"][aria-selected="true"] {
-        background-color: #eff6ff !important;
-        color: #1e40af !important;
+        background-color: var(--pc-pink-50) !important;
+        color: var(--pc-pink-700) !important;
     }
 
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
-    .loading-text { animation: pulse 1.5s ease-in-out infinite; color: #3b82f6; }
+    .loading-text { animation: pulse 1.5s ease-in-out infinite; color: var(--pc-pink-500); }
+    [data-testid="stProgress"] > div > div:has([role="progressbar"]),
+    [data-testid="stProgress"] > div > div:has(progress) {
+        background-color: var(--pc-pink-100) !important;
+    }
+    [data-testid="stProgress"] > div > div > div,
+    [data-testid="stProgress"] div[role="progressbar"],
+    [data-testid="stProgress"] progress::-webkit-progress-value {
+        background-color: var(--pc-pink-500) !important;
+    }
+    [data-testid="stProgress"] progress::-moz-progress-bar {
+        background-color: var(--pc-pink-500) !important;
+    }
+    [data-testid="stProgress"] p,
+    [data-testid="stProgress"] span {
+        color: var(--pc-muted) !important;
+    }
+    [data-testid="stProgress"] [data-testid="stMarkdownContainer"],
+    [data-testid="stProgress"] [data-testid="stMarkdownContainer"] *,
+    [data-testid="stProgress"] > div > div:has([data-testid="stMarkdownContainer"]) {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
 
-    /* Ejecutar consolidación — azul (selector por key de Streamlit) */
-    .st-key-btn_ejecutar_consolidacion button {
-        background: #2563eb !important;
-        background-color: #2563eb !important;
+    /* Acciones principales — fucsia */
+    button[kind="primary"],
+    button[kind="primaryFormSubmit"],
+    [data-testid="stBaseButton-primary"],
+    .st-key-btn_ejecutar_consolidacion button,
+    .st-key-btn_iniciar_nuevo_reporte button {
+        background: var(--pc-pink-500) !important;
+        background-color: var(--pc-pink-500) !important;
         color: #ffffff !important;
-        border: 1px solid #2563eb !important;
+        border: 1px solid var(--pc-pink-500) !important;
         font-weight: 600 !important;
         border-radius: 8px !important;
-        box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35) !important;
+        box-shadow: 0 4px 12px rgba(224, 33, 138, 0.32) !important;
     }
-    .st-key-btn_ejecutar_consolidacion button:hover {
-        background: #1d4ed8 !important;
-        background-color: #1d4ed8 !important;
+    button[kind="primary"]:hover,
+    button[kind="primaryFormSubmit"]:hover,
+    [data-testid="stBaseButton-primary"]:hover,
+    .st-key-btn_ejecutar_consolidacion button:hover,
+    .st-key-btn_iniciar_nuevo_reporte button:hover {
+        background: var(--pc-pink-600) !important;
+        background-color: var(--pc-pink-600) !important;
         color: #ffffff !important;
-        border-color: #1d4ed8 !important;
+        border-color: var(--pc-pink-600) !important;
     }
-    .st-key-btn_ejecutar_consolidacion button:active {
-        background: #1e40af !important;
-        background-color: #1e40af !important;
+    button[kind="primary"]:active,
+    button[kind="primaryFormSubmit"]:active,
+    [data-testid="stBaseButton-primary"]:active,
+    .st-key-btn_ejecutar_consolidacion button:active,
+    .st-key-btn_iniciar_nuevo_reporte button:active {
+        background: var(--pc-pink-700) !important;
+        background-color: var(--pc-pink-700) !important;
     }
+    button[kind="primary"] p,
+    button[kind="primary"] span,
+    button[kind="primaryFormSubmit"] p,
+    button[kind="primaryFormSubmit"] span,
+    [data-testid="stBaseButton-primary"] p,
+    [data-testid="stBaseButton-primary"] span,
     .st-key-btn_ejecutar_consolidacion button p,
-    .st-key-btn_ejecutar_consolidacion button span {
+    .st-key-btn_ejecutar_consolidacion button span,
+    .st-key-btn_iniciar_nuevo_reporte button p,
+    .st-key-btn_iniciar_nuevo_reporte button span {
         color: #ffffff !important;
     }
     /* Quitar de cola — icono basura rojo centrado */
@@ -253,21 +322,21 @@ st.markdown(
         background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23dc2626'%3E%3Cpath d='M9 3h6a1 1 0 0 1 1 1v1h4a1 1 0 1 1 0 2h-1v13a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V7H4a1 1 0 1 1 0-2h4V4a1 1 0 0 1 1-1zm1 2h4V4h-4v1zm-2 3v12a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8H8zm3 3a1 1 0 1 1 2 0v7a1 1 0 1 1-2 0v-7zm4 0a1 1 0 1 1 2 0v7a1 1 0 1 1-2 0v-7z'/%3E%3C/svg%3E");
         pointer-events: none;
     }
-    /* Descargas — verde UI (distinto del verde LIQUIDADO del Excel) */
+    /* Descargas — fucsia UI, no afecta colores del Excel */
     .st-key-btn_descargar_excel button,
     .st-key-dl_contratos_todas button {
-        background: #059669 !important;
-        background-color: #059669 !important;
+        background: var(--pc-pink-600) !important;
+        background-color: var(--pc-pink-600) !important;
         color: #ffffff !important;
-        border: 1px solid #059669 !important;
+        border: 1px solid var(--pc-pink-600) !important;
         font-weight: 600 !important;
         border-radius: 8px !important;
     }
     .st-key-btn_descargar_excel button:hover,
     .st-key-dl_contratos_todas button:hover {
-        background: #047857 !important;
-        background-color: #047857 !important;
-        border-color: #047857 !important;
+        background: var(--pc-pink-700) !important;
+        background-color: var(--pc-pink-700) !important;
+        border-color: var(--pc-pink-700) !important;
         color: #ffffff !important;
     }
     .st-key-btn_descargar_excel button p,
@@ -278,10 +347,10 @@ st.markdown(
     }
     .st-key-btn_descargar_excel button:disabled,
     .st-key-dl_contratos_todas button:disabled {
-        background: #94a3b8 !important;
-        background-color: #94a3b8 !important;
-        border-color: #94a3b8 !important;
-        color: #f8fafc !important;
+        background: var(--pc-pink-200) !important;
+        background-color: var(--pc-pink-200) !important;
+        border-color: var(--pc-pink-200) !important;
+        color: var(--pc-pink-700) !important;
         opacity: 0.65 !important;
         box-shadow: none !important;
         cursor: not-allowed !important;
@@ -289,19 +358,19 @@ st.markdown(
 
     /* Uploaders: texto y caja mas limpios que el control nativo de Streamlit */
     [data-testid="stFileUploaderDropzone"] {
-        background: #f8fafc !important;
-        border: 1px solid #e2e8f0 !important;
+        background: var(--pc-pink-25) !important;
+        border: 1px solid var(--pc-pink-200) !important;
         border-radius: 8px !important;
         min-height: 4.3rem !important;
         padding: 0.8rem 0.9rem !important;
     }
     [data-testid="stFileUploaderDropzone"]:hover {
-        border-color: #93c5fd !important;
-        background: #f9fbff !important;
+        border-color: var(--pc-pink-300) !important;
+        background: #fff7fb !important;
     }
     [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {
         border-radius: 8px !important;
-        border-color: #cbd5e1 !important;
+        border-color: var(--pc-pink-200) !important;
         min-height: 2.45rem !important;
         padding: 0.45rem 0.8rem !important;
     }
@@ -310,7 +379,7 @@ st.markdown(
     }
     [data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"]::after {
         content: "Seleccionar archivo";
-        color: #0f172a;
+        color: var(--pc-ink);
         font-weight: 500;
         font-size: 0.88rem;
         white-space: nowrap;
@@ -325,7 +394,7 @@ st.markdown(
         visibility: visible !important;
         position: absolute !important;
         inset: 0 auto auto 0 !important;
-        color: #64748b !important;
+        color: var(--pc-muted) !important;
         font-size: 0.82rem !important;
         line-height: 1.25 !important;
         white-space: normal !important;
@@ -337,7 +406,7 @@ st.markdown(
         width: 1.35rem;
         height: 1.35rem;
         border-radius: 999px;
-        background: #1e40af;
+        background: var(--pc-pink-500);
         color: #ffffff;
         font-size: 0.68rem;
         font-weight: 700;
@@ -346,7 +415,7 @@ st.markdown(
     .queue-localidad {
         font-size: 0.9rem;
         font-weight: 700;
-        color: #0f172a;
+        color: var(--pc-ink);
         margin: 0 0 0.15rem 0;
     }
     .queue-file-label {
@@ -354,22 +423,228 @@ st.markdown(
         font-weight: 700;
         letter-spacing: 0.04em;
         text-transform: uppercase;
-        color: #64748b;
+        color: var(--pc-pink-700);
         margin: 0;
     }
     .queue-file-name {
         font-size: 0.76rem;
-        color: #334155;
+        color: var(--pc-muted);
         overflow-wrap: anywhere;
         margin: 0;
         line-height: 1.25;
     }
     .queue-compact-row {
-        border-top: 1px solid #e2e8f0;
+        border-top: 1px solid var(--pc-pink-200);
         padding: 0.5rem 0;
     }
     .queue-compact-row:first-child {
         border-top: 0;
+    }
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {
+        background: var(--pc-pink-50) !important;
+        border: 1px solid var(--pc-pink-200) !important;
+        color: var(--pc-ink) !important;
+    }
+    [data-testid="stAlertContentInfo"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAlertContentInfo"] [data-testid="stMarkdownContainer"] * {
+        color: var(--pc-ink) !important;
+    }
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {
+        background: #fff8db !important;
+        border: 1px solid #facc15 !important;
+    }
+    [data-testid="stAlertContentWarning"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAlertContentWarning"] [data-testid="stMarkdownContainer"] * {
+        color: #7a5600 !important;
+    }
+    [data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {
+        background: #ecfdf3 !important;
+        border: 1px solid #86efac !important;
+    }
+    [data-testid="stAlertContentSuccess"] [data-testid="stMarkdownContainer"],
+    [data-testid="stAlertContentSuccess"] [data-testid="stMarkdownContainer"] * {
+        color: #166534 !important;
+    }
+    .desempate-mini-alert,
+    .desempate-callout {
+        border: 1px solid #e2e8f0;
+        border-left: 5px solid var(--pc-pink-500);
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    }
+    .desempate-mini-alert {
+        padding: 0.85rem 1rem;
+        margin: 0.8rem 0 0.4rem;
+        color: var(--pc-ink);
+        font-weight: 600;
+    }
+    .desempate-callout {
+        padding: 1rem 1.05rem;
+        margin: 0.65rem 0 1rem;
+    }
+    .desempate-kicker {
+        color: #64748b;
+        font-size: 0.72rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 0.25rem;
+    }
+    .desempate-callout-title,
+    .desempate-case-title,
+    .desempate-options-title {
+        color: #0f172a;
+        font-weight: 800;
+        letter-spacing: 0;
+    }
+    .desempate-callout-title {
+        font-size: 1.25rem;
+        margin-bottom: 0.25rem;
+    }
+    .desempate-callout p,
+    .desempate-case-header p,
+    .desempate-note {
+        color: #475569;
+        margin: 0;
+        line-height: 1.42;
+    }
+    .desempate-progress-text {
+        margin: 0.6rem 0 0.35rem;
+        color: #475569;
+        font-size: 0.92rem;
+        background: transparent !important;
+    }
+    .desempate-progress-text strong {
+        color: #0f172a;
+    }
+    .desempate-case-header {
+        margin: 0.65rem 0 0.55rem;
+        padding: 0.7rem 0.85rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: #ffffff;
+    }
+    .desempate-case-title {
+        font-size: 1.02rem;
+        margin-bottom: 0.12rem;
+    }
+    .desempate-saldo {
+        color: #0f172a;
+        font-size: 1.05rem;
+        font-weight: 800;
+    }
+    .desempate-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.45rem;
+        margin: 0.5rem 0 0.6rem;
+    }
+    .desempate-detail-item {
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 0.52rem 0.6rem;
+        background: #ffffff;
+        min-height: 3rem;
+    }
+    .desempate-detail-item span {
+        display: block;
+        color: #64748b;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 0.16rem;
+    }
+    .desempate-detail-item strong {
+        color: #334155;
+        font-size: 0.86rem;
+        line-height: 1.18;
+        overflow-wrap: anywhere;
+    }
+    .desempate-note {
+        border-left: 4px solid #cbd5e1;
+        border-radius: 6px;
+        background: #f8fafc;
+        padding: 0.65rem 0.75rem;
+        margin: 0 0 0.85rem;
+    }
+    .desempate-options-title {
+        font-size: 1rem;
+        margin: 0.85rem 0 0.35rem;
+    }
+    [data-testid="stRadio"] label,
+    [data-testid="stRadio"] label * {
+        color: #334155 !important;
+    }
+    .result-table-wrap {
+        width: 100%;
+        margin: 0.45rem 0 0.9rem;
+    }
+    .result-table {
+        width: 100%;
+        table-layout: fixed;
+        border-collapse: collapse;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        overflow: hidden;
+        font-size: 0.82rem;
+    }
+    .result-table th,
+    .result-table td {
+        border-top: 1px solid #e2e8f0;
+        border-right: 1px solid #e2e8f0;
+        padding: 0.46rem 0.5rem;
+        vertical-align: top;
+    }
+    .result-table th:last-child,
+    .result-table td:last-child {
+        border-right: 0;
+    }
+    .result-table th {
+        background: #f8fafc;
+        color: #334155;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        line-height: 1.16;
+        overflow-wrap: anywhere;
+        text-transform: none;
+        white-space: normal;
+    }
+    .result-table td {
+        color: #0f172a;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+    .result-table td.result-number {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.9rem;
+        font-weight: 600;
+        line-height: 1.15;
+        overflow-wrap: normal;
+        text-align: center;
+        white-space: nowrap;
+        word-break: keep-all;
+    }
+    .result-table td.result-empty {
+        color: #64748b;
+    }
+    @media (max-width: 640px) {
+        .desempate-detail-grid {
+            grid-template-columns: 1fr;
+        }
+        .result-table {
+            font-size: 0.72rem;
+        }
+        .result-table th,
+        .result-table td {
+            padding: 0.4rem 0.38rem;
+        }
+        .result-table td.result-number {
+            font-size: 0.8rem;
+        }
     }
     </style>
     """,
@@ -415,6 +690,7 @@ def init_session_state():
         "desempate_wizard_mapa": {},
         "acceso_autorizado": False,
         "reporte_ejecucion": None,
+        "_pc_mostrar_formulario_correccion": False,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -438,6 +714,170 @@ def contrasena_acceso_esperada() -> str | None:
 
 
 CLAVE_INPUT_CONTRASENA = "input_contrasena_portada"
+CLAVE_MENSAJE_BIENVENIDA = "_mensaje_bienvenida_portada"
+CLAVE_ULTIMO_MENSAJE_BIENVENIDA = "_ultimo_mensaje_bienvenida_portada"
+MENSAJES_PERSONALES_BIENVENIDA = (
+    "Eres luz, mujer maravillosa ✨💖",
+    "Gracias por ser una hermana excepcional 💕",
+    "Te amo mucho hermanita 💖",
+    "Estoy muy orgullosa de ti 🌸",
+    "Tu corazón hace todo más bonito 💖",
+    "Gracias por ser tú 🌷💖",
+    "Qué fortuna tenerte como hermana 💕",
+    "Tu alegría también es mi alegría 💖",
+)
+MENSAJES_MOTIVACION_BIENVENIDA = (
+    "La vida te abraza bonito ✨",
+    "Tu energía abre caminos bonitos 🌸",
+    "La vida te guarda cosas hermosas 💕",
+    "Brilla siempre a tu manera ✨",
+    "Eres magia bonita en movimiento 💖",
+    "Todo lo bueno también te busca 🌷",
+    "Tu luz se nota en todo lo que haces ✨",
+    "Mereces todo lo bonito del mundo 💕",
+)
+MENSAJES_DIOS_BIENVENIDA = (
+    "Eres la princesa de Dios 👑💖",
+    "Dios puso una luz preciosa en ti ✨",
+    "Eres una hija amada de Dios 💕",
+    "Dios te hizo fuerte y hermosa 🌸",
+    "Dios bendice tu camino 💖",
+    "Tu corazón es un regalo de Dios ✨",
+    "Dios camina contigo 💕",
+    "Dios sonríe con tu luz 🌷",
+)
+MENSAJES_BIENVENIDA_CATEGORIAS = (
+    ("personal", MENSAJES_PERSONALES_BIENVENIDA),
+    ("motivacion", MENSAJES_MOTIVACION_BIENVENIDA),
+    ("dios", MENSAJES_DIOS_BIENVENIDA),
+)
+MENSAJES_BIENVENIDA = tuple(
+    mensaje
+    for _, mensajes_categoria in MENSAJES_BIENVENIDA_CATEGORIAS
+    for mensaje in mensajes_categoria
+)
+
+
+def mensaje_bienvenida_aleatorio() -> str:
+    if not MENSAJES_BIENVENIDA:
+        return ""
+    ultimo = st.session_state.get(CLAVE_ULTIMO_MENSAJE_BIENVENIDA)
+    candidatos = list(range(len(MENSAJES_BIENVENIDA)))
+    if len(candidatos) > 1 and ultimo in candidatos:
+        candidatos.remove(ultimo)
+    elegido = random.choice(candidatos)
+    st.session_state[CLAVE_ULTIMO_MENSAJE_BIENVENIDA] = elegido
+    return MENSAJES_BIENVENIDA[elegido]
+
+
+def render_mensaje_bienvenida_pendiente() -> None:
+    mensaje = st.session_state.pop(CLAVE_MENSAJE_BIENVENIDA, "")
+    if not mensaje:
+        return
+    components.html(
+        f"""
+        <script>
+        (function () {{
+          const mensaje = {json.dumps(mensaje, ensure_ascii=False)};
+          let doc = document;
+          try {{ doc = window.parent.document; }} catch (err) {{}}
+
+          const previo = doc.getElementById("pc-mensaje-bienvenida");
+          if (previo) previo.remove();
+          const estiloPrevio = doc.getElementById("pc-mensaje-bienvenida-style");
+          if (estiloPrevio) estiloPrevio.remove();
+
+          const estilo = doc.createElement("style");
+          estilo.id = "pc-mensaje-bienvenida-style";
+          estilo.textContent = `
+            #pc-mensaje-bienvenida {{
+              position: fixed;
+              inset: 0;
+              z-index: 2147483647;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 1rem;
+              background: rgba(91, 10, 55, 0.22);
+              backdrop-filter: blur(5px);
+            }}
+            #pc-mensaje-bienvenida .pc-card {{
+              width: min(92vw, 430px);
+              background: linear-gradient(180deg, #fff9fc 0%, #fff1f8 100%);
+              border: 1px solid #f9a8d4;
+              border-radius: 8px;
+              box-shadow: 0 22px 60px rgba(157, 23, 77, 0.26);
+              padding: 1.35rem;
+              text-align: center;
+              font-family: Inter, system-ui, -apple-system, Segoe UI, sans-serif;
+              color: #5b0a37;
+            }}
+            #pc-mensaje-bienvenida .pc-message {{
+              margin: 0 0 1rem;
+              font-size: 1.08rem;
+              line-height: 1.45;
+              font-weight: 700;
+            }}
+            #pc-mensaje-bienvenida button {{
+              border: 1px solid #e0218a;
+              border-radius: 8px;
+              background: #e0218a;
+              color: white;
+              min-height: 2.35rem;
+              padding: 0.45rem 1rem;
+              font-weight: 700;
+              cursor: pointer;
+              box-shadow: 0 6px 16px rgba(224, 33, 138, 0.28);
+            }}
+            #pc-mensaje-bienvenida button:hover {{
+              background: #c2186a;
+              border-color: #c2186a;
+            }}
+          `;
+          doc.head.appendChild(estilo);
+
+          const overlay = doc.createElement("div");
+          overlay.id = "pc-mensaje-bienvenida";
+          const card = doc.createElement("div");
+          card.className = "pc-card";
+          const texto = doc.createElement("p");
+          texto.className = "pc-message";
+          texto.textContent = mensaje;
+          const boton = doc.createElement("button");
+          boton.type = "button";
+          boton.textContent = "💌";
+          boton.setAttribute("aria-label", "Cerrar mensaje de amor");
+
+          card.appendChild(texto);
+          card.appendChild(boton);
+          overlay.appendChild(card);
+          doc.body.appendChild(overlay);
+
+          let cerrado = false;
+          function cerrar() {{
+            if (cerrado) return;
+            cerrado = true;
+            doc.removeEventListener("keydown", cerrarConTecla, true);
+            overlay.remove();
+          }}
+          function cerrarConTecla(e) {{
+            if (e.key !== "Enter" && e.key !== "Escape") return;
+            e.preventDefault();
+            e.stopPropagation();
+            cerrar();
+          }}
+          boton.addEventListener("click", cerrar);
+          overlay.addEventListener("click", function (e) {{
+            if (e.target === overlay) cerrar();
+          }});
+          doc.addEventListener("keydown", cerrarConTecla, true);
+          setTimeout(function () {{ boton.focus(); }}, 80);
+          setTimeout(cerrar, 10000);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def _componente_teclado_portada_acceso(clave_widget: str) -> None:
@@ -630,6 +1070,7 @@ def render_portada_acceso() -> None:
         texto = str(st.session_state.get(CLAVE_INPUT_CONTRASENA, ingresado)).strip()
         if texto == contrasena_ok:
             st.session_state.acceso_autorizado = True
+            st.session_state[CLAVE_MENSAJE_BIENVENIDA] = mensaje_bienvenida_aleatorio()
             st.rerun()
         st.error("Contraseña incorrecta.")
 
@@ -655,6 +1096,20 @@ def formato_numero_metrica(valor: float) -> str:
     return f"{n:,}".replace(",", ".")
 
 
+def formato_valor_simple(valor) -> str:
+    """Texto corto para identificadores: evita mostrar 593.0 cuando es 593."""
+    if valor is None:
+        return "—"
+    try:
+        if pd.isna(valor):
+            return "—"
+    except TypeError:
+        pass
+    if isinstance(valor, float) and valor.is_integer():
+        return formato_numero_metrica(valor)
+    return str(valor).strip() or "—"
+
+
 def formato_moneda_contable(valor) -> str:
     """Moneda colombiana para tablas de resumen."""
     try:
@@ -664,6 +1119,123 @@ def formato_moneda_contable(valor) -> str:
     signo = "-" if n < 0 else ""
     entero = f"{abs(n):,.0f}".replace(",", ".")
     return f"{signo}$ {entero}"
+
+
+def _nombre_columna_monetaria_ui(columna) -> bool:
+    texto = unicodedata.normalize("NFD", str(columna).lower())
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    columnas_conteo = {
+        "por saldo final",
+        "por contrato",
+        "matriz en cero",
+        "seleccion aplicada",
+        "total",
+    }
+    if texto in columnas_conteo or texto.startswith("por "):
+        return False
+    return any(palabra in texto for palabra in ("saldo", "saldos", "apropiacion", "cxp"))
+
+
+def formato_moneda_ui(valor) -> str:
+    if valor is None:
+        return "—"
+    try:
+        if pd.isna(valor):
+            return "—"
+    except TypeError:
+        pass
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if not texto or texto == "—":
+            return "—"
+        if texto.startswith("$") or texto.startswith("-$") or texto.startswith("- $"):
+            return texto
+    try:
+        return formato_moneda_contable(valor)
+    except (TypeError, ValueError):
+        return str(valor).strip() or "—"
+
+
+def dataframe_con_monedas_ui(df: pd.DataFrame) -> pd.DataFrame:
+    """Formatea como pesos las columnas visuales de saldos y apropiación."""
+    if df is None or df.empty:
+        return df
+    salida = df.copy()
+    for columna in salida.columns:
+        if _nombre_columna_monetaria_ui(columna):
+            salida[columna] = salida[columna].map(formato_moneda_ui)
+    return salida
+
+
+def _valor_celda_resultado(valor) -> str:
+    if valor is None:
+        return "—"
+    try:
+        if pd.isna(valor):
+            return "—"
+    except TypeError:
+        pass
+    if isinstance(valor, float) and valor.is_integer():
+        return formato_numero_metrica(valor)
+    return str(valor).strip() or "—"
+
+
+def _celda_resultado_es_numero(texto: str) -> bool:
+    limpio = texto.strip()
+    if limpio in ("", "—"):
+        return False
+    if limpio.startswith("$") or limpio.startswith("-$") or limpio.startswith("- $"):
+        return True
+    if "/" in limpio and re.fullmatch(r"\d+\s*/\s*\d+", limpio):
+        return True
+    return bool(re.fullmatch(r"-?\d+(?:[.,]\d+)*", limpio))
+
+
+def render_tabla_resultados(df: pd.DataFrame) -> None:
+    """Tabla de lectura sin scroll horizontal: texto envuelve, números no."""
+    if df is None or df.empty:
+        return
+    vista = dataframe_con_monedas_ui(df)
+    cols = list(vista.columns)
+    thead = "".join(f"<th>{escape(str(col))}</th>" for col in cols)
+    filas = []
+    for _, row in vista.iterrows():
+        celdas = []
+        for col in cols:
+            texto = _valor_celda_resultado(row[col])
+            clases = []
+            if texto == "—":
+                clases.append("result-empty")
+            if _celda_resultado_es_numero(texto):
+                clases.append("result-number")
+            clase_attr = f' class="{" ".join(clases)}"' if clases else ""
+            celdas.append(f"<td{clase_attr}>{escape(texto)}</td>")
+        filas.append(f"<tr>{''.join(celdas)}</tr>")
+    st.markdown(
+        '<div class="result-table-wrap"><table class="result-table">'
+        f"<thead><tr>{thead}</tr></thead><tbody>{''.join(filas)}</tbody>"
+        "</table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_scroll_resultados_si_pendiente() -> None:
+    if not st.session_state.pop(_CLAVE_SCROLL_RESULTADOS, False):
+        return
+    components.html(
+        """
+        <script>
+        setTimeout(() => {
+          const doc = window.parent.document;
+          const el = doc.getElementById('resultado-consolidado-anchor');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 120);
+        </script>
+        """,
+        height=0,
+    )
 
 
 def formato_fecha_colombia(fecha: datetime | date, con_hora: bool = False) -> str:
@@ -870,6 +1442,7 @@ _CLAVE_RUTA_DETALLE = "_pc_cruce_detalle_ruta"
 _CLAVE_RUTA_REPORTE = "_pc_reporte_ejecucion_ruta"
 _CLAVE_SNAPSHOT = "_pc_snapshot_consolidacion_ruta"
 _CLAVE_MOSTRAR_RESULTADOS = "mostrar_resultados_completos"
+_CLAVE_SCROLL_RESULTADOS = "_pc_scroll_resultados"
 _CLAVE_RESUMEN_LIGERO = "_pc_resumen_consolidado"
 _ARCHIVO_META_DETALLE = "cruce_detalle_meta.pkl"
 _PREFIJOS_WIDGET_ARCHIVO = (
@@ -924,6 +1497,16 @@ def _asegurar_cola_en_disco(cola: list) -> list:
     return refs
 
 
+def _mensaje_archivo_cola_no_disponible(loc: str, etiqueta: str, entrada: dict) -> str:
+    nombre = entrada.get("name")
+    if nombre:
+        return (
+            f"**{loc}** — {etiqueta} **{nombre}** ya no está disponible. "
+            "Elimine esa entrada y cárguela de nuevo."
+        )
+    return f"**{loc}** — Falta el archivo de {etiqueta}."
+
+
 def _validar_archivos_accesibles(cola: list) -> list[str]:
     errores = []
     for item in cola:
@@ -931,7 +1514,7 @@ def _validar_archivos_accesibles(cola: list) -> list[str]:
         for clave, etiqueta in (("contratos", "Contratos"), ("matriz", "Matriz")):
             ent = item.get(clave) or {}
             if not entrada_cola_tiene_archivo(ent):
-                errores.append(f"**{loc}** — Falta el archivo de {etiqueta}.")
+                errores.append(_mensaje_archivo_cola_no_disponible(loc, etiqueta, ent))
                 continue
             if not bytes_archivo_cola(ent):
                 errores.append(
@@ -1245,7 +1828,10 @@ def _compactar_sesion_para_f5() -> None:
 def entrada_cola_tiene_archivo(entrada: dict | None) -> bool:
     if not entrada:
         return False
-    return bool(entrada.get("bytes") or entrada.get("path"))
+    if entrada.get("bytes"):
+        return True
+    ruta = entrada.get("path")
+    return bool(ruta and Path(ruta).is_file())
 
 
 def _regenerar_zip_descarga_contratos() -> None:
@@ -1314,14 +1900,34 @@ def empaquetar_descarga_contratos(
 METODOS_SIN_RESOLVER = frozenset({"Sin resolver", "Sin fila en matriz"})
 METODOS_AMIGABLES = {
     "Match exacto (4 campos)": "Cruce directo",
-    "Fallback por Saldo Final": "Cruce complementario por saldo final",
-    "Fallback: todos cero en matriz": "Cruce automático",
+    "Fallback por Saldo Final": "Coincidencia por saldo final",
+    "Fallback: todos cero en matriz": "Matriz con saldo cero",
     "Match por contrato (sin apropiación)": "Cruce por contrato",
     "Sin resolver": "Sin coincidencia automática",
     "Sin fila en matriz": "No encontrado en Matriz",
     "Saldo vacío en matriz": "Saldo vacío en Matriz",
     "Desempate manual": "Confirmado por selección",
 }
+CODIGOS_CRUCE_COMPLEMENTARIO = (
+    "match_saldo_contrato",
+    "todos_cero_matriz",
+    "k3_unico",
+    "desempate_manual",
+)
+METODOS_CRUCE_COMPLEMENTARIO = frozenset(
+    [
+        "Fallback por Saldo Final",
+        "Fallback: todos cero en matriz",
+        "Match por contrato (sin apropiación)",
+        "Desempate manual",
+        "Cruce complementario por saldo final",
+        "Coincidencia por saldo final",
+        "Cruce automático",
+        "Matriz con saldo cero",
+        "Cruce por contrato",
+        "Confirmado por selección",
+    ]
+)
 
 
 def etiqueta_metodo_amigable(metodo: str) -> str:
@@ -1342,27 +1948,80 @@ def dataframe_metodos_amigable(resumen_metodos: list) -> pd.DataFrame:
 def conteo_revision_adicional(conteo: dict) -> int:
     return sum(
         int(conteo.get(k, 0) or 0)
-        for k in (
-            "match_saldo_contrato",
-            "todos_cero_matriz",
-            "k3_unico",
-            "desempate_manual",
-        )
+        for k in CODIGOS_CRUCE_COMPLEMENTARIO
     )
+
+
+def dataframe_cruces_complementarios(informe: list) -> pd.DataFrame:
+    filas = []
+    for loc in informe:
+        conteo = loc.get("conteo") or {}
+        total = conteo_revision_adicional(conteo)
+        if total <= 0:
+            continue
+        filas.append({
+            "Localidad": loc["localidad"],
+            "Total": total,
+            "Por saldo final": int(conteo.get("match_saldo_contrato", 0) or 0),
+            "Por contrato": int(conteo.get("k3_unico", 0) or 0),
+            "Matriz en cero": int(conteo.get("todos_cero_matriz", 0) or 0),
+            "Selección aplicada": int(conteo.get("desempate_manual", 0) or 0),
+        })
+    df = pd.DataFrame(filas)
+    if df.empty:
+        return df
+    columnas_conteo = [
+        "Por saldo final",
+        "Por contrato",
+        "Matriz en cero",
+        "Selección aplicada",
+    ]
+    visibles = ["Localidad", "Total"] + [
+        col for col in columnas_conteo if col in df.columns and int(df[col].sum()) > 0
+    ]
+    return df[visibles]
+
+
+def filas_cruce_complementario(detalle: list) -> list[dict]:
+    return [
+        d
+        for d in detalle
+        if d.get("Método") in METODOS_CRUCE_COMPLEMENTARIO
+    ]
 
 
 def filas_sin_resolver(detalle: list) -> list[dict]:
     return [d for d in detalle if d.get("Método") in METODOS_SIN_RESOLVER]
 
 
+def detalle_desempate_visible(detalle) -> str:
+    """Oculta diagnósticos técnicos que no ayudan a elegir entre opciones."""
+    texto = str(detalle or "").strip()
+    if not texto:
+        return ""
+    texto_norm = unicodedata.normalize("NFD", texto.lower())
+    texto_norm = "".join(c for c in texto_norm if unicodedata.category(c) != "Mn")
+    if "hay saldos > 0 en matriz" in texto_norm and "saldo final" in texto_norm:
+        return ""
+    return texto
+
+
+def numero_fila_excel_para_orden(fila: dict) -> int:
+    try:
+        return int(float(fila.get("Fila Excel Contratos")))
+    except (TypeError, ValueError):
+        return 10**9
+
+
 def incidencias_sin_resolver(detalle: list) -> list[dict]:
-    """Contratos sin coincidencia automática, ordenados para la selección."""
+    """Contratos pendientes: localidad y fila Excel ascendente para revisión lineal."""
     return sorted(
         filas_sin_resolver(detalle),
         key=lambda f: (
             str(f.get("Localidad") or ""),
-            str(f.get("NOMBRE CONTRATISTA") or "").lower(),
+            numero_fila_excel_para_orden(f),
             str(f.get("No. de Cto") or ""),
+            str(f.get("NOMBRE CONTRATISTA") or "").lower(),
         ),
     )
 
@@ -1382,8 +2041,8 @@ def dataframe_resumen_localidades(informe: list) -> pd.DataFrame:
                 "Localidad": loc["localidad"],
                 "Contratos cruzados": f"{loc.get('contratos_ok', 0)}/{loc.get('total_contratos', 0)}",
                 "Cruce directo": int((loc.get("conteo") or {}).get("k4_exacto", 0) or 0),
-                "Cruce complementario": conteo_revision_adicional(loc.get("conteo") or {}),
-                "Sin coincidencia automática": loc.get("sin_resolver", 0),
+                "Cruce por contrato": int((loc.get("conteo") or {}).get("k3_unico", 0) or 0),
+                "Cruce por selección": int((loc.get("conteo") or {}).get("desempate_manual", 0) or 0),
                 "CXP del mes": formato_moneda_contable(loc.get("cxp_total", 0)),
             }
             for loc in informe
@@ -1395,7 +2054,7 @@ def _localidad_requiere_detalle_cruce(loc_info: dict) -> bool:
     """Detalle por localidad solo si hay excepciones o avisos."""
     return (
         loc_info.get("sin_resolver", 0) > 0
-        or loc_info.get("conteo", {}).get("match_saldo_contrato", 0) > 0
+        or conteo_revision_adicional(loc_info.get("conteo") or {}) > 0
         or bool(loc_info.get("advertencias_suspendidos"))
     )
 
@@ -1407,36 +2066,14 @@ def mostrar_informe_cruce_consolidado(
     cargar_tablas_detalle: bool = True,
 ) -> None:
     """Resumen conciso del cruce; tablas de fallback solo si hace falta."""
-    total_contratos = sum(i.get("total_contratos", 0) for i in informe)
-    total_ok = sum(i.get("contratos_ok", 0) for i in informe)
-
     st.markdown(
-        '<p class="section-title">Resumen del cruce</p>',
+        '<p class="section-title">Detalle por localidad</p>',
         unsafe_allow_html=True,
     )
-    st.caption("Resumen de cómo se asignaron los saldos en los archivos de Contratos.")
-
-    resumen_global = st.session_state.get("cruce_resumen_global", [])
-    if resumen_global:
-        df_rg = dataframe_metodos_amigable(resumen_global)
-        total_rg = int(df_rg["Contratos"].sum())
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.dataframe(df_rg, use_container_width=True, hide_index=True)
-        with c2:
-            st.markdown(
-                f"**{total_rg}** de **{total_contratos}** contratos "
-                f"con saldo asignado en **{titulo_mes}**."
-            )
-            if total_ok != total_rg:
-                st.caption(
-                    f"({total_ok} filas actualizadas en Contratos; "
-                    f"incluye verificaciones y vacíos en matriz.)"
-                )
-
+    st.caption(f"Resumen por localidad del cruce aplicado en **{titulo_mes}**.")
     df_loc = dataframe_resumen_localidades(informe)
     if len(df_loc):
-        st.dataframe(df_loc, use_container_width=True, hide_index=True)
+        render_tabla_resultados(df_loc)
 
     with st.expander("Cómo se hizo el cruce", expanded=False):
         st.markdown(
@@ -1450,20 +2087,20 @@ def mostrar_informe_cruce_consolidado(
     locales_detalle = [loc for loc in informe if _localidad_requiere_detalle_cruce(loc)]
     if not locales_detalle:
         return
-    st.markdown("**Detalle por localidad**")
+    st.markdown("**Cruces complementarios por localidad**")
     for loc_info in locales_detalle:
         loc = loc_info["localidad"]
         sin_loc = loc_info.get("sin_resolver", 0)
-        fallback = loc_info.get("conteo", {}).get("match_saldo_contrato", 0)
+        complemento = conteo_revision_adicional(loc_info.get("conteo") or {})
         avisos = loc_info.get("advertencias_suspendidos") or []
         etiqueta = (
             f"{loc} — {sin_loc} caso(s) sin coincidencia automática"
             if sin_loc
-            else f"{loc} — {fallback} cruce(s) por saldo final"
-            if fallback
+            else f"{loc} — {complemento} cruce(s) complementario(s)"
+            if complemento
             else loc
         )
-        with st.expander(etiqueta, expanded=sin_loc > 0):
+        with st.expander(etiqueta, expanded=sin_loc > 0 or complemento > 0):
             if avisos:
                 for aviso in avisos:
                     st.warning(aviso)
@@ -1471,24 +2108,26 @@ def mostrar_informe_cruce_consolidado(
             estado_col = "se creó" if accion_col == "creada" else "se actualizó"
             st.caption(f"Cps por depurar: {estado_col} la columna del mes.")
             if loc_info.get("resumen_metodos"):
-                st.dataframe(
-                    dataframe_metodos_amigable(loc_info["resumen_metodos"]),
-                    use_container_width=True,
-                    hide_index=True,
+                render_tabla_resultados(
+                    dataframe_metodos_amigable(loc_info["resumen_metodos"])
                 )
             detalle_loc = []
             if cargar_tablas_detalle:
-                detalle_loc = [
-                    d
-                    for d in obtener_cruce_detalle_localidad(loc)
-                    if d.get("Método") == METODOS_LABEL["match_saldo_contrato"] or d.get("Método") == METODOS_LABEL["match_saldo_contrato"]
-                ]
+                detalle_loc = filas_cruce_complementario(
+                    obtener_cruce_detalle_localidad(loc)
+                )
             if detalle_loc:
                 st.markdown(
-                    "**Cruce por saldo final**: la apropiación no coincidía, así que se usó "
-                    "el saldo final para ubicar la fila correcta en la Matriz."
+                    "**Contratos con cruce complementario**: no entraron por cruce directo, "
+                    "pero la app encontró una coincidencia con una regla adicional."
                 )
+                df_detalle = pd.DataFrame(detalle_loc).copy()
+                if "Método" in df_detalle.columns:
+                    df_detalle["Tipo de cruce"] = df_detalle["Método"].map(
+                        etiqueta_metodo_amigable
+                    )
                 cols = [
+                    "Tipo de cruce",
                     "NOMBRE CONTRATISTA",
                     "No. de Cto",
                     "APROPIACION DISPONIBLE",
@@ -1496,11 +2135,8 @@ def mostrar_informe_cruce_consolidado(
                     f"Saldo Matriz ({titulo_mes})",
                     "Detalle",
                 ]
-                st.dataframe(
-                    pd.DataFrame(detalle_loc)[cols],
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                cols = [c for c in cols if c in df_detalle.columns]
+                render_tabla_resultados(df_detalle[cols])
 
 
 def resumen_sin_resolver_por_localidad(detalle: list) -> pd.DataFrame:
@@ -1541,10 +2177,136 @@ def dataframe_sin_resolver(detalle: list) -> pd.DataFrame:
     return df[cols + resto]
 
 
+def _clave_base_desempate(fila: dict) -> str:
+    return cxp_cruce.clave_fila_contrato(
+        fila.get("NOMBRE CONTRATISTA"),
+        fila.get("No. de Cto"),
+        fila.get("AÑO SUSCRIPCIÓN"),
+        fila.get("APROPIACION DISPONIBLE"),
+    )
+
+
+def _opcion_matriz_por_saldo(fila: dict, saldo: float) -> str:
+    for cand in fila.get("candidatos_matriz") or []:
+        try:
+            if float(cand.get("saldo") or 0) == float(saldo):
+                return f"opción {formato_valor_simple(cand.get('opcion'))}"
+        except (TypeError, ValueError):
+            continue
+    return f"saldo {formato_moneda_contable(float(saldo))}"
+
+
+def errores_reuso_opcion_matriz(incidencias: list[dict], mapa: dict[str, float]) -> list[str]:
+    """Evita asignar la misma fila/opción de Matriz a dos filas del mismo contrato."""
+    usos: dict[tuple[str, float], list[dict]] = {}
+    for inc in incidencias:
+        clave = clave_desde_detalle(inc)
+        if clave not in mapa:
+            continue
+        candidatos = inc.get("candidatos_matriz") or []
+        if len(candidatos) <= 1:
+            continue
+        try:
+            saldo = float(mapa[clave])
+        except (TypeError, ValueError):
+            continue
+        usos.setdefault((_clave_base_desempate(inc), saldo), []).append(inc)
+
+    errores: list[str] = []
+    for (_base, saldo), filas in usos.items():
+        if len(filas) <= 1:
+            continue
+        primera = filas[0]
+        filas_excel = ", ".join(
+            formato_valor_simple(f.get("Fila Excel Contratos")) for f in filas
+        )
+        errores.append(
+            "La "
+            f"{_opcion_matriz_por_saldo(primera, saldo)} de Matriz ya está asignada "
+            f"a más de una fila del mismo contrato ({filas_excel}). "
+            "Elija una opción diferente para cada fila."
+        )
+    return errores
+
+
+def _detalle_con_filas_excel_contratos(detalle: list, contratos_act: dict) -> list:
+    """Completa la fila real del Excel para distinguir contratos repetidos."""
+    if not detalle or not contratos_act:
+        return list(detalle or [])
+
+    enriquecido = [dict(fila) for fila in detalle]
+    pendientes_por_loc: dict[str, list[int]] = {}
+    for idx, fila in enumerate(enriquecido):
+        if fila.get("Tipo fila", "Contratos") != "Contratos":
+            continue
+        if fila.get("Método") not in METODOS_SIN_RESOLVER:
+            continue
+        if fila.get("Fila Excel Contratos") not in (None, "", "—"):
+            continue
+        loc = fila.get("Localidad")
+        if loc in contratos_act:
+            pendientes_por_loc.setdefault(loc, []).append(idx)
+
+    for loc, indices in pendientes_por_loc.items():
+        try:
+            raw = bytes_contratos_de_salida(contratos_act[loc])
+            libro = pd.ExcelFile(BytesIO(raw))
+            nombre_hoja = resolver_hoja_cruce_cxp(list(libro.sheet_names))
+            df_c = pd.read_excel(
+                BytesIO(raw),
+                sheet_name=nombre_hoja,
+                header=cxp_cruce.HEADER_CONTRATOS,
+            )
+            col_nombre = cxp_cruce._columna(df_c, "NOMBRE CONTRATISTA")
+            col_cto = cxp_cruce._columna(df_c, "No. de Cto", "Número Contrato")
+            col_anio = cxp_cruce._columna(
+                df_c, "AÑO SUSCRIPCIÓN", "ANO SUSCRIPCION", "Año Suscripción"
+            )
+            col_aprop = cxp_cruce._columna(
+                df_c, "APROPIACION DISPONIBLE", "Apropiación", "Apropiacion"
+            )
+            if not all([col_nombre, col_cto, col_anio, col_aprop]):
+                continue
+        except Exception:
+            continue
+
+        filas_por_clave: dict[str, list[int]] = {}
+        for i, (_, row) in enumerate(df_c.iterrows()):
+            nombre = row[col_nombre]
+            if pd.isna(nombre) or not str(nombre).strip():
+                continue
+            clave_base = cxp_cruce.clave_fila_contrato(
+                nombre,
+                row[col_cto],
+                row[col_anio],
+                row[col_aprop],
+            )
+            fila_excel = cxp_cruce._fila_inicio_datos_contratos() + i
+            filas_por_clave.setdefault(clave_base, []).append(int(fila_excel))
+
+        usados: dict[str, int] = {}
+        for idx in indices:
+            fila = enriquecido[idx]
+            clave_base = cxp_cruce.clave_fila_contrato(
+                fila.get("NOMBRE CONTRATISTA"),
+                fila.get("No. de Cto"),
+                fila.get("AÑO SUSCRIPCIÓN"),
+                fila.get("APROPIACION DISPONIBLE"),
+            )
+            opciones = filas_por_clave.get(clave_base) or []
+            usado = usados.get(clave_base, 0)
+            if usado < len(opciones):
+                fila["Fila Excel Contratos"] = opciones[usado]
+                usados[clave_base] = usado + 1
+
+    return enriquecido
+
+
 def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
     """Aplica saldos elegidos a Contratos y actualiza el estado de la consolidación."""
     detalle = list(obtener_cruce_detalle())
     contratos_act = dict(st.session_state.get("contratos_actualizados", {}))
+    detalle = _detalle_con_filas_excel_contratos(detalle, contratos_act)
     fecha = st.session_state.get("fecha_analisis") or fecha_referencia_analisis()
     titulo_mes = titulo_saldo_corte(fecha)
     snap = _cargar_snapshot_consolidacion()
@@ -1568,6 +2330,19 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
         )
         if faltan:
             errores.extend([f"**{loc}**: {msg}" for msg in faltan])
+
+    if errores:
+        return False, errores
+
+    for loc in sorted(localidades_con_pendientes):
+        incidencias_loc = [
+            f
+            for f in detalle
+            if f.get("Localidad") == loc and f.get("Método") in METODOS_SIN_RESOLVER
+        ]
+        errores.extend(
+            [f"**{loc}**: {msg}" for msg in errores_reuso_opcion_matriz(incidencias_loc, mapa)]
+        )
 
     if errores:
         return False, errores
@@ -1623,6 +2398,7 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
     _reset_estado_desempate_wizard()
     st.session_state.zip_descarga_listo = False
     _regenerar_zip_descarga_contratos()
+    st.session_state[_CLAVE_SCROLL_RESULTADOS] = True
     return True, []
 
 
@@ -1640,10 +2416,12 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
 
     claves_todas = {clave_desde_detalle(inc) for inc in incidencias}
     resueltas = len(claves_todas & set(mapa.keys()))
-    st.progress(
-        resueltas / n if n else 0.0,
-        text=f"{resueltas} de {n} incidencias con saldo elegido",
+    st.markdown(
+        f'<div class="desempate-progress-text"><strong>{resueltas} de {n}</strong> '
+        "incidencias con saldo elegido</div>",
+        unsafe_allow_html=True,
     )
+    st.progress(resueltas / n if n else 0.0)
 
     inc = incidencias[idx]
     clave = clave_desde_detalle(inc)
@@ -1651,50 +2429,68 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
 
     saldo_asignar = mapa.get(clave)
     texto_saldo = (
-        formato_numero_metrica(saldo_asignar) if saldo_asignar is not None else "—"
+        formato_moneda_contable(saldo_asignar) if saldo_asignar is not None else "—"
     )
     st.markdown(
-        f'<p style="font-size:1.05rem;margin:0.25rem 0 0.5rem;">'
-        f'<strong>Incidencia {idx + 1} de {n}</strong>'
-        f' · Localidad: <strong>{loc}</strong></p>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        f'<p style="font-size:1.2rem;margin:0.5rem 0 1rem;">'
-        f"<strong>Saldo a asignar en {titulo_mes}:</strong> "
-        f'<span style="color:#1e40af;font-weight:700;">{texto_saldo}</span></p>',
+        f"""
+        <div class="desempate-case-header">
+            <div class="desempate-kicker">Caso pendiente</div>
+            <div class="desempate-case-title">Incidencia {idx + 1} de {n} · {escape(str(loc))}</div>
+            <p>Saldo a asignar en <strong>{escape(str(titulo_mes))}</strong>:
+            <span class="desempate-saldo">{escape(str(texto_saldo))}</span></p>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
-    with st.container(border=True):
-        st.markdown("**Contratos plan de choque**")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(f"**Contratista:** {inc.get('NOMBRE CONTRATISTA', '—')}")
-            st.markdown(f"**No. de contrato:** {inc.get('No. de Cto', '—')}")
-        with c2:
-            ap = inc.get("APROPIACION DISPONIBLE")
-            sf = inc.get("SALDO FINAL (Contratos)")
-            st.markdown(
-                f"**Apropiación:** {formato_numero_metrica(float(ap)) if ap is not None else '—'}"
-            )
-            st.markdown(
-                f"**SALDO FINAL:** {formato_numero_metrica(float(sf)) if sf is not None else '—'}"
-            )
-        if inc.get("Detalle"):
-            st.caption(inc.get("Detalle"))
+    ap = inc.get("APROPIACION DISPONIBLE")
+    sf = inc.get("SALDO FINAL (Contratos)")
+    ap_texto = formato_moneda_ui(ap)
+    sf_texto = formato_moneda_ui(sf)
+    st.markdown(
+        f"""
+        <div class="desempate-detail-grid">
+            <div class="desempate-detail-item">
+                <span>Contratista</span>
+                <strong>{escape(formato_valor_simple(inc.get('NOMBRE CONTRATISTA')))}</strong>
+            </div>
+            <div class="desempate-detail-item">
+                <span>No. de contrato</span>
+                <strong>{escape(formato_valor_simple(inc.get('No. de Cto')))}</strong>
+            </div>
+            <div class="desempate-detail-item">
+                <span>Fila del Excel de Contratos</span>
+                <strong>{escape(formato_valor_simple(inc.get('Fila Excel Contratos')))}</strong>
+            </div>
+            <div class="desempate-detail-item">
+                <span>Apropiación en Contratos</span>
+                <strong>{escape(ap_texto)}</strong>
+            </div>
+            <div class="desempate-detail-item">
+                <span>Saldo final en Contratos</span>
+                <strong>{escape(sf_texto)}</strong>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    detalle_visible = detalle_desempate_visible(inc.get("Detalle"))
+    if detalle_visible:
+        st.markdown(
+            f'<div class="desempate-note">{escape(detalle_visible)}</div>',
+            unsafe_allow_html=True,
+        )
 
     candidatos = inc.get("candidatos_matriz") or []
-    st.markdown("**Opciones en Matriz** (elija una)")
+    st.markdown(
+        '<div class="desempate-options-title">Opciones en Matriz</div>',
+        unsafe_allow_html=True,
+    )
     if candidatos:
         labels: list[str] = []
         valores: list[float] = []
         for cand in candidatos:
-            ap = formato_numero_metrica(float(cand.get("apropiacion") or 0))
-            sal = formato_numero_metrica(float(cand.get("saldo") or 0))
-            labels.append(
-                f"Opción {cand.get('opcion')} — Apropiación {ap} — {titulo_mes}: {sal}"
-            )
+            labels.append(formato_moneda_contable(cand.get("saldo") or 0))
             valores.append(float(cand["saldo"]))
 
         default_idx = None
@@ -1705,18 +2501,17 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
                     break
 
         eleccion = st.radio(
-            "Línea de Matriz que corresponde",
+            "Elija la opción de Matriz",
             options=list(range(len(labels))),
             format_func=lambda i, lbls=labels: lbls[i],
             index=default_idx,
             key=f"wiz_radio_{clave}",
-            label_visibility="collapsed",
         )
         if eleccion is not None:
             mapa[clave] = valores[eleccion]
     else:
         st.warning(
-            inc.get("Detalle")
+            detalle_visible
             or "No hay filas candidatas en Matriz. Ingrese el saldo para continuar."
         )
         previo = float(mapa[clave]) if clave in mapa else 0.0
@@ -1747,9 +2542,13 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
                 st.rerun()
 
     completo = claves_todas <= set(mapa.keys())
+    errores_reuso = errores_reuso_opcion_matriz(incidencias, mapa)
     faltan = n - len(claves_todas & set(mapa.keys()))
     st.markdown("---")
-    if completo:
+    if errores_reuso:
+        for msg in errores_reuso:
+            st.warning(msg)
+    elif completo:
         st.success(
             f"Las **{n}** incidencias tienen saldo asignado. "
             "Puede aplicar los cambios y continuar con las descargas."
@@ -1761,7 +2560,7 @@ def render_asistente_desempate(detalle: list, titulo_mes: str) -> None:
         "Aplicar selecciones y habilitar descargas",
         type="primary",
         use_container_width=True,
-        disabled=not completo,
+        disabled=not completo or bool(errores_reuso),
         key="btn_aplicar_desempate_wizard",
     ):
         ok, msgs = aplicar_mapa_desempate(mapa)
@@ -2205,10 +3004,14 @@ def validar_cola_archivos(
     )
 
 
-def file_to_buffer(uploaded_file) -> dict:
+def file_to_buffer(uploaded_file, localidad: str = "", tipo: str = "archivo") -> dict:
     data = uploaded_file.getvalue()
     carpeta = _directorio_archivos_sesion()
-    destino = carpeta / sanitizar_nombre_archivo(uploaded_file.name)
+    base = sanitizar_nombre_archivo(uploaded_file.name)
+    prefijo = sanitizar_nombre_archivo(
+        f"{tipo}_{localidad}_{uuid.uuid4().hex[:8]}"
+    )
+    destino = carpeta / f"{prefijo}_{base}"
     destino.write_bytes(data)
     return {"path": str(destino), "name": uploaded_file.name}
 
@@ -2335,8 +3138,8 @@ def construir_tabla_resumen(
                         "Valor": (
                             f"{row['Contratos cruzados']} contratos cruzados · "
                             f"cruce directo {row['Cruce directo']} · "
-                            f"cruce complementario {row['Cruce complementario']} · "
-                            f"sin coincidencia automática {row['Sin coincidencia automática']} · "
+                            f"cruce por contrato {row['Cruce por contrato']} · "
+                            f"cruce por selección {row['Cruce por selección']} · "
                             f"CXP {row['CXP del mes']}"
                         ),
                     }
@@ -2511,8 +3314,8 @@ def formulario_completo(localidad, contratos, matriz) -> bool:
 def entrada_desde_formulario(localidad, contratos, matriz) -> dict:
     return {
         "localidad": localidad,
-        "contratos": file_to_buffer(contratos),
-        "matriz": file_to_buffer(matriz),
+        "contratos": file_to_buffer(contratos, localidad, "contratos"),
+        "matriz": file_to_buffer(matriz, localidad, "matriz"),
     }
 
 
@@ -2526,11 +3329,27 @@ def validar_archivos_en_cola(cola: list) -> tuple[bool, list[str]]:
     errores = []
     for item in cola:
         loc = item.get("localidad", "Localidad")
-        if not entrada_cola_tiene_archivo(item.get("contratos")):
-            errores.append(f"**{loc}** — Falta el archivo de Contratos plan de choque.")
-        if not entrada_cola_tiene_archivo(item.get("matriz")):
-            errores.append(f"**{loc}** — Falta el archivo de Matriz.")
+        contratos = item.get("contratos") or {}
+        matriz = item.get("matriz") or {}
+        if not entrada_cola_tiene_archivo(contratos):
+            errores.append(
+                _mensaje_archivo_cola_no_disponible(
+                    loc,
+                    "Contratos plan de choque",
+                    contratos,
+                )
+            )
+        if not entrada_cola_tiene_archivo(matriz):
+            errores.append(_mensaje_archivo_cola_no_disponible(loc, "Matriz", matriz))
     return len(errores) == 0, errores
+
+
+def texto_archivo_cola(etiqueta: str, entrada: dict | None) -> str:
+    entrada = entrada or {}
+    nombre = entrada.get("name") or "Sin archivo"
+    if entrada_cola_tiene_archivo(entrada):
+        return f"{etiqueta}: {nombre}"
+    return f"{etiqueta}: {nombre} (archivo no disponible; cárguelo de nuevo)"
 
 
 def cola_para_ejecutar(cola: list) -> list:
@@ -2555,14 +3374,56 @@ def _borrar_archivo_cola_en_disco(entrada: dict | None) -> None:
         pass
 
 
-def quitar_de_cola(localidad: str) -> None:
-    for item in st.session_state.cola_localidades:
-        if item.get("localidad") == localidad:
-            _borrar_archivo_cola_en_disco(item.get("contratos"))
-            _borrar_archivo_cola_en_disco(item.get("matriz"))
-    st.session_state.cola_localidades = [
-        i for i in st.session_state.cola_localidades if i["localidad"] != localidad
-    ]
+def _rutas_archivos_cola(cola: list) -> set[str]:
+    rutas: set[str] = set()
+    for item in cola:
+        for clave in ("contratos", "matriz"):
+            ruta = (item.get(clave) or {}).get("path")
+            if ruta:
+                rutas.add(str(Path(ruta)))
+    return rutas
+
+
+def _borrar_archivo_cola_si_no_esta_en_uso(
+    entrada: dict | None,
+    rutas_en_uso: set[str],
+) -> None:
+    ruta = (entrada or {}).get("path")
+    if ruta and str(Path(ruta)) in rutas_en_uso:
+        return
+    _borrar_archivo_cola_en_disco(entrada)
+
+
+def _limpiar_estado_ejecucion_por_cambio_cola() -> None:
+    st.session_state.cola_ejecucion = []
+    st.session_state.pendiente_consolidacion = False
+    st.session_state.ejecutar_consolidacion_ahora = False
+    st.session_state.consolidacion_en_curso = False
+    st.session_state.pop("_pc_validacion_entrada_fallo", None)
+    st.session_state.pop("_pc_validacion_entrada_mensaje", None)
+    st.session_state.pop("_pc_validacion_entrada_errores", None)
+    st.session_state.pop("_pc_mostrar_formulario_correccion", None)
+    st.session_state.pop("consolidacion_work", None)
+
+
+def quitar_de_cola(localidad: str, *, mantener_modo_correccion: bool = False) -> None:
+    cola_actual = list(st.session_state.get("cola_localidades", []))
+    eliminados = [i for i in cola_actual if i.get("localidad") == localidad]
+    restantes = [i for i in cola_actual if i.get("localidad") != localidad]
+    rutas_restantes = _rutas_archivos_cola(restantes)
+    for item in eliminados:
+        _borrar_archivo_cola_si_no_esta_en_uso(item.get("contratos"), rutas_restantes)
+        _borrar_archivo_cola_si_no_esta_en_uso(item.get("matriz"), rutas_restantes)
+    st.session_state.cola_localidades = restantes
+    _limpiar_estado_ejecucion_por_cambio_cola()
+    if restantes and mantener_modo_correccion:
+        st.session_state["_pc_mostrar_cola_correccion"] = True
+    elif restantes and all(item_tiene_contratos_y_matriz(i) for i in restantes):
+        st.session_state.pop("_pc_mostrar_cola_correccion", None)
+    elif restantes:
+        st.session_state["_pc_mostrar_cola_correccion"] = True
+    else:
+        st.session_state.pop("_pc_mostrar_cola_correccion", None)
 
 
 def limpiar_resultado_consolidado():
@@ -2586,6 +3447,23 @@ def limpiar_resultado_consolidado():
     st.session_state.pop(_CLAVE_RUTA_REPORTE, None)
     st.session_state.pop("reporte_ejecucion", None)
     _reset_estado_desempate_wizard()
+
+
+def iniciar_nuevo_reporte() -> None:
+    for item in st.session_state.get("cola_localidades", []):
+        _borrar_archivo_cola_en_disco(item.get("contratos"))
+        _borrar_archivo_cola_en_disco(item.get("matriz"))
+    st.session_state.cola_localidades = []
+    st.session_state.cola_ejecucion = []
+    st.session_state.pendiente_consolidacion = False
+    st.session_state.ejecutar_consolidacion_ahora = False
+    st.session_state.consolidacion_en_curso = False
+    st.session_state.pop("_pc_validacion_entrada_fallo", None)
+    st.session_state.pop("_pc_mostrar_cola_correccion", None)
+    st.session_state.pop("_pc_mostrar_formulario_correccion", None)
+    st.session_state.upload_key = int(st.session_state.get("upload_key", 0)) + 1
+    limpiar_resultado_consolidado()
+    _purgar_uploaders_obsoletos()
 
 
 def _agregar_conteo_global(acumulado: dict, conteo: dict) -> None:
@@ -2891,6 +3769,7 @@ def _aplicar_work_a_sesion(work: dict) -> bool:
     _regenerar_zip_descarga_contratos()
     _persistir_snapshot_consolidacion()
     st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+    st.session_state[_CLAVE_SCROLL_RESULTADOS] = True
     return True
 
 
@@ -3053,6 +3932,7 @@ def ejecutar_consolidacion(
     _reset_estado_desempate_wizard()
     _persistir_snapshot_consolidacion()
     st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+    st.session_state[_CLAVE_SCROLL_RESULTADOS] = True
     return True
 
 
@@ -3162,21 +4042,17 @@ def procesar_consolidacion(
                 reporte = ReporteEjecucion()
                 reporte.cerrar(False)
                 if any(es_error_matriz_protegida(e) for e in errores_nombres):
-                    st.error(
-                        "La Matriz tiene contraseña de apertura. "
-                        "Ábrala en Excel, quite esa contraseña si existe y súbala de nuevo."
+                    mensaje_fallo = (
+                        "Revisión detenida. La Matriz parece tener contraseña de apertura."
                     )
                 else:
-                    st.error(
-                        "No se consolidaron las localidades correctamente. Revise los archivos."
+                    mensaje_fallo = (
+                        "Revisión detenida. Hay una entrada de la cola que no se pudo validar."
                     )
-                for detalle in errores_nombres:
-                    st.markdown(f"- {detalle}")
-                _actualizar_barra_progreso(
-                    progress,
-                    0.0,
-                    "Validación detenida. Corrija los puntos anteriores.",
-                )
+                st.session_state["_pc_validacion_entrada_mensaje"] = mensaje_fallo
+                st.session_state["_pc_validacion_entrada_errores"] = list(errores_nombres)
+                if progress is not None:
+                    progress.empty()
                 return
 
             ahora = datetime.now()
@@ -3262,6 +4138,24 @@ def procesar_consolidacion(
             st.session_state.ejecutar_consolidacion_ahora = False
 
 
+def render_aviso_validacion_entrada() -> None:
+    if not st.session_state.get("_pc_validacion_entrada_fallo"):
+        return
+    mensaje_validacion = st.session_state.get(
+        "_pc_validacion_entrada_mensaje",
+        "Revisión detenida. Hay una entrada de la cola que no se pudo validar.",
+    )
+    errores_validacion = st.session_state.get("_pc_validacion_entrada_errores", [])
+    texto_validacion = (
+        f"**{mensaje_validacion}**\n\n"
+        "Quite la entrada marcada abajo, cárguela de nuevo y vuelva a ejecutar."
+    )
+    if errores_validacion:
+        detalle = "\n".join(f"- {detalle}" for detalle in errores_validacion)
+        texto_validacion = f"{texto_validacion}\n\n{detalle}"
+    st.warning(texto_validacion)
+
+
 if not st.session_state.get("acceso_autorizado"):
     if contrasena_acceso_esperada() is None:
         st.session_state.acceso_autorizado = True
@@ -3269,14 +4163,18 @@ if not st.session_state.get("acceso_autorizado"):
         render_portada_acceso()
         st.stop()
 
+render_mensaje_bienvenida_pendiente()
+
 @st.cache_resource(show_spinner=False)
 def _dependencias_consolidacion():
     """Una sola carga por proceso del servidor (no en cada F5)."""
+    import importlib
     import msoffcrypto
     import msoffcrypto.exceptions as ms_exceptions
     import pandas as pd
 
     import cxp_cruce
+    cxp_cruce = importlib.reload(cxp_cruce)
 
     from cxp_cruce import (
         METODOS_LABEL,
@@ -3403,45 +4301,67 @@ if _omitir_formulario:
             "Consolidación en curso. No cierre esta pestaña hasta ver el resultado."
         )
     _ejecutar_consolidacion_si_pendiente(_barra_consolidacion)
-    if st.session_state.pop("_pc_validacion_entrada_fallo", False):
+    if not _consolidacion_corriendo():
+        aviso_consolidacion.empty()
+    if st.session_state.get("_pc_validacion_entrada_fallo"):
         aviso_consolidacion.empty()
         _omitir_formulario = False
-        st.info(
-            "Elimine la entrada con archivos equivocados, cárguela de nuevo y vuelva a ejecutar."
-        )
     st.divider()
 
+render_aviso_validacion_entrada()
+
 cola_correccion = st.session_state.get("cola_localidades", [])
-if st.session_state.get("_pc_mostrar_cola_correccion") and cola_correccion:
+_modo_correccion_cola = bool(
+    st.session_state.get("_pc_mostrar_cola_correccion") and cola_correccion
+)
+if _modo_correccion_cola:
     st.markdown(
-        '<p class="section-title">Entradas en cola para corregir</p>',
+        '<p class="section-title">Entradas en cola por corregir</p>',
         unsafe_allow_html=True,
     )
-    st.caption("Quite la entrada con archivos equivocados o vacíe la cola para empezar de nuevo.")
+    st.caption("Elimine la entrada equivocada, vacíe la cola o agregue una entrada corregida.")
     for i, item in enumerate(cola_correccion):
         loc = item["localidad"]
         with st.container(border=True):
             st.markdown(f"**{i + 1}. {loc}**")
-            st.caption(f"Contratos: {item['contratos']['name']}")
-            st.caption(f"Matriz: {item['matriz']['name']}")
+            st.caption(texto_archivo_cola("Contratos", item.get("contratos")))
+            st.caption(texto_archivo_cola("Matriz", item.get("matriz")))
             if st.button(
                 "Eliminar entrada",
                 key=f"quitar_cola_correccion_{loc}",
                 use_container_width=True,
                 help=f"Eliminar {loc} de la cola",
             ):
-                quitar_de_cola(loc)
+                quitar_de_cola(loc, mantener_modo_correccion=True)
                 if not st.session_state.get("cola_localidades"):
                     st.session_state.pop("_pc_mostrar_cola_correccion", None)
                 limpiar_resultado_consolidado()
                 if not st.session_state.get("cola_localidades"):
                     st.session_state.pop("_pc_mostrar_cola_correccion", None)
+                    st.session_state.pop("_pc_mostrar_formulario_correccion", None)
                 st.rerun()
-    if st.button("Vaciar cola y empezar de nuevo", type="secondary", use_container_width=True):
-        st.session_state.cola_localidades = []
-        st.session_state.pop("_pc_mostrar_cola_correccion", None)
-        limpiar_resultado_consolidado()
-        st.rerun()
+    c_agregar_corr, c_vaciar_corr = st.columns(2)
+    with c_agregar_corr:
+        if st.button(
+            "Agregar entrada",
+            type="secondary",
+            use_container_width=True,
+            key="btn_mostrar_formulario_correccion",
+        ):
+            st.session_state["_pc_mostrar_formulario_correccion"] = True
+            st.rerun()
+    with c_vaciar_corr:
+        if st.button(
+            "Vaciar cola y empezar de nuevo",
+            type="secondary",
+            use_container_width=True,
+            key="btn_vaciar_cola_correccion",
+        ):
+            st.session_state.cola_localidades = []
+            st.session_state.pop("_pc_mostrar_cola_correccion", None)
+            st.session_state.pop("_pc_mostrar_formulario_correccion", None)
+            limpiar_resultado_consolidado()
+            st.rerun()
 
 uk = st.session_state.upload_key
 
@@ -3476,7 +4396,12 @@ if not _omitir_formulario and _trabajo_pausado:
                 st.session_state.ejecutar_consolidacion_ahora = False
                 st.rerun()
 
-if not _omitir_formulario:
+mostrar_formulario_entrada = not _omitir_formulario and (
+    not _modo_correccion_cola
+    or bool(st.session_state.get("_pc_mostrar_formulario_correccion"))
+)
+
+if mostrar_formulario_entrada:
     # ── Formulario ─────────────────────────────────────────────────────────────
     with st.container(border=True):
         st.markdown('<p class="form-card-title">Entrada por localidad</p>', unsafe_allow_html=True)
@@ -3538,10 +4463,14 @@ if not _omitir_formulario:
         form_ok = formulario_completo(localidad, archivo_contratos, archivo_matriz)
 
         add_clicked = st.button(
-            "Añadir a cola de consolidados",
+            "Agregar entrada" if _modo_correccion_cola else "Añadir a cola de consolidados",
             type="secondary",
             use_container_width=True,
-            help="Guarda la localidad y los archivos en la cola. Luego puede cargar la siguiente.",
+            help=(
+                "Agrega la entrada corregida a la cola."
+                if _modo_correccion_cola
+                else "Guarda la localidad y los archivos en la cola. Luego puede cargar la siguiente."
+            ),
         )
 
     if add_clicked:
@@ -3558,13 +4487,18 @@ if not _omitir_formulario:
                 entrada_desde_formulario(localidad, archivo_contratos, archivo_matriz)
             )
             st.session_state.upload_key += 1
+            st.session_state.pop("_pc_mostrar_formulario_correccion", None)
             _purgar_uploaders_obsoletos()
             st.toast(f"{localidad} añadido a la cola", icon="➕")
             st.rerun()
 
 # ── Cola pendiente ─────────────────────────────────────────────────────────────
 cola = st.session_state.cola_localidades
-if not _omitir_formulario and cola:
+if (
+    not _omitir_formulario
+    and cola
+    and not st.session_state.get("_pc_mostrar_cola_correccion")
+):
     st.markdown(
         f'<p class="section-title">Cola de consolidados ({len(cola)})</p>',
         unsafe_allow_html=True,
@@ -3617,12 +4551,28 @@ if not _omitir_formulario and cola:
     if st.button("Vaciar cola", type="secondary"):
         st.session_state.cola_localidades = []
         st.session_state.pop("_pc_mostrar_cola_correccion", None)
+        st.session_state.pop("_pc_mostrar_formulario_correccion", None)
         limpiar_resultado_consolidado()
         st.rerun()
 
-st.divider()
 run_clicked = False
-if not _consolidacion_corriendo():
+hay_cola_pendiente = bool(st.session_state.get("cola_localidades"))
+if (
+    st.session_state.get("processed")
+    and not hay_cola_pendiente
+    and not _consolidacion_corriendo()
+):
+    if st.button(
+        "Iniciar nuevo reporte",
+        type="primary",
+        use_container_width=True,
+        key="btn_iniciar_nuevo_reporte",
+        help="Limpia el resultado actual y vuelve al formulario de carga.",
+    ):
+        iniciar_nuevo_reporte()
+        st.rerun()
+elif not _consolidacion_corriendo():
+    st.divider()
     run_clicked = st.button(
         "Ejecutar consolidación",
         type="primary",
@@ -3632,27 +4582,34 @@ if not _consolidacion_corriendo():
     )
 
 if run_clicked:
-    if not puede_ejecutar_cola(st.session_state.cola_localidades):
+    cola_actual = st.session_state.cola_localidades
+    if not cola_actual:
         st.warning(
             "Añada al menos un consolidado a la cola (localidad, Contratos y Matriz) "
             "antes de ejecutar."
         )
     else:
-        cola_ejec = cola_para_ejecutar(st.session_state.cola_localidades)
-        archivos_ok, errores_archivos = validar_archivos_en_cola(cola_ejec)
-        if not cola_ejec or not archivos_ok:
-            st.error(
-                "No se puede ejecutar: cada localidad en la cola debe incluir "
-                "Contratos plan de choque y Matriz."
+        archivos_ok, errores_archivos = validar_archivos_en_cola(cola_actual)
+        if not archivos_ok:
+            st.session_state["_pc_validacion_entrada_fallo"] = True
+            st.session_state["_pc_mostrar_cola_correccion"] = True
+            st.session_state["_pc_validacion_entrada_mensaje"] = (
+                "Revisión detenida. Hay entradas en cola sin archivo disponible."
             )
-            for detalle in errores_archivos:
-                st.markdown(f"- {detalle}")
+            st.session_state["_pc_validacion_entrada_errores"] = errores_archivos
+            st.rerun()
+        elif not puede_ejecutar_cola(cola_actual):
+            st.warning(
+                "Cada localidad en la cola debe incluir Contratos plan de choque y Matriz."
+            )
         else:
+            cola_ejec = cola_para_ejecutar(cola_actual)
             st.session_state.cola_ejecucion = cola_ejec
             st.session_state.pendiente_consolidacion = True
             st.session_state.ejecutar_consolidacion_ahora = True
             st.session_state.pop("_pc_validacion_entrada_fallo", None)
             st.session_state.pop("_pc_mostrar_cola_correccion", None)
+            st.session_state.pop("_pc_mostrar_formulario_correccion", None)
             st.session_state.pop("consolidacion_work", None)
             st.rerun()
 
@@ -3667,6 +4624,54 @@ def _render_panel_resultados_completos() -> None:
     fecha_analisis = snap.get("fecha_analisis") or st.session_state.get("fecha_analisis")
     procesado_en = snap.get("last_processed_at") or st.session_state.get("last_processed_at", "")
 
+    st.markdown('<div id="resultado-consolidado-anchor"></div>', unsafe_allow_html=True)
+    render_scroll_resultados_si_pendiente()
+
+    total_contratos = sum(i.get("total_contratos", 0) for i in informe)
+    total_ok = sum(i.get("contratos_ok", 0) for i in informe)
+    sin_resolver = sum(i.get("sin_resolver", 0) for i in informe)
+    cruce_directo = sum(int((i.get("conteo") or {}).get("k4_exacto", 0) or 0) for i in informe)
+    revision_adicional = sum(conteo_revision_adicional(i.get("conteo") or {}) for i in informe)
+    contratos_act = st.session_state.get("contratos_actualizados", {})
+
+    if sin_resolver > 0:
+        detalle_todo = _detalle_con_filas_excel_contratos(
+            obtener_cruce_detalle(),
+            dict(contratos_act),
+        )
+        st.markdown(
+            '<p class="section-title">Contratos sin coincidencia automática</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"""
+            <div class="desempate-callout">
+                <div class="desempate-kicker">Acción requerida</div>
+                <div class="desempate-callout-title">Contratos sin coincidencia automática</div>
+                <p>Hay <strong>{sin_resolver}</strong> contrato(s) sin coincidencia automática en
+                <strong>{escape(str(titulo_mes))}</strong>. Complete estos casos para habilitar
+                las descargas de Contratos actualizados y archivos globales.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if detalle_todo:
+            df_resumen_sr = resumen_sin_resolver_por_localidad(detalle_todo)
+            if len(df_resumen_sr) > 1:
+                st.markdown("**Por localidad**")
+                render_tabla_resultados(df_resumen_sr)
+            st.caption(
+                "Revise cada caso en pantalla y avance con **Siguiente**. "
+                "Al terminar, aplique las selecciones."
+            )
+            render_asistente_desempate(detalle_todo, titulo_mes)
+        else:
+            st.warning(
+                "No se pudo cargar el detalle de los contratos pendientes. "
+                "Vuelva a ejecutar la consolidación para reconstruirlo."
+            )
+        return
+
     st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
     if titulo_mes or procesado_en or fecha_analisis:
         partes_fecha = []
@@ -3678,12 +4683,6 @@ def _render_panel_resultados_completos() -> None:
             partes_fecha.append(f"Procesado {procesado_en}")
         st.caption(" · ".join(partes_fecha))
     mostrar_reporte_tecnico_admin()
-
-    total_contratos = sum(i.get("total_contratos", 0) for i in informe)
-    total_ok = sum(i.get("contratos_ok", 0) for i in informe)
-    sin_resolver = sum(i.get("sin_resolver", 0) for i in informe)
-    cruce_directo = sum(int((i.get("conteo") or {}).get("k4_exacto", 0) or 0) for i in informe)
-    revision_adicional = sum(conteo_revision_adicional(i.get("conteo") or {}) for i in informe)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -3710,36 +4709,13 @@ def _render_panel_resultados_completos() -> None:
             f'<div class="metric-value">{revision_adicional}</div></div>',
             unsafe_allow_html=True,
         )
-    if sin_resolver:
-        st.info(f"Hay **{sin_resolver}** contrato(s) sin coincidencia automática.")
-
-    requiere_detalle = sin_resolver > 0 or informe_requiere_detalle_cruce(informe)
+    requiere_detalle = informe_requiere_detalle_cruce(informe)
     mostrar_informe_cruce_consolidado(
         informe,
         titulo_mes,
         cargar_tablas_detalle=requiere_detalle,
     )
     descargas_ok = consolidacion_lista_para_descarga()
-
-    detalle_todo: list = []
-    if sin_resolver > 0:
-        detalle_todo = obtener_cruce_detalle()
-    if sin_resolver > 0 and detalle_todo:
-        st.markdown('<p class="section-title">Contratos sin coincidencia automática</p>', unsafe_allow_html=True)
-        st.error(
-            f"Hay **{sin_resolver}** contrato(s) sin coincidencia automática en **{titulo_mes}**. "
-            "Estos casos quedan identificados antes de habilitar las descargas de Contratos "
-            "actualizados y archivos globales."
-        )
-        df_resumen_sr = resumen_sin_resolver_por_localidad(detalle_todo)
-        if len(df_resumen_sr) > 1:
-            st.markdown("**Por localidad**")
-            st.dataframe(df_resumen_sr, use_container_width=True, hide_index=True)
-        st.caption(
-            "Revise cada caso en pantalla y avance con **Siguiente**. "
-            "Al terminar, aplique las selecciones."
-        )
-        render_asistente_desempate(detalle_todo, titulo_mes)
 
     if stats:
         with st.expander("Archivos de entrada (Matriz y Contratos)", expanded=False):
@@ -3760,11 +4736,7 @@ def _render_panel_resultados_completos() -> None:
                 ]
                 if c in df_stats.columns
             ]
-            st.dataframe(
-                df_stats[cols_show],
-                use_container_width=True,
-                hide_index=True,
-            )
+            render_tabla_resultados(df_stats[cols_show])
 
     contratos_act = st.session_state.get("contratos_actualizados", {})
     if contratos_act:
@@ -3885,6 +4857,7 @@ if st.session_state.processed:
             key="btn_mostrar_resultados_completos",
         ):
             st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+            st.session_state[_CLAVE_SCROLL_RESULTADOS] = True
             _inicializar_dependencias_modulo()
             st.rerun()
     else:
