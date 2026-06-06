@@ -336,6 +336,8 @@ st.markdown(
     }
     /* Descargas — fucsia UI, no afecta colores del Excel */
     .st-key-btn_descargar_excel button,
+    .st-key-btn_descargar_excel_bloqueado button,
+    .st-key-dl_archivos_salida_global button,
     .st-key-dl_contratos_todas button {
         background: var(--pc-pink-600) !important;
         background-color: var(--pc-pink-600) !important;
@@ -345,6 +347,8 @@ st.markdown(
         border-radius: 8px !important;
     }
     .st-key-btn_descargar_excel button:hover,
+    .st-key-btn_descargar_excel_bloqueado button:hover,
+    .st-key-dl_archivos_salida_global button:hover,
     .st-key-dl_contratos_todas button:hover {
         background: var(--pc-pink-700) !important;
         background-color: var(--pc-pink-700) !important;
@@ -353,11 +357,17 @@ st.markdown(
     }
     .st-key-btn_descargar_excel button p,
     .st-key-btn_descargar_excel button span,
+    .st-key-btn_descargar_excel_bloqueado button p,
+    .st-key-btn_descargar_excel_bloqueado button span,
+    .st-key-dl_archivos_salida_global button p,
+    .st-key-dl_archivos_salida_global button span,
     .st-key-dl_contratos_todas button p,
     .st-key-dl_contratos_todas button span {
         color: #ffffff !important;
     }
     .st-key-btn_descargar_excel button:disabled,
+    .st-key-btn_descargar_excel_bloqueado button:disabled,
+    .st-key-dl_archivos_salida_global button:disabled,
     .st-key-dl_contratos_todas button:disabled {
         background: var(--pc-pink-200) !important;
         background-color: var(--pc-pink-200) !important;
@@ -671,7 +681,7 @@ KW_CONTRATOS = "plan de choque"
 KW_MATRIZ = "matriz"
 PALABRAS_IGNORAR = {"de", "la", "los", "las", "el", "del", "y"}
 ARCHIVO_AVANCE_BASE = "Avance plan de choque"
-ARCHIVO_RESUMEN_BASE = "Tabla de resumen"
+ARCHIVO_RESUMEN_BASE = "Tabla Resumen Proyecto"
 MESES_ES = (
     "enero", "febrero", "marzo", "abril", "mayo", "junio",
     "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
@@ -693,10 +703,18 @@ def init_session_state():
         "error_ultima_ejecucion": None,
         "errores_ejecucion": [],
         "fecha_analisis": None,
+        "fecha_corte_seleccionada": None,
         "cruce_informe": [],
         "cruce_detalle": [],
         "contratos_actualizados": {},
         "cruce_resumen_global": [],
+        "tabla_resumen_lib_y_fen": [],
+        "tabla_resumen_con_perdida": [],
+        "tabla_resumen_proximos_a_perder": [],
+        "tabla_resumen_bogdata_matriz": [],
+        "tabla_resumen_depurados": [],
+        "tabla_resumen_por_depurar_vigencia": [],
+        "tabla_resumen_cps_pn": [],
         "titulo_saldo_corte": "",
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
@@ -1329,11 +1347,27 @@ def fecha_referencia_analisis() -> datetime:
     guardada = st.session_state.get("fecha_analisis")
     if isinstance(guardada, datetime):
         return guardada
+    if isinstance(guardada, date):
+        return datetime(guardada.year, guardada.month, guardada.day)
     if isinstance(guardada, str):
         parsed = parsear_fecha_flexible(guardada)
         if parsed:
             return parsed
     return datetime.now()
+
+
+def fecha_corte_para_consolidar() -> datetime:
+    """Fecha de corte elegida para calcular columnas, verificaciones y descargas."""
+    seleccionada = st.session_state.get("fecha_corte_seleccionada")
+    if isinstance(seleccionada, datetime):
+        return seleccionada
+    if isinstance(seleccionada, date):
+        return datetime(seleccionada.year, seleccionada.month, seleccionada.day)
+    if isinstance(seleccionada, str):
+        parsed = parsear_fecha_flexible(seleccionada)
+        if parsed:
+            return parsed
+    return fecha_referencia_analisis()
 
 
 def sanitizar_nombre_archivo(nombre: str) -> str:
@@ -1730,6 +1764,13 @@ def _persistir_snapshot_consolidacion() -> None:
         "informe": informe,
         "file_stats": st.session_state.get("file_stats") or [],
         "cruce_resumen_global": st.session_state.get("cruce_resumen_global") or [],
+        "tabla_resumen_lib_y_fen": st.session_state.get("tabla_resumen_lib_y_fen") or [],
+        "tabla_resumen_con_perdida": st.session_state.get("tabla_resumen_con_perdida") or [],
+        "tabla_resumen_proximos_a_perder": st.session_state.get("tabla_resumen_proximos_a_perder") or [],
+        "tabla_resumen_bogdata_matriz": st.session_state.get("tabla_resumen_bogdata_matriz") or [],
+        "tabla_resumen_depurados": st.session_state.get("tabla_resumen_depurados") or [],
+        "tabla_resumen_por_depurar_vigencia": st.session_state.get("tabla_resumen_por_depurar_vigencia") or [],
+        "tabla_resumen_cps_pn": st.session_state.get("tabla_resumen_cps_pn") or [],
         "fecha_analisis": st.session_state.get("fecha_analisis"),
         "last_processed_at": st.session_state.get("last_processed_at"),
         "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -1742,6 +1783,13 @@ def _persistir_snapshot_consolidacion() -> None:
     st.session_state.cruce_informe = []
     st.session_state.file_stats = []
     st.session_state.cruce_resumen_global = []
+    st.session_state.tabla_resumen_lib_y_fen = []
+    st.session_state.tabla_resumen_con_perdida = []
+    st.session_state.tabla_resumen_proximos_a_perder = []
+    st.session_state.tabla_resumen_bogdata_matriz = []
+    st.session_state.tabla_resumen_depurados = []
+    st.session_state.tabla_resumen_por_depurar_vigencia = []
+    st.session_state.tabla_resumen_cps_pn = []
 
 
 @st.cache_data(show_spinner=False)
@@ -1757,6 +1805,13 @@ def _cargar_snapshot_consolidacion() -> dict:
             "informe": st.session_state.get("cruce_informe") or [],
             "file_stats": st.session_state.get("file_stats") or [],
             "cruce_resumen_global": st.session_state.get("cruce_resumen_global") or [],
+            "tabla_resumen_lib_y_fen": st.session_state.get("tabla_resumen_lib_y_fen") or [],
+            "tabla_resumen_con_perdida": st.session_state.get("tabla_resumen_con_perdida") or [],
+            "tabla_resumen_proximos_a_perder": st.session_state.get("tabla_resumen_proximos_a_perder") or [],
+            "tabla_resumen_bogdata_matriz": st.session_state.get("tabla_resumen_bogdata_matriz") or [],
+            "tabla_resumen_depurados": st.session_state.get("tabla_resumen_depurados") or [],
+            "tabla_resumen_por_depurar_vigencia": st.session_state.get("tabla_resumen_por_depurar_vigencia") or [],
+            "tabla_resumen_cps_pn": st.session_state.get("tabla_resumen_cps_pn") or [],
             "fecha_analisis": st.session_state.get("fecha_analisis"),
             "last_processed_at": st.session_state.get("last_processed_at"),
             "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -1769,6 +1824,13 @@ def _cargar_snapshot_consolidacion() -> dict:
         "informe": [],
         "file_stats": [],
         "cruce_resumen_global": [],
+        "tabla_resumen_lib_y_fen": [],
+        "tabla_resumen_con_perdida": [],
+        "tabla_resumen_proximos_a_perder": [],
+        "tabla_resumen_bogdata_matriz": [],
+        "tabla_resumen_depurados": [],
+        "tabla_resumen_por_depurar_vigencia": [],
+        "tabla_resumen_cps_pn": [],
         "fecha_analisis": st.session_state.get("fecha_analisis"),
         "last_processed_at": st.session_state.get("last_processed_at"),
         "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -1794,6 +1856,58 @@ def _resumen_global_para_ui() -> list:
     if inline:
         return list(inline)
     return list(_cargar_snapshot_consolidacion().get("cruce_resumen_global") or [])
+
+
+def _tabla_resumen_lib_y_fen_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_lib_y_fen") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_lib_y_fen") or [])
+
+
+def _tabla_resumen_con_perdida_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_con_perdida") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_con_perdida") or [])
+
+
+def _tabla_resumen_proximos_a_perder_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_proximos_a_perder") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_proximos_a_perder") or [])
+
+
+def _tabla_resumen_bogdata_matriz_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_bogdata_matriz") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_bogdata_matriz") or [])
+
+
+def _tabla_resumen_depurados_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_depurados") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_depurados") or [])
+
+
+def _tabla_resumen_por_depurar_vigencia_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_por_depurar_vigencia") or []
+    if inline:
+        return list(inline)
+    return list(
+        _cargar_snapshot_consolidacion().get("tabla_resumen_por_depurar_vigencia")
+        or []
+    )
+
+
+def _tabla_resumen_cps_pn_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_cps_pn") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_cps_pn") or [])
 
 
 def _borrar_snapshot_consolidacion() -> None:
@@ -2401,6 +2515,19 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
             info = next((i for i in informe if i["localidad"] == loc), None)
             if info:
                 s["CXP (suma mes)"] = info["cxp_total"]
+
+    for key in (
+        "tabla_resumen_lib_y_fen",
+        "tabla_resumen_con_perdida",
+        "tabla_resumen_proximos_a_perder",
+        "tabla_resumen_bogdata_matriz",
+        "tabla_resumen_depurados",
+        "tabla_resumen_por_depurar_vigencia",
+        "tabla_resumen_cps_pn",
+    ):
+        st.session_state[key] = list(
+            snap.get(key) or st.session_state.get(key) or []
+        )
 
     st.session_state.cruce_informe = informe
     st.session_state.file_stats = file_stats
@@ -3274,6 +3401,56 @@ def carpeta_descargas() -> Path:
     return home
 
 
+def construir_archivos_salida_global(
+    consolidated_df: pd.DataFrame, stats: list
+) -> list[tuple[str, bytes]]:
+    """Construye los 2 Excel globales: Avance y Tabla Resumen Proyecto."""
+    if not stats and (consolidated_df is None or consolidated_df.empty):
+        raise ValueError("No hay datos consolidados para exportar.")
+
+    fecha = fecha_referencia_analisis()
+    localidades = localidades_analizadas(stats)
+    df_avance = construir_avance_plan_de_choque(consolidated_df, stats, fecha)
+    from tabla_resumen_proyecto import crear_excel_tabla_resumen_proyecto
+
+    return [
+        (
+            nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha, localidades),
+            generate_excel_bytes(df_avance, sheet_name="Avance").getvalue(),
+        ),
+        (
+            nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha, localidades),
+            crear_excel_tabla_resumen_proyecto(
+                _tabla_resumen_lib_y_fen_para_ui(),
+                _tabla_resumen_con_perdida_para_ui(),
+                fecha,
+                filas_proximos_a_perder=_tabla_resumen_proximos_a_perder_para_ui(),
+                filas_bogdata_matriz=_tabla_resumen_bogdata_matriz_para_ui(),
+                filas_depurados=_tabla_resumen_depurados_para_ui(),
+                filas_por_depurar_vigencia=(
+                    _tabla_resumen_por_depurar_vigencia_para_ui()
+                ),
+                filas_cps_pn=_tabla_resumen_cps_pn_para_ui(),
+            ),
+        ),
+    ]
+
+
+def empaquetar_archivos_salida_global(
+    consolidated_df: pd.DataFrame, stats: list
+) -> tuple[bytes, str, str]:
+    """Empaqueta los 2 Excel globales en un ZIP descargable."""
+    fecha = fecha_referencia_analisis()
+    localidades = localidades_analizadas(stats)
+    nombre_zip = nombre_archivo_salida("Archivos de salida", fecha, localidades)
+    nombre_zip = nombre_zip.rsplit(".", 1)[0] + ".zip"
+    salida = BytesIO()
+    with zipfile.ZipFile(salida, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for nombre, datos in construir_archivos_salida_global(consolidated_df, stats):
+            zf.writestr(nombre, datos)
+    return salida.getvalue(), nombre_zip, "application/zip"
+
+
 def guardar_archivos_salida(
     consolidated_df: pd.DataFrame, stats: list
 ) -> list[Path]:
@@ -3283,35 +3460,10 @@ def guardar_archivos_salida(
     - Avance plan de choque Mayo (Usaquén,Kennedy).xlsx
     - Tabla de resumen Mayo (Usaquén,Kennedy).xlsx
     """
-    if not stats and (consolidated_df is None or consolidated_df.empty):
-        raise ValueError("No hay datos consolidados para exportar.")
-
-    fecha = fecha_referencia_analisis()
-    localidades = localidades_analizadas(stats)
-    carpeta = carpeta_descargas()
-    df_avance = construir_avance_plan_de_choque(consolidated_df, stats, fecha)
-    df_resumen = construir_tabla_resumen(consolidated_df, stats, fecha)
-
-    salidas = [
-        (
-            nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha, localidades),
-            df_avance,
-            "Avance",
-        ),
-        (
-            nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha, localidades),
-            df_resumen,
-            "Resumen",
-        ),
-    ]
-
-    rutas = []
-    for nombre, df_salida, hoja in salidas:
-        ruta = carpeta / nombre
-        ruta.write_bytes(generate_excel_bytes(df_salida, sheet_name=hoja).getvalue())
-        rutas.append(ruta)
-
-    return rutas
+    datos, nombre, _mime = empaquetar_archivos_salida_global(consolidated_df, stats)
+    ruta = carpeta_descargas() / nombre
+    ruta.write_bytes(datos)
+    return [ruta]
 
 
 def formulario_completo(localidad, contratos, matriz) -> bool:
@@ -3452,6 +3604,13 @@ def limpiar_resultado_consolidado():
     st.session_state.pop(_CLAVE_MOSTRAR_RESULTADOS, None)
     st.session_state.contratos_actualizados = {}
     st.session_state.cruce_resumen_global = []
+    st.session_state.tabla_resumen_lib_y_fen = []
+    st.session_state.tabla_resumen_con_perdida = []
+    st.session_state.tabla_resumen_proximos_a_perder = []
+    st.session_state.tabla_resumen_bogdata_matriz = []
+    st.session_state.tabla_resumen_depurados = []
+    st.session_state.tabla_resumen_por_depurar_vigencia = []
+    st.session_state.tabla_resumen_cps_pn = []
     st.session_state.titulo_saldo_corte = ""
     st.session_state.pop("consolidacion_work", None)
     st.session_state.pop("zip_descarga_contratos", None)
@@ -3637,12 +3796,32 @@ def _procesar_localidad_en_work(
             total=total,
         )
 
+    fila_lib_fen = None
+    fila_bogdata_matriz = None
+    fila_depurados = None
+    fila_por_depurar_vigencia = None
+    fila_cps_pn = None
+    filas_con_perdida = []
+    filas_proximos_a_perder = []
     try:
         df_matriz = leer_hoja_matriz(
             bytes_archivo_cola(item["matriz"]),
             item["matriz"]["name"],
             header=MATRIZ_HEADER_FILA,
             avance=tick,
+        )
+        fila_lib_fen = fila_lib_y_fen_desde_matriz(df_matriz, localidad)
+        fila_bogdata_matriz = fila_bogdata_matriz_desde_matriz(df_matriz, localidad)
+        fila_depurados = fila_depurados_desde_matriz(df_matriz, localidad)
+        fila_por_depurar_vigencia = fila_por_depurar_vigencia_desde_matriz(
+            df_matriz, localidad
+        )
+        fila_cps_pn = fila_cps_pn_desde_matriz(df_matriz, localidad)
+        filas_con_perdida = filas_con_perdida_desde_matriz(
+            df_matriz, localidad, ahora
+        )
+        filas_proximos_a_perder = filas_proximos_a_perder_desde_matriz(
+            df_matriz, localidad, ahora
         )
     except ValueError as e:
         work["errores"].append(f"**{localidad}** — Matriz: {e}")
@@ -3713,6 +3892,69 @@ def _procesar_localidad_en_work(
     work["contratos_actualizados"][localidad] = _guardar_contratos_en_disco(
         localidad, resultado
     )
+    if fila_lib_fen is not None:
+        work.setdefault("tabla_resumen_lib_y_fen", []).append({
+            "numero": fila_lib_fen.numero,
+            "localidad": fila_lib_fen.localidad,
+            "liberacion": fila_lib_fen.liberacion,
+            "fenecimiento": fila_lib_fen.fenecimiento,
+        })
+    if fila_bogdata_matriz is not None:
+        work.setdefault("tabla_resumen_bogdata_matriz", []).append({
+            "numero": fila_bogdata_matriz.numero,
+            "localidad": fila_bogdata_matriz.localidad,
+            "apropiacion_matriz": fila_bogdata_matriz.apropiacion_matriz,
+            "giros_matriz": fila_bogdata_matriz.giros_matriz,
+            "saldo_final_matriz": fila_bogdata_matriz.saldo_final_matriz,
+        })
+    if fila_depurados is not None:
+        work.setdefault("tabla_resumen_depurados", []).append({
+            "numero": fila_depurados.numero,
+            "localidad": fila_depurados.localidad,
+            "cantidad_inicial": fila_depurados.cantidad_inicial,
+            "depurados": fila_depurados.depurados,
+        })
+    if fila_por_depurar_vigencia is not None:
+        work.setdefault("tabla_resumen_por_depurar_vigencia", []).append({
+            "numero": fila_por_depurar_vigencia.numero,
+            "localidad": fila_por_depurar_vigencia.localidad,
+            "conteos_por_vigencia": fila_por_depurar_vigencia.conteos_por_vigencia,
+        })
+    if fila_cps_pn is not None:
+        work.setdefault("tabla_resumen_cps_pn", []).append({
+            "numero": fila_cps_pn.numero,
+            "localidad": fila_cps_pn.localidad,
+            "cantidad_inicial": fila_cps_pn.cantidad_inicial,
+            "depurados": fila_cps_pn.depurados,
+        })
+    if filas_con_perdida:
+        work.setdefault("tabla_resumen_con_perdida", []).extend(
+            {
+                "numero": fila.numero,
+                "localidad": fila.localidad,
+                "contratista": fila.contratista,
+                "numero_contrato": fila.numero_contrato,
+                "vigencia": fila.vigencia,
+                "fecha_finalizacion": fila.fecha_finalizacion,
+                "fecha_perdida_competencia": fila.fecha_perdida_competencia,
+                "monto": fila.monto,
+            }
+            for fila in filas_con_perdida
+        )
+    if filas_proximos_a_perder:
+        work.setdefault("tabla_resumen_proximos_a_perder", []).extend(
+            {
+                "numero": fila.numero,
+                "localidad": fila.localidad,
+                "contratista": fila.contratista,
+                "numero_contrato": fila.numero_contrato,
+                "vigencia": fila.vigencia,
+                "fecha_finalizacion": fila.fecha_finalizacion,
+                "fecha_perdida_competencia": fila.fecha_perdida_competencia,
+                "monto": fila.monto,
+            }
+            for fila in filas_proximos_a_perder
+        )
     work["stats"].extend([
         {
             "Localidad": localidad,
@@ -3771,10 +4013,29 @@ def _aplicar_work_a_sesion(work: dict) -> bool:
     establecer_cruce_detalle(detalle_global)
     st.session_state.contratos_actualizados = work["contratos_actualizados"]
     st.session_state.cruce_resumen_global = resumen_global
+    st.session_state.tabla_resumen_lib_y_fen = work.get("tabla_resumen_lib_y_fen", [])
+    st.session_state.tabla_resumen_con_perdida = work.get(
+        "tabla_resumen_con_perdida", []
+    )
+    st.session_state.tabla_resumen_proximos_a_perder = work.get(
+        "tabla_resumen_proximos_a_perder", []
+    )
+    st.session_state.tabla_resumen_bogdata_matriz = work.get(
+        "tabla_resumen_bogdata_matriz", []
+    )
+    st.session_state.tabla_resumen_depurados = work.get(
+        "tabla_resumen_depurados", []
+    )
+    st.session_state.tabla_resumen_por_depurar_vigencia = work.get(
+        "tabla_resumen_por_depurar_vigencia", []
+    )
+    st.session_state.tabla_resumen_cps_pn = work.get(
+        "tabla_resumen_cps_pn", []
+    )
     st.session_state.file_stats = work["stats"]
     st.session_state.processed = True
     st.session_state.fecha_analisis = ahora
-    st.session_state.last_processed_at = formato_fecha_colombia(ahora, con_hora=True)
+    st.session_state.last_processed_at = formato_fecha_colombia(datetime.now(), con_hora=True)
     st.session_state.titulo_saldo_corte = titulo_mes
     _reset_estado_desempate_wizard()
     st.session_state.zip_descarga_listo = False
@@ -3798,8 +4059,15 @@ def ejecutar_consolidacion(
     detalle_global = []
     contratos_actualizados = {}
     conteo_global: dict[str, int] = {}
+    tabla_resumen_lib_y_fen = []
+    tabla_resumen_con_perdida = []
+    tabla_resumen_proximos_a_perder = []
+    tabla_resumen_bogdata_matriz = []
+    tabla_resumen_depurados = []
+    tabla_resumen_por_depurar_vigencia = []
+    tabla_resumen_cps_pn = []
     total = len(cola) or 1
-    ahora = datetime.now()
+    ahora = fecha_corte_para_consolidar()
     titulo_mes = titulo_saldo_corte(ahora)
     barra = _barra_nueva(total)
 
@@ -3816,12 +4084,34 @@ def ejecutar_consolidacion(
                 total=total,
             )
 
+        fila_lib_fen = None
+        fila_bogdata_matriz = None
+        fila_depurados = None
+        fila_por_depurar_vigencia = None
+        fila_cps_pn = None
+        filas_con_perdida = []
+        filas_proximos_a_perder = []
         try:
             df_matriz = leer_hoja_matriz(
                 bytes_archivo_cola(item["matriz"]),
                 item["matriz"]["name"],
                 header=MATRIZ_HEADER_FILA,
                 avance=tick,
+            )
+            fila_lib_fen = fila_lib_y_fen_desde_matriz(df_matriz, localidad)
+            fila_bogdata_matriz = fila_bogdata_matriz_desde_matriz(
+                df_matriz, localidad
+            )
+            fila_depurados = fila_depurados_desde_matriz(df_matriz, localidad)
+            fila_por_depurar_vigencia = fila_por_depurar_vigencia_desde_matriz(
+                df_matriz, localidad
+            )
+            fila_cps_pn = fila_cps_pn_desde_matriz(df_matriz, localidad)
+            filas_con_perdida = filas_con_perdida_desde_matriz(
+                df_matriz, localidad, ahora
+            )
+            filas_proximos_a_perder = filas_proximos_a_perder_desde_matriz(
+                df_matriz, localidad, ahora
             )
         except ValueError as e:
             errores.append(f"**{localidad}** — Matriz: {e}")
@@ -3890,6 +4180,71 @@ def ejecutar_consolidacion(
         contratos_actualizados[localidad] = _guardar_contratos_en_disco(
             localidad, resultado
         )
+        if fila_lib_fen is not None:
+            tabla_resumen_lib_y_fen.append({
+                "numero": fila_lib_fen.numero,
+                "localidad": fila_lib_fen.localidad,
+                "liberacion": fila_lib_fen.liberacion,
+                "fenecimiento": fila_lib_fen.fenecimiento,
+            })
+        if fila_bogdata_matriz is not None:
+            tabla_resumen_bogdata_matriz.append({
+                "numero": fila_bogdata_matriz.numero,
+                "localidad": fila_bogdata_matriz.localidad,
+                "apropiacion_matriz": fila_bogdata_matriz.apropiacion_matriz,
+                "giros_matriz": fila_bogdata_matriz.giros_matriz,
+                "saldo_final_matriz": fila_bogdata_matriz.saldo_final_matriz,
+            })
+        if fila_depurados is not None:
+            tabla_resumen_depurados.append({
+                "numero": fila_depurados.numero,
+                "localidad": fila_depurados.localidad,
+                "cantidad_inicial": fila_depurados.cantidad_inicial,
+                "depurados": fila_depurados.depurados,
+            })
+        if fila_por_depurar_vigencia is not None:
+            tabla_resumen_por_depurar_vigencia.append({
+                "numero": fila_por_depurar_vigencia.numero,
+                "localidad": fila_por_depurar_vigencia.localidad,
+                "conteos_por_vigencia": (
+                    fila_por_depurar_vigencia.conteos_por_vigencia
+                ),
+            })
+        if fila_cps_pn is not None:
+            tabla_resumen_cps_pn.append({
+                "numero": fila_cps_pn.numero,
+                "localidad": fila_cps_pn.localidad,
+                "cantidad_inicial": fila_cps_pn.cantidad_inicial,
+                "depurados": fila_cps_pn.depurados,
+            })
+        if filas_con_perdida:
+            tabla_resumen_con_perdida.extend(
+                {
+                    "numero": fila.numero,
+                    "localidad": fila.localidad,
+                    "contratista": fila.contratista,
+                    "numero_contrato": fila.numero_contrato,
+                    "vigencia": fila.vigencia,
+                    "fecha_finalizacion": fila.fecha_finalizacion,
+                    "fecha_perdida_competencia": fila.fecha_perdida_competencia,
+                    "monto": fila.monto,
+                }
+                for fila in filas_con_perdida
+            )
+        if filas_proximos_a_perder:
+            tabla_resumen_proximos_a_perder.extend(
+                {
+                    "numero": fila.numero,
+                    "localidad": fila.localidad,
+                    "contratista": fila.contratista,
+                    "numero_contrato": fila.numero_contrato,
+                    "vigencia": fila.vigencia,
+                    "fecha_finalizacion": fila.fecha_finalizacion,
+                    "fecha_perdida_competencia": fila.fecha_perdida_competencia,
+                    "monto": fila.monto,
+                }
+                for fila in filas_proximos_a_perder
+            )
 
         stats.extend([
             {
@@ -3936,10 +4291,19 @@ def ejecutar_consolidacion(
     establecer_cruce_detalle(detalle_global)
     st.session_state.contratos_actualizados = contratos_actualizados
     st.session_state.cruce_resumen_global = resumen_global
+    st.session_state.tabla_resumen_lib_y_fen = tabla_resumen_lib_y_fen
+    st.session_state.tabla_resumen_con_perdida = tabla_resumen_con_perdida
+    st.session_state.tabla_resumen_proximos_a_perder = tabla_resumen_proximos_a_perder
+    st.session_state.tabla_resumen_bogdata_matriz = tabla_resumen_bogdata_matriz
+    st.session_state.tabla_resumen_depurados = tabla_resumen_depurados
+    st.session_state.tabla_resumen_por_depurar_vigencia = (
+        tabla_resumen_por_depurar_vigencia
+    )
+    st.session_state.tabla_resumen_cps_pn = tabla_resumen_cps_pn
     st.session_state.file_stats = stats
     st.session_state.processed = True
     st.session_state.fecha_analisis = ahora
-    st.session_state.last_processed_at = formato_fecha_colombia(ahora, con_hora=True)
+    st.session_state.last_processed_at = formato_fecha_colombia(datetime.now(), con_hora=True)
     st.session_state.titulo_saldo_corte = titulo_mes
     _reset_estado_desempate_wizard()
     _persistir_snapshot_consolidacion()
@@ -4067,7 +4431,7 @@ def procesar_consolidacion(
                     progress.empty()
                 return
 
-            ahora = datetime.now()
+            ahora = fecha_corte_para_consolidar()
             work = {
                 "cola": cola_run,
                 "idx": 0,
@@ -4077,6 +4441,13 @@ def procesar_consolidacion(
                 "detalle_global": [],
                 "contratos_actualizados": {},
                 "conteo_global": {},
+                "tabla_resumen_lib_y_fen": [],
+                "tabla_resumen_con_perdida": [],
+                "tabla_resumen_proximos_a_perder": [],
+                "tabla_resumen_bogdata_matriz": [],
+                "tabla_resumen_depurados": [],
+                "tabla_resumen_por_depurar_vigencia": [],
+                "tabla_resumen_cps_pn": [],
                 "errores": [],
                 "ahora": ahora,
                 "titulo_mes": titulo_saldo_corte(ahora),
@@ -4204,6 +4575,15 @@ def _dependencias_consolidacion():
         ReporteEjecucion,
         registrar_resultado_localidad,
     )
+    from tabla_resumen_proyecto import (
+        fila_bogdata_matriz_desde_matriz,
+        fila_cps_pn_desde_matriz,
+        fila_depurados_desde_matriz,
+        fila_lib_y_fen_desde_matriz,
+        fila_por_depurar_vigencia_desde_matriz,
+        filas_con_perdida_desde_matriz,
+        filas_proximos_a_perder_desde_matriz,
+    )
 
     return {
         "pd": pd,
@@ -4222,6 +4602,13 @@ def _dependencias_consolidacion():
         "CasoNoPrevisto": CasoNoPrevisto,
         "ReporteEjecucion": ReporteEjecucion,
         "registrar_resultado_localidad": registrar_resultado_localidad,
+        "fila_bogdata_matriz_desde_matriz": fila_bogdata_matriz_desde_matriz,
+        "fila_cps_pn_desde_matriz": fila_cps_pn_desde_matriz,
+        "fila_depurados_desde_matriz": fila_depurados_desde_matriz,
+        "fila_lib_y_fen_desde_matriz": fila_lib_y_fen_desde_matriz,
+        "fila_por_depurar_vigencia_desde_matriz": fila_por_depurar_vigencia_desde_matriz,
+        "filas_con_perdida_desde_matriz": filas_con_perdida_desde_matriz,
+        "filas_proximos_a_perder_desde_matriz": filas_proximos_a_perder_desde_matriz,
     }
 
 
@@ -4251,7 +4638,25 @@ def _inicializar_dependencias_modulo() -> None:
     global recalcular_estadisticas_localidad, resolver_hoja_cruce_cxp, titulo_saldo_corte
     global validar_desempate_completo, CasoNoPrevisto, ReporteEjecucion
     global registrar_resultado_localidad
-    if globals().get("_DEPS_MODULO_LISTAS"):
+    global fila_bogdata_matriz_desde_matriz
+    global fila_cps_pn_desde_matriz
+    global fila_depurados_desde_matriz
+    global fila_lib_y_fen_desde_matriz
+    global fila_por_depurar_vigencia_desde_matriz
+    global filas_con_perdida_desde_matriz
+    global filas_proximos_a_perder_desde_matriz
+    deps_resumen = (
+        "fila_bogdata_matriz_desde_matriz",
+        "fila_cps_pn_desde_matriz",
+        "fila_depurados_desde_matriz",
+        "fila_lib_y_fen_desde_matriz",
+        "fila_por_depurar_vigencia_desde_matriz",
+        "filas_con_perdida_desde_matriz",
+        "filas_proximos_a_perder_desde_matriz",
+    )
+    if globals().get("_DEPS_MODULO_LISTAS") and all(
+        globals().get(nombre) for nombre in deps_resumen
+    ):
         return
     dep = _dependencias_consolidacion()
     pd = dep["pd"]
@@ -4270,6 +4675,17 @@ def _inicializar_dependencias_modulo() -> None:
     CasoNoPrevisto = dep["CasoNoPrevisto"]
     ReporteEjecucion = dep["ReporteEjecucion"]
     registrar_resultado_localidad = dep["registrar_resultado_localidad"]
+    fila_bogdata_matriz_desde_matriz = dep["fila_bogdata_matriz_desde_matriz"]
+    fila_cps_pn_desde_matriz = dep["fila_cps_pn_desde_matriz"]
+    fila_depurados_desde_matriz = dep["fila_depurados_desde_matriz"]
+    fila_lib_y_fen_desde_matriz = dep["fila_lib_y_fen_desde_matriz"]
+    fila_por_depurar_vigencia_desde_matriz = dep[
+        "fila_por_depurar_vigencia_desde_matriz"
+    ]
+    filas_con_perdida_desde_matriz = dep["filas_con_perdida_desde_matriz"]
+    filas_proximos_a_perder_desde_matriz = dep[
+        "filas_proximos_a_perder_desde_matriz"
+    ]
     globals()["_DEPS_MODULO_LISTAS"] = True
 
 
@@ -4377,6 +4793,8 @@ if _modo_correccion_cola:
             st.rerun()
 
 uk = st.session_state.upload_key
+if not st.session_state.get("fecha_corte_seleccionada"):
+    st.session_state.fecha_corte_seleccionada = datetime.now().date()
 
 _trabajo_pausado = st.session_state.get("consolidacion_work")
 if not _omitir_formulario and _trabajo_pausado:
@@ -4422,6 +4840,17 @@ if mostrar_formulario_entrada:
             "Proporcione el archivo de **Contratos plan de choque** y su **Matriz** "
             "correspondiente por localidad. En Excel, quite los **filtros/autofiltros** "
             "antes de subirlos."
+        )
+
+        st.markdown('<p class="field-label">Fecha de corte del reporte</p>', unsafe_allow_html=True)
+        st.date_input(
+            "Fecha de corte del reporte",
+            key="fecha_corte_seleccionada",
+            label_visibility="collapsed",
+            help=(
+                "Esta fecha define el mes de la columna de saldo, los próximos a perder "
+                "y las verificaciones de la Tabla Resumen Proyecto."
+            ),
         )
 
         st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)
@@ -4806,27 +5235,32 @@ def _render_panel_resultados_completos() -> None:
         st.caption(
             "Reúnen la información de **todas** las localidades: "
             "Matriz y Contratos plan de choque actualizados (con selecciones aplicadas). "
-            "Se guardan en Descargas."
+            "Descarga un ZIP con los 2 Excel globales."
         )
-    if st.button(
-        "Descargar archivos de salida",
-        use_container_width=True,
-        key="btn_descargar_excel",
-        disabled=not descargas_ok,
-    ):
+    if descargas_ok:
         try:
             df_export = dataframe_consolidado()
-            rutas = guardar_archivos_salida(df_export, stats)
-            st.session_state.ultima_descarga = [str(r) for r in rutas]
-            st.toast("2 archivos guardados en Descargas", icon="✅")
-            lista = "\n".join(f"- `{r.name}`" for r in rutas)
-            st.success(
-                "Se guardaron **2** archivos en Descargas (siempre los mismos, "
-                "sin importar cuántas localidades procesó):\n\n" + lista
+            datos_zip, nombre_zip, mime_zip = empaquetar_archivos_salida_global(
+                df_export,
+                stats,
+            )
+            st.download_button(
+                "Descargar archivos de salida (ZIP)",
+                data=datos_zip,
+                file_name=nombre_zip,
+                mime=mime_zip,
+                key="dl_archivos_salida_global",
+                use_container_width=True,
             )
         except (OSError, ValueError) as e:
-            st.error(f"No se pudo guardar en Descargas: {e}")
-
+            st.error(f"No se pudo preparar la descarga: {e}")
+    else:
+        st.button(
+            "Descargar archivos de salida",
+            use_container_width=True,
+            key="btn_descargar_excel_bloqueado",
+            disabled=True,
+        )
     if st.button(
         "Ocultar detalle de resultados",
         use_container_width=True,
