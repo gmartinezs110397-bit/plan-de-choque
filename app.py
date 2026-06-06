@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import pickle
 import random
@@ -17,11 +18,25 @@ from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - fallback visual si Pillow no está disponible.
+    Image = None
 
 # Carpeta del proyecto primero (evita importar un cxp_cruce viejo en caché)
 _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
+LOGO_BOGOTA_PATH = _APP_DIR / "assets" / "escudo_bogota.png"
+
+
+def _cargar_icono_pagina():
+    if Image is None or not LOGO_BOGOTA_PATH.is_file():
+        return "📊"
+    try:
+        return Image.open(LOGO_BOGOTA_PATH)
+    except Exception:
+        return "📊"
 
 # Localidades de Bogotá D.C. (20), orden alfabético
 LOCALIDADES = [
@@ -49,7 +64,7 @@ LOCALIDADES = [
 
 st.set_page_config(
     page_title="Plan de Choque",
-    page_icon="📊",
+    page_icon=_cargar_icono_pagina(),
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -116,6 +131,23 @@ st.markdown(
         letter-spacing: -0.03em;
         margin: 0 0 0.35rem 0;
         text-align: center;
+    }
+    .app-brand {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.65rem;
+        margin: 0 0 0.35rem 0;
+    }
+    .app-brand-logo {
+        width: 42px;
+        height: 42px;
+        object-fit: contain;
+        flex: 0 0 auto;
+    }
+    .app-brand .app-title {
+        margin: 0;
+        text-align: left;
     }
     .app-subtitle,
     .app-subtitle * {
@@ -395,6 +427,18 @@ st.markdown(
         opacity: 0.65 !important;
         box-shadow: none !important;
         cursor: not-allowed !important;
+    }
+    @media (max-width: 640px) {
+        .app-brand {
+            gap: 0.5rem;
+        }
+        .app-brand-logo {
+            width: 36px;
+            height: 36px;
+        }
+        .app-brand .app-title {
+            font-size: 1.75rem;
+        }
     }
     /* Descarga final — verde para destacar la acción principal */
     .st-key-dl_zip_completo button {
@@ -1120,14 +1164,40 @@ def _componente_teclado_portada_acceso(clave_widget: str) -> None:
     )
 
 
+def logo_bogota_data_uri() -> str:
+    if not LOGO_BOGOTA_PATH.is_file():
+        return ""
+    try:
+        data = base64.b64encode(LOGO_BOGOTA_PATH.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{data}"
+    except Exception:
+        return ""
+
+
+def render_encabezado_app(subtitulo: str) -> None:
+    logo_uri = logo_bogota_data_uri()
+    logo_html = ""
+    if logo_uri:
+        logo_html = (
+            f'<img class="app-brand-logo" src="{logo_uri}" '
+            'alt="Escudo de Bogotá">'
+        )
+    st.markdown(
+        f"""
+        <div class="app-brand">
+            {logo_html}
+            <h1 class="app-title">Plan de Choque</h1>
+        </div>
+        <p class="app-subtitle">{escape(subtitulo)}</p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_portada_acceso() -> None:
     """Pantalla de ingreso; detiene la app hasta contraseña correcta."""
     contrasena_ok = contrasena_acceso_esperada()
-    st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="app-subtitle">Ingrese la contraseña para continuar</p>',
-        unsafe_allow_html=True,
-    )
+    render_encabezado_app("Ingrese la contraseña para continuar")
 
     with st.container(border=True, key="portada_acceso_box"):
         with st.form(
@@ -1479,6 +1549,24 @@ def nombre_archivo_salida(
     return sanitizar_nombre_archivo(nombre)
 
 
+def _normalizar_segmento_descarga(texto: str) -> str:
+    texto = str(texto or "").lower()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def _es_segmento_periodo_descarga(segmento: str) -> bool:
+    norm = _normalizar_segmento_descarga(segmento)
+    if not norm:
+        return False
+    meses = {_normalizar_segmento_descarga(m) for m in MESES_ES}
+    if norm in meses or norm == "final":
+        return True
+    partes = norm.split()
+    return bool(partes and partes[0] in meses and set(partes[1:]) <= {"final"})
+
+
 def _stem_descarga_contratos(stem: str, mes: str) -> str:
     """
     Si el archivo ya trae «… - Mayo», conserva lo anterior al último « - »
@@ -1488,8 +1576,10 @@ def _stem_descarga_contratos(stem: str, mes: str) -> str:
     limpio = stem.replace("—", "-").replace("–", "-").strip()
     sep = " - "
     if sep in limpio:
-        base, _viejo_mes = limpio.rsplit(sep, 1)
-        return f"{base.strip()}{sep}{mes}"
+        partes = [p.strip() for p in limpio.split(sep) if p.strip()]
+        while len(partes) > 1 and _es_segmento_periodo_descarga(partes[-1]):
+            partes.pop()
+        return f"{sep.join(partes).strip()}{sep}{mes}"
     return f"{limpio} - {mes}"
 
 
@@ -1510,6 +1600,66 @@ def nombre_descarga_contratos_actualizado(
         stem = f"Contratos plan de choque {localidad}"
     nombre = _stem_descarga_contratos(stem, mes) + ".xlsx"
     return sanitizar_nombre_archivo(nombre)
+
+
+_ORDEN_LOCALIDADES_ZIP = {
+    "usaquen": 1,
+    "chapinero": 2,
+    "santa fe": 3,
+    "san cristobal": 4,
+    "usme": 5,
+    "tunjuelito": 6,
+    "bosa": 7,
+    "kennedy": 8,
+    "fontibon": 9,
+    "engativa": 10,
+    "suba": 11,
+    "barrios unidos": 12,
+    "teusaquillo": 13,
+    "los martires": 14,
+    "antonio narino": 15,
+    "puente aranda": 16,
+    "la candelaria": 17,
+    "rafael uribe uribe": 18,
+    "ciudad bolivar": 19,
+    "sumapaz": 20,
+}
+
+
+def _normalizar_zip(texto: str) -> str:
+    texto = str(texto or "").lower()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", texto).strip()
+
+
+def numero_localidad_zip(localidad: str) -> int:
+    return _ORDEN_LOCALIDADES_ZIP.get(_normalizar_zip(localidad), 99)
+
+
+def _items_contratos_orden_zip(contratos_actualizados: dict) -> list[tuple[str, dict]]:
+    return sorted(
+        contratos_actualizados.items(),
+        key=lambda item: (numero_localidad_zip(item[0]), _normalizar_zip(item[0])),
+    )
+
+
+def _quitar_prefijo_orden_archivo(nombre: str) -> str:
+    return re.sub(r"^\s*\d{1,2}\s*(?:[.\-]\s*)?", "", str(nombre or "")).strip()
+
+
+def nombre_zip_contratos_ordenado(
+    localidad: str,
+    nombre_original: str,
+    fecha: datetime | date | None = None,
+) -> str:
+    nombre = nombre_descarga_contratos_actualizado(localidad, nombre_original, fecha)
+    nombre = _quitar_prefijo_orden_archivo(nombre)
+    return sanitizar_nombre_archivo(f"{numero_localidad_zip(localidad):02d}. {nombre}")
+
+
+def nombre_zip_global_ordenado(indice: int, nombre: str) -> str:
+    return sanitizar_nombre_archivo(f"{indice:02d}. {nombre}")
 
 
 def _directorio_archivos_sesion() -> Path:
@@ -3550,8 +3700,8 @@ def empaquetar_descarga_completa(
 
     salida = BytesIO()
     with zipfile.ZipFile(salida, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        for loc, data in sorted(contratos_actualizados.items(), key=lambda item: item[0]):
-            nombre = nombre_descarga_contratos_actualizado(
+        for loc, data in _items_contratos_orden_zip(contratos_actualizados):
+            nombre = nombre_zip_contratos_ordenado(
                 loc,
                 data.get("nombre_contratos", ""),
                 fecha,
@@ -3560,8 +3710,11 @@ def empaquetar_descarga_completa(
                 nombre,
                 bytes_contratos_de_salida(data),
             )
-        for nombre, datos in construir_archivos_salida_global(consolidated_df, stats):
-            zf.writestr(nombre, datos)
+        for indice, (nombre, datos) in enumerate(
+            construir_archivos_salida_global(consolidated_df, stats),
+            start=98,
+        ):
+            zf.writestr(nombre_zip_global_ordenado(indice, nombre), datos)
     return salida.getvalue(), nombre_zip, "application/zip"
 
 
@@ -4815,11 +4968,7 @@ if st.session_state.get("ejecutar_consolidacion_ahora"):
         _barra_consolidacion = st.progress(0, text="Iniciando consolidación…")
 
 # ── Título ─────────────────────────────────────────────────────────────────────
-st.markdown('<h1 class="app-title">Plan de Choque</h1>', unsafe_allow_html=True)
-st.markdown(
-    '<p class="app-subtitle">Bogotá — consolidación por localidad</p>',
-    unsafe_allow_html=True,
-)
+render_encabezado_app("Bogotá — consolidación por localidad")
 
 _omitir_formulario = _omitir_formulario_entrada()
 
@@ -5347,18 +5496,21 @@ def _render_panel_resultados_completos() -> None:
 
     if contratos_act:
         with st.expander("Archivos incluidos en el ZIP, en este orden"):
+            st.caption(
+                "En Mac se muestran por nombre; por eso el ZIP usa prefijos de orden."
+            )
             st.markdown("**Primero: Contratos actualizados**")
-            for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
+            for loc, data in _items_contratos_orden_zip(contratos_act):
                 st.markdown(
                     f"- **{loc}:** "
-                    f"`{nombre_descarga_contratos_actualizado(loc, data.get('nombre_contratos', ''), fecha_dl)}`"
+                    f"`{nombre_zip_contratos_ordenado(loc, data.get('nombre_contratos', ''), fecha_dl)}`"
                 )
             st.markdown("**Al final: Archivos globales**")
             st.markdown(
-                f"- `{nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha_dl, localidades_dl)}`"
+                f"- `{nombre_zip_global_ordenado(98, nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha_dl, localidades_dl))}`"
             )
             st.markdown(
-                f"- `{nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha_dl, localidades_dl)}`"
+                f"- `{nombre_zip_global_ordenado(99, nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha_dl, localidades_dl))}`"
             )
 # ── Resultados ─────────────────────────────────────────────────────────────────
 if st.session_state.processed:

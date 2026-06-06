@@ -12,7 +12,10 @@ from cxp_cruce import (
     FILA_CONTEO_CONTRATOS,
     FILA_SUMA_CONTRATOS,
     _celda_tiene_formula,
+    _fila_inicio_datos_hoja,
+    _fila_tiene_contratista,
     _indice_columna_corte_en_hoja,
+    _indice_columna_en_hoja,
     _normalizar,
     dia_fin_mes_corte,
     mes_nombre_corte,
@@ -82,6 +85,40 @@ def _escribir_valor(celda, valor) -> None:
     celda.value = valor
 
 
+def _normalizar_total(valor: float) -> float | int:
+    if abs(valor - round(valor)) < 1e-9:
+        return int(round(valor))
+    return valor
+
+
+def _sumar_y_contar_saldos_datos(
+    ws,
+    col_saldo: int,
+) -> tuple[int | None, float | int | None]:
+    col_nombre = _indice_columna_en_hoja(ws, "NOMBRE CONTRATISTA")
+    if not col_nombre:
+        return None, None
+
+    conteo = 0
+    suma = 0.0
+    encontro_valor = False
+    fila_ini = _fila_inicio_datos_hoja(ws)
+    for fila in range(fila_ini, ws.max_row + 1):
+        if not _fila_tiene_contratista(ws, fila, col_nombre):
+            continue
+        valor = _valor_numerico(ws.cell(fila, col_saldo).value)
+        if valor is None:
+            continue
+        encontro_valor = True
+        suma += float(valor)
+        if abs(float(valor)) > 1e-9:
+            conteo += 1
+
+    if not encontro_valor:
+        return 0, 0
+    return conteo, _normalizar_total(suma)
+
+
 def _aplicar_relleno_datos_estrategias(ws, filas: list[int], fila_total: int | None) -> None:
     """Verde en columnas E/F de cada fila de detalle y en la fila Total (como la plantilla)."""
     objetivos = list(filas)
@@ -124,6 +161,12 @@ def _leer_totales_hoja_cps(
         return None, None
     conteo = _valor_numerico(ws.cell(FILA_CONTEO_CONTRATOS, col_corte).value)
     suma = _valor_numerico(ws.cell(FILA_SUMA_CONTRATOS, col_corte).value)
+    if conteo is None or suma is None:
+        conteo_datos, suma_datos = _sumar_y_contar_saldos_datos(ws, col_corte)
+        if conteo is None:
+            conteo = conteo_datos
+        if suma is None:
+            suma = suma_datos
     return conteo, suma
 
 
@@ -137,6 +180,12 @@ def _leer_totales_hoja_liquidados(
         return None, None
     suma = _valor_numerico(ws.cell(_fila_suma_liquidados(ws), col_saldo).value)
     conteo = _valor_numerico(ws.cell(_fila_conteo_liquidados(ws), col_saldo).value)
+    if conteo is None or suma is None:
+        conteo_datos, suma_datos = _sumar_y_contar_saldos_datos(ws, col_saldo)
+        if conteo is None:
+            conteo = conteo_datos
+        if suma is None:
+            suma = suma_datos
     return conteo, suma
 
 

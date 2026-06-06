@@ -587,22 +587,11 @@ def crear_excel_avance_plan_de_choque(
     wb = Workbook()
     wb.remove(wb.active)
 
-    estrategia_total_rows: dict[str, int] = {}
-    estrategia_rows: dict[str, dict[int, int]] = {}
     for estrategia in ESTRATEGIAS:
-        total_row = _escribir_hoja_estrategia(wb, estrategia, filas, fecha_corte)
-        estrategia_total_rows[estrategia.clave] = total_row
-        estrategia_rows[estrategia.clave] = {
-            fila.numero: idx for idx, fila in enumerate(filas, start=5)
-        }
+        _escribir_hoja_estrategia(wb, estrategia, filas, fecha_corte)
 
-    xloc_rows = _escribir_x_loc(wb, filas, estrategia_rows, fecha_corte)
-    _escribir_general(wb, filas, estrategia_total_rows, xloc_rows, fecha_corte)
-
-    # Orden visual del ejemplo: estrategias, General y X Loc al final.
-    wb._sheets = [
-        wb[estrategia.hoja] for estrategia in ESTRATEGIAS
-    ] + [wb["General"], wb["X Loc"]]
+    # Orden visual del ejemplo: solo las hojas de estrategia por localidad.
+    wb._sheets = [wb[estrategia.hoja] for estrategia in ESTRATEGIAS]
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
 
