@@ -3557,11 +3557,11 @@ def empaquetar_descarga_completa(
                 fecha,
             )
             zf.writestr(
-                f"Contratos actualizados/{nombre}",
+                nombre,
                 bytes_contratos_de_salida(data),
             )
         for nombre, datos in construir_archivos_salida_global(consolidated_df, stats):
-            zf.writestr(f"Archivos globales/{nombre}", datos)
+            zf.writestr(nombre, datos)
     return salida.getvalue(), nombre_zip, "application/zip"
 
 
@@ -5346,14 +5346,14 @@ def _render_panel_resultados_completos() -> None:
         )
 
     if contratos_act:
-        with st.expander("Archivos incluidos en el ZIP"):
-            st.markdown("**Contratos actualizados**")
+        with st.expander("Archivos incluidos en el ZIP, en este orden"):
+            st.markdown("**Primero: Contratos actualizados**")
             for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
                 st.markdown(
                     f"- **{loc}:** "
                     f"`{nombre_descarga_contratos_actualizado(loc, data.get('nombre_contratos', ''), fecha_dl)}`"
                 )
-            st.markdown("**Archivos globales**")
+            st.markdown("**Al final: Archivos globales**")
             st.markdown(
                 f"- `{nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha_dl, localidades_dl)}`"
             )
