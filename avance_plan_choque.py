@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 from io import BytesIO
-from typing import Iterable
+from typing import Callable, Iterable
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -71,7 +71,7 @@ class EstrategiaAvance:
     hoja: str
     titulo: str
     etiqueta_general: str
-    texto_accion: str
+    texto_accion: str | Callable[[datetime | date], str]
 
 
 @dataclass
@@ -133,7 +133,7 @@ ESTRATEGIAS = [
         "Contratos Suspendidos",
         (
             "El objetivo es la reactivaci\u00f3n de los contratos suspendidos "
-            "priorizados con corte al 31 de marzo de 2026"
+            "priorizados con corte al 31 de marzo de {year}"
         ),
     ),
     EstrategiaAvance(
@@ -142,10 +142,11 @@ ESTRATEGIAS = [
         "Pr\u00f3ximos a Perder Competencia",
         "Contratos Pr\u00f3ximos a perder competencia",
         (
-            "Liquidar los contratos priorizados con corte al 31 de marzo y que "
-            "estar\u00edan pr\u00f3ximos a perder competencia antes de que se cumpla "
-            "la fecha l\u00edmite para su liquidaci\u00f3n de conformidad con lo "
-            "contemplado en el art\u00edculo 11 de la Ley 1150 de 2007"
+            "Liquidar los contratos priorizados con corte al 31 de marzo de {year} "
+            "y que estar\u00edan pr\u00f3ximos a perder competencia hasta el mes de "
+            "diciembre de {year} antes de que se cumpla la fecha l\u00edmite para su "
+            "liquidaci\u00f3n de conformidad con lo contemplado en el art\u00edculo 11 "
+            "de la Ley 1150 de 2007"
         ),
     ),
     EstrategiaAvance(
@@ -165,7 +166,7 @@ ESTRATEGIAS = [
         "Contratos de Prestaci\u00f3n de Servicios",
         (
             "Se requiere la depuraci\u00f3n de este grupo de contratos que se "
-            "encuentran con corte al 31 de marzo en estado terminado no se "
+            "encuentran con corte al 31 de marzo de {year} en estado terminado no se "
             "liquida o terminado en proceso de liquidaci\u00f3n."
         ),
     ),
@@ -226,6 +227,13 @@ def _encabezado_actual_contratos(fecha: datetime | date) -> str:
 
 def _encabezado_actual_monto(fecha: datetime | date) -> str:
     return f"Monto Total {_mes(fecha)} {_dia_fin_mes(fecha)}"
+
+
+def _texto_accion(estrategia: EstrategiaAvance, fecha: datetime | date) -> str:
+    texto = estrategia.texto_accion
+    if callable(texto):
+        return str(texto(fecha))
+    return str(texto).format(year=fecha.year)
 
 
 def _valor_numero(valor: object) -> float:
@@ -340,7 +348,7 @@ def _escribir_hoja_estrategia(
     ws.merge_cells("B3:G3")
     _set_value(ws, 2, 1, estrategia.titulo, "title")
     _set_value(ws, 3, 1, "Acciones a realizar", "header")
-    _set_value(ws, 3, 2, estrategia.texto_accion, "header")
+    _set_value(ws, 3, 2, _texto_accion(estrategia, fecha), "header")
 
     headers = [
         "FDL",

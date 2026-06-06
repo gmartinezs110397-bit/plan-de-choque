@@ -396,6 +396,40 @@ st.markdown(
         box-shadow: none !important;
         cursor: not-allowed !important;
     }
+    /* Descarga final — verde para destacar la acción principal */
+    .st-key-dl_zip_completo button {
+        background: #16a34a !important;
+        background-color: #16a34a !important;
+        border: 1px solid #16a34a !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 5px 14px rgba(22, 163, 74, 0.26) !important;
+    }
+    .st-key-dl_zip_completo button:hover {
+        background: #15803d !important;
+        background-color: #15803d !important;
+        border-color: #15803d !important;
+        color: #ffffff !important;
+    }
+    .st-key-dl_zip_completo button:active {
+        background: #166534 !important;
+        background-color: #166534 !important;
+        border-color: #166534 !important;
+    }
+    .st-key-dl_zip_completo button p,
+    .st-key-dl_zip_completo button span {
+        color: #ffffff !important;
+    }
+    .st-key-btn_descargar_zip_completo_bloqueado button:disabled {
+        background: #bbf7d0 !important;
+        background-color: #bbf7d0 !important;
+        border-color: #86efac !important;
+        color: #166534 !important;
+        opacity: 0.7 !important;
+        box-shadow: none !important;
+        cursor: not-allowed !important;
+    }
 
     /* Uploaders: texto y caja mas limpios que el control nativo de Streamlit */
     [data-testid="stFileUploaderDropzone"] {
@@ -3500,6 +3534,37 @@ def empaquetar_archivos_salida_global(
     return salida.getvalue(), nombre_zip, "application/zip"
 
 
+def empaquetar_descarga_completa(
+    contratos_actualizados: dict,
+    consolidated_df: pd.DataFrame,
+    stats: list,
+) -> tuple[bytes, str, str]:
+    """Empaqueta Contratos actualizados y los Excel globales en un solo ZIP."""
+    if not contratos_actualizados:
+        raise ValueError("No hay contratos actualizados para descargar.")
+
+    fecha = fecha_referencia_analisis()
+    localidades = localidades_analizadas(stats) or sorted(contratos_actualizados)
+    nombre_zip = nombre_archivo_salida("Plan de choque completo", fecha, localidades)
+    nombre_zip = nombre_zip.rsplit(".", 1)[0] + ".zip"
+
+    salida = BytesIO()
+    with zipfile.ZipFile(salida, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for loc, data in sorted(contratos_actualizados.items(), key=lambda item: item[0]):
+            nombre = nombre_descarga_contratos_actualizado(
+                loc,
+                data.get("nombre_contratos", ""),
+                fecha,
+            )
+            zf.writestr(
+                f"Contratos actualizados/{nombre}",
+                bytes_contratos_de_salida(data),
+            )
+        for nombre, datos in construir_archivos_salida_global(consolidated_df, stats):
+            zf.writestr(f"Archivos globales/{nombre}", datos)
+    return salida.getvalue(), nombre_zip, "application/zip"
+
+
 def guardar_archivos_salida(
     consolidated_df: pd.DataFrame, stats: list
 ) -> list[Path]:
@@ -4666,16 +4731,10 @@ def _necesita_dependencias_pesadas() -> bool:
         return True
     if st.session_state.get("cola_localidades") or st.session_state.get("consolidacion_work"):
         return True
-    if st.session_state.get("processed") and st.session_state.get(
-        _CLAVE_MOSTRAR_RESULTADOS, False
-    ):
+    if st.session_state.get("processed"):
         return True
     if st.session_state.get("acceso_autorizado"):
         # Formulario / añadir a cola: hace falta pandas, cxp_cruce, etc.
-        if st.session_state.get("processed") and not st.session_state.get(
-            _CLAVE_MOSTRAR_RESULTADOS, False
-        ):
-            return False  # F5 rápido: solo resumen tras consolidar
         return True
     return False
 
@@ -4744,7 +4803,8 @@ if _necesita_dependencias_pesadas():
 _limpiar_estado_consolidacion_bloqueado()
 _sanear_sesion_consolidacion()
 if not st.session_state.get("ejecutar_consolidacion_ahora"):
-    if st.session_state.get(_CLAVE_MOSTRAR_RESULTADOS):
+    if st.session_state.get("processed"):
+        st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
         _compactar_sesion_vista_completa()
     else:
         _compactar_sesion_para_f5()
@@ -5239,132 +5299,69 @@ def _render_panel_resultados_completos() -> None:
             render_tabla_resultados(df_stats[cols_show])
 
     contratos_act = st.session_state.get("contratos_actualizados", {})
+    fecha_dl = st.session_state.get("fecha_analisis") or fecha_referencia_analisis()
+    localidades_dl = localidades_analizadas(stats) or sorted(contratos_act)
+    st.markdown(
+        '<p class="section-title">Descarga completa</p>',
+        unsafe_allow_html=True,
+    )
     if contratos_act:
-        fecha_dl = st.session_state.get("fecha_analisis") or fecha_referencia_analisis()
         n_loc = len(contratos_act)
-        st.markdown(
-            '<p class="section-title">Contratos plan de choque actualizados</p>',
-            unsafe_allow_html=True,
-        )
         st.caption(
-            f"Un ZIP con {n_loc} archivo(s) Excel (uno por localidad). "
-            f"Abra el ZIP y use el .xlsx dentro. "
-            f"El mes en el nombre se actualiza a «- {mes_capitalizado(fecha_dl)}» "
-            "(conserva el texto antes del guion)."
-        )
-        if not descargas_ok:
-            st.caption(
-                "Disponible cuando no haya contratos sin coincidencia automática."
-            )
-        zip_info = st.session_state.get("zip_descarga_contratos")
-        nombre_dl = (zip_info or {}).get("nombre") or "contratos.zip"
-        mime_dl = (zip_info or {}).get("mime") or "application/zip"
-        ruta_zip = (zip_info or {}).get("path")
-        if descargas_ok and ruta_zip and Path(ruta_zip).is_file():
-            datos_dl = _leer_binario_desde_ruta(
-                ruta_zip, Path(ruta_zip).stat().st_mtime
-            )
-            st.download_button(
-                label="Descargar Contratos actualizados (ZIP)",
-                data=datos_dl,
-                file_name=nombre_dl,
-                mime=mime_dl,
-                key="dl_contratos_todas",
-                use_container_width=True,
-            )
-        elif descargas_ok:
-            st.warning(
-                "No se encontró el ZIP en el servidor. Vuelva a consolidar o aplique "
-                "las selecciones para regenerarlo."
-            )
-        with st.expander("Archivos incluidos en la descarga"):
-            for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
-                st.markdown(
-                    f"- **{loc}:** "
-                    f"`{nombre_descarga_contratos_actualizado(loc, data.get('nombre_contratos', ''), fecha_dl)}`"
-                )
-    st.markdown('<p class="section-title">Archivos globales de salida</p>', unsafe_allow_html=True)
-    if not descargas_ok:
-        st.caption(
-            "Bloqueados mientras haya contratos sin coincidencia automática. "
-            "Los archivos globales solo se generan con datos 100% completos."
+            f"Un solo ZIP con {n_loc} Contratos actualizado(s), "
+            "Avance plan de choque y Tabla Resumen Proyecto."
         )
     else:
+        st.caption("La descarga se habilita cuando existan archivos procesados.")
+    if not descargas_ok:
         st.caption(
-            "Reúnen la información de **todas** las localidades: "
-            "Matriz y Contratos plan de choque actualizados (con selecciones aplicadas). "
-            "Descarga un ZIP con los 2 Excel globales."
+            "Disponible cuando no haya contratos sin coincidencia automática. "
+            "Los archivos globales solo se generan con datos 100% completos."
         )
-    if descargas_ok:
+
+    if descargas_ok and contratos_act:
         try:
             df_export = dataframe_consolidado()
-            datos_zip, nombre_zip, mime_zip = empaquetar_archivos_salida_global(
+            datos_zip, nombre_zip, mime_zip = empaquetar_descarga_completa(
+                contratos_act,
                 df_export,
                 stats,
             )
             st.download_button(
-                "Descargar archivos de salida (ZIP)",
+                "Descargar ZIP completo",
                 data=datos_zip,
                 file_name=nombre_zip,
                 mime=mime_zip,
-                key="dl_archivos_salida_global",
+                key="dl_zip_completo",
                 use_container_width=True,
             )
         except (OSError, ValueError) as e:
             st.error(f"No se pudo preparar la descarga: {e}")
     else:
         st.button(
-            "Descargar archivos de salida",
+            "Descargar ZIP completo",
             use_container_width=True,
-            key="btn_descargar_excel_bloqueado",
+            key="btn_descargar_zip_completo_bloqueado",
             disabled=True,
         )
-    if st.button(
-        "Ocultar detalle de resultados",
-        use_container_width=True,
-        key="btn_ocultar_resultados_completos",
-    ):
-        st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = False
-        st.rerun()
 
-
+    if contratos_act:
+        with st.expander("Archivos incluidos en el ZIP"):
+            st.markdown("**Contratos actualizados**")
+            for loc, data in sorted(contratos_act.items(), key=lambda x: x[0]):
+                st.markdown(
+                    f"- **{loc}:** "
+                    f"`{nombre_descarga_contratos_actualizado(loc, data.get('nombre_contratos', ''), fecha_dl)}`"
+                )
+            st.markdown("**Archivos globales**")
+            st.markdown(
+                f"- `{nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha_dl, localidades_dl)}`"
+            )
+            st.markdown(
+                f"- `{nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha_dl, localidades_dl)}`"
+            )
 # ── Resultados ─────────────────────────────────────────────────────────────────
 if st.session_state.processed:
-    resumen_ligero = st.session_state.get(_CLAVE_RESUMEN_LIGERO) or {}
-    if not resumen_ligero:
-        snap_tmp = _cargar_snapshot_consolidacion()
-        informe_tmp = snap_tmp.get("informe") or []
-        if informe_tmp:
-            resumen_ligero = _resumen_ligero_desde_informe(informe_tmp)
-            st.session_state[_CLAVE_RESUMEN_LIGERO] = resumen_ligero
-
-    if not st.session_state.get(_CLAVE_MOSTRAR_RESULTADOS):
-        st.markdown('<p class="section-title">Resultado consolidado</p>', unsafe_allow_html=True)
-        n_loc = resumen_ligero.get("n_localidades", 0)
-        sin_r = resumen_ligero.get("sin_resolver", 0)
-        titulo_mes = resumen_ligero.get("titulo_mes") or st.session_state.get(
-            "titulo_saldo_corte", ""
-        )
-        st.success(
-            f"Consolidación lista: **{n_loc}** localidad(es), "
-            f"**{resumen_ligero.get('total_ok', 0)}/{resumen_ligero.get('total_contratos', 0)}** "
-            f"contratos cruzados"
-            + (f", **{sin_r}** sin coincidencia automática" if sin_r else "")
-            + (f". Corte **{titulo_mes}**." if titulo_mes else ".")
-        )
-        st.caption(
-            "Abra el detalle para revisar tablas, casos informativos y descargas."
-        )
-        if st.button(
-            "Mostrar resultados completos",
-            type="primary",
-            use_container_width=True,
-            key="btn_mostrar_resultados_completos",
-        ):
-            st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
-            st.session_state[_CLAVE_SCROLL_RESULTADOS] = True
-            _inicializar_dependencias_modulo()
-            st.rerun()
-    else:
-        _inicializar_dependencias_modulo()
-        _render_panel_resultados_completos()
+    st.session_state[_CLAVE_MOSTRAR_RESULTADOS] = True
+    _inicializar_dependencias_modulo()
+    _render_panel_resultados_completos()
