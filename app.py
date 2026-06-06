@@ -9,6 +9,7 @@ import tempfile
 import unicodedata
 import uuid
 import zipfile
+import calendar
 from html import escape
 from io import BytesIO
 from datetime import datetime, date
@@ -87,6 +88,24 @@ st.markdown(
     [data-testid="stFormSubmitInstruction"],
     div[data-testid="InputInstructions"] > span {
         display: none !important;
+    }
+    [data-testid="stTextInput"] div[data-baseweb="input"],
+    [data-testid="stDateInput"] div[data-baseweb="input"],
+    [data-testid="stSelectbox"] div[data-baseweb="select"],
+    .st-key-input_contrasena_portada div[data-baseweb="input"] {
+        border-color: var(--pc-pink-200) !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stTextInput"] div[data-baseweb="input"]:focus-within,
+    [data-testid="stTextInput"] div[data-baseweb="input"]:hover,
+    [data-testid="stDateInput"] div[data-baseweb="input"]:focus-within,
+    [data-testid="stDateInput"] div[data-baseweb="input"]:hover,
+    [data-testid="stSelectbox"] div[data-baseweb="select"]:focus-within,
+    [data-testid="stSelectbox"] div[data-baseweb="select"]:hover,
+    .st-key-input_contrasena_portada div[data-baseweb="input"]:focus-within,
+    .st-key-input_contrasena_portada div[data-baseweb="input"]:hover {
+        border-color: var(--pc-pink-500) !important;
+        box-shadow: 0 0 0 1px var(--pc-pink-500) !important;
     }
     h1.app-title,
     .app-title,
@@ -704,6 +723,7 @@ def init_session_state():
         "errores_ejecucion": [],
         "fecha_analisis": None,
         "fecha_corte_seleccionada": None,
+        "mes_corte_seleccionado": None,
         "cruce_informe": [],
         "cruce_detalle": [],
         "contratos_actualizados": {},
@@ -1358,16 +1378,31 @@ def fecha_referencia_analisis() -> datetime:
 
 def fecha_corte_para_consolidar() -> datetime:
     """Fecha de corte elegida para calcular columnas, verificaciones y descargas."""
+    anio_actual = datetime.now().year
+    mes_seleccionado = st.session_state.get("mes_corte_seleccionado")
+    try:
+        mes_num = int(mes_seleccionado)
+    except (TypeError, ValueError):
+        mes_num = 0
+    if 1 <= mes_num <= 12:
+        ultimo_dia = calendar.monthrange(anio_actual, mes_num)[1]
+        return datetime(anio_actual, mes_num, ultimo_dia)
+
     seleccionada = st.session_state.get("fecha_corte_seleccionada")
     if isinstance(seleccionada, datetime):
-        return seleccionada
+        ultimo_dia = calendar.monthrange(anio_actual, seleccionada.month)[1]
+        return datetime(anio_actual, seleccionada.month, ultimo_dia)
     if isinstance(seleccionada, date):
-        return datetime(seleccionada.year, seleccionada.month, seleccionada.day)
+        ultimo_dia = calendar.monthrange(anio_actual, seleccionada.month)[1]
+        return datetime(anio_actual, seleccionada.month, ultimo_dia)
     if isinstance(seleccionada, str):
         parsed = parsear_fecha_flexible(seleccionada)
         if parsed:
-            return parsed
-    return fecha_referencia_analisis()
+            ultimo_dia = calendar.monthrange(anio_actual, parsed.month)[1]
+            return datetime(anio_actual, parsed.month, ultimo_dia)
+    ahora = fecha_referencia_analisis()
+    ultimo_dia = calendar.monthrange(anio_actual, ahora.month)[1]
+    return datetime(anio_actual, ahora.month, ultimo_dia)
 
 
 def sanitizar_nombre_archivo(nombre: str) -> str:
@@ -4793,8 +4828,10 @@ if _modo_correccion_cola:
             st.rerun()
 
 uk = st.session_state.upload_key
-if not st.session_state.get("fecha_corte_seleccionada"):
-    st.session_state.fecha_corte_seleccionada = datetime.now().date()
+if not st.session_state.get("mes_corte_seleccionado"):
+    fecha_previa = st.session_state.get("fecha_corte_seleccionada")
+    mes_previo = getattr(fecha_previa, "month", None)
+    st.session_state.mes_corte_seleccionado = mes_previo or datetime.now().month
 
 _trabajo_pausado = st.session_state.get("consolidacion_work")
 if not _omitir_formulario and _trabajo_pausado:
@@ -4842,15 +4879,22 @@ if mostrar_formulario_entrada:
             "antes de subirlos."
         )
 
-        st.markdown('<p class="field-label">Fecha de corte del reporte</p>', unsafe_allow_html=True)
-        st.date_input(
-            "Fecha de corte del reporte",
-            key="fecha_corte_seleccionada",
+        st.markdown('<p class="field-label">Mes del reporte</p>', unsafe_allow_html=True)
+        st.selectbox(
+            "Mes del reporte",
+            options=list(range(1, 13)),
+            format_func=lambda mes: (
+                f"{mes_capitalizado(date(datetime.now().year, mes, 1))} "
+                f"{datetime.now().year}"
+            ),
+            key="mes_corte_seleccionado",
             label_visibility="collapsed",
             help=(
-                "Esta fecha define el mes de la columna de saldo, los próximos a perder "
-                "y las verificaciones de la Tabla Resumen Proyecto."
+                "La app usará automáticamente el último día del mes seleccionado."
             ),
+        )
+        st.caption(
+            f"Corte calculado: **{formato_fecha_colombia(fecha_corte_para_consolidar())}**."
         )
 
         st.markdown('<p class="field-label">Localidad</p>', unsafe_allow_html=True)

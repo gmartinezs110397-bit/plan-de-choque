@@ -51,6 +51,10 @@ MESES_ES = {
     12: "DICIEMBRE",
 }
 
+FILL_TITULO_GRIS = PatternFill("solid", fgColor="D9D9D9")
+FILL_BLANCO = PatternFill("solid", fgColor="FFFFFF")
+FORMATO_PESOS = '_-"$"* #,##0_-;\\-"$"* #,##0_-;_-"$"* "-"_-;_-@_-'
+
 
 @dataclass(frozen=True)
 class FilaLibFen:
@@ -724,9 +728,6 @@ def _llenar_hoja_lib_y_fen(ws, filas: Iterable[FilaLibFen | dict]) -> None:
 
 
 def _formatear_hoja_lib_y_fen(ws, ultima_fila: int) -> None:
-    relleno_datos = PatternFill("solid", fgColor="D9EAD3")
-    relleno_total = PatternFill("solid", fgColor="D9EAD3")
-    relleno_header_total = PatternFill("solid", fgColor="FFFFFF")
     borde = Side(style="thin", color="808080")
     border = Border(left=borde, right=borde, top=borde, bottom=borde)
     fuente_header = Font(bold=True, color="000000")
@@ -736,19 +737,19 @@ def _formatear_hoja_lib_y_fen(ws, ultima_fila: int) -> None:
         cell.font = fuente_header
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = border
-        cell.fill = relleno_header_total if cell.column in (5, 6) else relleno_datos
+        cell.fill = FILL_TITULO_GRIS
 
     for row in ws.iter_rows(min_row=4, max_row=ultima_fila, min_col=1, max_col=7):
         for cell in row:
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.fill = relleno_total if cell.row == ultima_fila else relleno_datos
+            cell.fill = FILL_BLANCO
             if cell.row == ultima_fila:
                 cell.font = fuente_total
 
     for col in ("C", "D", "E", "G"):
         for row in range(4, ultima_fila + 1):
-            ws[f"{col}{row}"].number_format = '#,##0'
+            ws[f"{col}{row}"].number_format = FORMATO_PESOS
     for row in range(4, ultima_fila + 1):
         ws[f"F{row}"].number_format = "0.00%"
 
@@ -834,35 +835,34 @@ def _crear_hoja_bogdata_vs_matriz(
 
 
 def _formatear_hoja_bogdata_vs_matriz(ws, total_row: int, note_row: int) -> None:
-    verde = PatternFill("solid", fgColor="D9EAD3")
     borde = Side(style="thin", color="808080")
     border = Border(left=borde, right=borde, top=borde, bottom=borde)
     fuente_header = Font(bold=True, color="000000")
     fuente_titulo = Font(bold=True, color="000000", size=12)
-    formato_pesos = '_-"$"* #,##0_-;\\-"$"* #,##0_-;_-"$"* "-"_-;_-@_-'
 
     ws["A1"].font = fuente_titulo
     ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws["A1"].fill = verde
+    ws["A1"].fill = FILL_TITULO_GRIS
     ws["A1"].border = border
 
     for row in range(2, 4):
         for col in range(1, 12):
             cell = ws.cell(row, col)
             cell.font = fuente_header
-            cell.fill = verde
+            cell.fill = FILL_TITULO_GRIS
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for row in range(4, total_row + 1):
         for col in range(1, 12):
             cell = ws.cell(row, col)
+            cell.fill = FILL_BLANCO
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if row == total_row:
                 cell.font = fuente_header
             if col >= 3:
-                cell.number_format = formato_pesos
+                cell.number_format = FORMATO_PESOS
 
     ws.cell(note_row, 2).alignment = Alignment(
         horizontal="center",
@@ -940,7 +940,6 @@ def _crear_hoja_depurados(
 
 
 def _formatear_hoja_depurados(ws, total_row: int) -> None:
-    verde = PatternFill("solid", fgColor="D9EAD3")
     borde = Side(style="thin", color="808080")
     border = Border(left=borde, right=borde, top=borde, bottom=borde)
     fuente_header = Font(bold=True, color="000000")
@@ -948,13 +947,14 @@ def _formatear_hoja_depurados(ws, total_row: int) -> None:
     for col in range(1, 7):
         cell = ws.cell(2, col)
         cell.font = fuente_header
-        cell.fill = verde
+        cell.fill = FILL_TITULO_GRIS
         cell.border = border
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for row in range(3, total_row + 1):
         for col in range(1, 7):
             cell = ws.cell(row, col)
+            cell.fill = FILL_BLANCO
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if row == total_row:
@@ -1106,7 +1106,6 @@ def _formatear_hoja_por_depurar_vigencia(
     total_row: int,
     ultima_columna: int,
 ) -> None:
-    verde = PatternFill("solid", fgColor="D9EAD3")
     borde = Side(style="thin", color="808080")
     border = Border(left=borde, right=borde, top=borde, bottom=borde)
     fuente_header = Font(bold=True, color="000000")
@@ -1115,7 +1114,7 @@ def _formatear_hoja_por_depurar_vigencia(
         for col in range(1, ultima_columna + 1):
             cell = ws.cell(row, col)
             cell.font = fuente_header
-            cell.fill = verde
+            cell.fill = FILL_TITULO_GRIS
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if row == 2 and col >= 4 and (col - 4) % 2 == 0:
@@ -1124,6 +1123,7 @@ def _formatear_hoja_por_depurar_vigencia(
     for row in range(3, total_row + 1):
         for col in range(1, ultima_columna + 1):
             cell = ws.cell(row, col)
+            cell.fill = FILL_BLANCO
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if row == total_row:
@@ -1155,6 +1155,7 @@ def _crear_hoja_con_perdida(
         titulo,
         filas_localidades,
         filas_con_perdida,
+        combinar_localidad=False,
     )
 
 
@@ -1175,6 +1176,7 @@ def _crear_hoja_proximos_a_perder(
         titulo,
         filas_localidades,
         filas_proximos_a_perder,
+        combinar_localidad=True,
     )
 
 
@@ -1184,6 +1186,7 @@ def _crear_hoja_perdida_competencia(
     titulo: str,
     filas_localidades: Iterable[FilaLibFen | dict],
     filas_perdida: Iterable[FilaConPerdida | dict],
+    combinar_localidad: bool = False,
 ) -> None:
     ws = wb.create_sheet(nombre_hoja)
     ws.merge_cells("A2:H2")
@@ -1217,6 +1220,7 @@ def _crear_hoja_perdida_competencia(
                 ws.cell(fila_excel, col).value = "N/A"
             fila_excel += 1
             continue
+        inicio_localidad = fila_excel
         for i, fila in enumerate(filas_loc):
             if i == 0:
                 ws.cell(fila_excel, 1).value = fila.numero
@@ -1230,6 +1234,28 @@ def _crear_hoja_perdida_competencia(
             contratos_reportados += 1
             monto_total += fila.monto
             fila_excel += 1
+        fin_localidad = fila_excel - 1
+        if combinar_localidad and fin_localidad > inicio_localidad:
+            ws.merge_cells(
+                start_row=inicio_localidad,
+                start_column=1,
+                end_row=fin_localidad,
+                end_column=1,
+            )
+            ws.merge_cells(
+                start_row=inicio_localidad,
+                start_column=2,
+                end_row=fin_localidad,
+                end_column=2,
+            )
+            ws.cell(inicio_localidad, 1).alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+            )
+            ws.cell(inicio_localidad, 2).alignment = Alignment(
+                horizontal="center",
+                vertical="center",
+            )
 
     total_row = fila_excel
     ws.cell(total_row, 1).value = "TOTAL"
@@ -1239,7 +1265,6 @@ def _crear_hoja_perdida_competencia(
 
 
 def _formatear_hoja_con_perdida(ws, ultima_fila: int) -> None:
-    verde = PatternFill("solid", fgColor="D9EAD3")
     borde = Side(style="thin", color="808080")
     border = Border(left=borde, right=borde, top=borde, bottom=borde)
     fuente_header = Font(bold=True, color="000000")
@@ -1247,18 +1272,18 @@ def _formatear_hoja_con_perdida(ws, ultima_fila: int) -> None:
 
     ws["A2"].font = fuente_titulo
     ws["A2"].alignment = Alignment(horizontal="center", vertical="center")
-    ws["A2"].fill = verde
+    ws["A2"].fill = FILL_TITULO_GRIS
     ws["A2"].border = border
     for col in range(1, 9):
         cell = ws.cell(3, col)
         cell.font = fuente_header
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        cell.fill = verde
+        cell.fill = FILL_TITULO_GRIS
         cell.border = border
 
     for row in ws.iter_rows(min_row=4, max_row=ultima_fila, min_col=1, max_col=8):
         for cell in row:
-            cell.fill = verde
+            cell.fill = FILL_BLANCO
             cell.border = border
             cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
             if cell.row == ultima_fila:
@@ -1267,7 +1292,7 @@ def _formatear_hoja_con_perdida(ws, ultima_fila: int) -> None:
     for row in range(4, ultima_fila + 1):
         ws[f"F{row}"].number_format = "dd/mm/yyyy"
         ws[f"G{row}"].number_format = "dd/mm/yyyy"
-        ws[f"H{row}"].number_format = '#,##0'
+        ws[f"H{row}"].number_format = FORMATO_PESOS
     widths = {
         "A": 8,
         "B": 20,
