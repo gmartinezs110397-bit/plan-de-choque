@@ -138,12 +138,21 @@ st.markdown(
         justify-content: center;
         gap: 0.65rem;
         margin: 0 0 0.35rem 0;
+        caret-color: transparent !important;
+        user-select: none;
+    }
+    .app-brand * {
+        caret-color: transparent !important;
+        user-select: none;
     }
     .app-brand-logo {
         width: 42px;
         height: 42px;
         object-fit: contain;
         flex: 0 0 auto;
+    }
+    .app-brand a {
+        display: none !important;
     }
     .app-brand .app-title {
         margin: 0;
@@ -982,11 +991,23 @@ def render_mensaje_bienvenida_pendiente() -> None:
           doc.body.appendChild(overlay);
 
           let cerrado = false;
+          function limpiarFoco() {{
+            try {{
+              const activo = doc.activeElement;
+              if (activo && typeof activo.blur === "function") activo.blur();
+            }} catch (err) {{}}
+            try {{
+              const sel = doc.getSelection && doc.getSelection();
+              if (sel && sel.removeAllRanges) sel.removeAllRanges();
+            }} catch (err) {{}}
+          }}
           function cerrar() {{
             if (cerrado) return;
             cerrado = true;
             doc.removeEventListener("keydown", cerrarConTecla, true);
+            limpiarFoco();
             overlay.remove();
+            setTimeout(limpiarFoco, 40);
           }}
           function cerrarConTecla(e) {{
             if (e.key !== "Enter" && e.key !== "Escape") return;
@@ -1186,7 +1207,7 @@ def render_encabezado_app(subtitulo: str) -> None:
         f"""
         <div class="app-brand">
             {logo_html}
-            <h1 class="app-title">Plan de Choque</h1>
+            <div class="app-title" role="heading" aria-level="1">Plan de Choque</div>
         </div>
         <p class="app-subtitle">{escape(subtitulo)}</p>
         """,
