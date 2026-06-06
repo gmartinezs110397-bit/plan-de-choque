@@ -3446,12 +3446,26 @@ def construir_archivos_salida_global(
     fecha = fecha_referencia_analisis()
     localidades = localidades_analizadas(stats)
     df_avance = construir_avance_plan_de_choque(consolidated_df, stats, fecha)
+    contratos_act = st.session_state.get("contratos_actualizados") or {}
+    contratos_para_avance = []
+    for loc, data in sorted(contratos_act.items(), key=lambda item: item[0]):
+        raw_contratos = bytes_contratos_de_salida(data)
+        if raw_contratos:
+            contratos_para_avance.append({"localidad": loc, "bytes": raw_contratos})
+    avance_bytes = generate_excel_bytes(df_avance, sheet_name="Avance").getvalue()
+    if contratos_para_avance:
+        from avance_plan_choque import crear_excel_avance_plan_de_choque
+
+        avance_bytes = crear_excel_avance_plan_de_choque(
+            contratos_para_avance,
+            fecha,
+        )
     from tabla_resumen_proyecto import crear_excel_tabla_resumen_proyecto
 
     return [
         (
             nombre_archivo_salida(ARCHIVO_AVANCE_BASE, fecha, localidades),
-            generate_excel_bytes(df_avance, sheet_name="Avance").getvalue(),
+            avance_bytes,
         ),
         (
             nombre_archivo_salida(ARCHIVO_RESUMEN_BASE, fecha, localidades),
