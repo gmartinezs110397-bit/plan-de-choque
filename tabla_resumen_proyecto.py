@@ -455,7 +455,12 @@ def _filas_perdida_desde_matriz(
 
     return sorted(
         grupos.values(),
-        key=lambda f: (f.numero, f.fecha_finalizacion, str(f.numero_contrato), f.contratista),
+        key=lambda f: (
+            f.numero,
+            _clave_numero_contrato(f.numero_contrato),
+            f.fecha_finalizacion,
+            f.contratista,
+        ),
     )
 
 
@@ -535,13 +540,28 @@ def _fila_con_perdida_desde_dict(fila: FilaConPerdida | dict) -> FilaConPerdida:
     )
 
 
+def _clave_numero_contrato(valor: object) -> tuple[int, float | str, str]:
+    texto = str(valor or "").strip()
+    if not texto:
+        return (2, "", "")
+    numero = pd.to_numeric(texto, errors="coerce")
+    if pd.notna(numero):
+        return (0, float(numero), texto)
+    return (1, normalizar(texto), texto)
+
+
 def ordenar_filas_con_perdida(
     filas: Iterable[FilaConPerdida | dict],
 ) -> list[FilaConPerdida]:
     normalizadas = [_fila_con_perdida_desde_dict(fila) for fila in filas]
     return sorted(
         normalizadas,
-        key=lambda f: (f.numero, f.fecha_finalizacion, str(f.numero_contrato), f.contratista),
+        key=lambda f: (
+            f.numero,
+            _clave_numero_contrato(f.numero_contrato),
+            f.fecha_finalizacion,
+            f.contratista,
+        ),
     )
 
 
@@ -1155,7 +1175,7 @@ def _crear_hoja_con_perdida(
         titulo,
         filas_localidades,
         filas_con_perdida,
-        combinar_localidad=False,
+        combinar_localidad=True,
     )
 
 

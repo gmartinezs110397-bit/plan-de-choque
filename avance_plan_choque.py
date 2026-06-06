@@ -543,6 +543,8 @@ def _escribir_general(
             _set_value(ws, row, col, f"='X Loc'!{source_col}{total_row_xloc}")
     total_rank = 4 + len(ranking)
     _set_value(ws, total_rank, 9, "Total general", "total")
+    _set_value(ws, total_rank, 10, "", "total")
+    ws.merge_cells(start_row=total_rank, start_column=9, end_row=total_rank, end_column=10)
     for col in range(11, 16):
         letter = get_column_letter(col)
         _set_value(ws, total_rank, col, f"=SUM({letter}4:{letter}{total_rank - 1})", "total")
