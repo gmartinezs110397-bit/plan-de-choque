@@ -28,6 +28,10 @@ _APP_DIR = Path(__file__).resolve().parent
 if str(_APP_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_DIR))
 LOGO_BOGOTA_PATH = _APP_DIR / "assets" / "escudo_bogota.png"
+PLANTILLA_ASISTENCIA_TECNICA_PATH = (
+    _APP_DIR / "templates" / "asistencia_tecnica" / "MODELO_DE_RESPUESTA_CPS.docx"
+)
+TITULO_PRINCIPAL_APP = "Dirección para la Gestión del Desarrollo Local"
 
 
 def _cargar_icono_pagina():
@@ -63,7 +67,7 @@ LOCALIDADES = [
 ]
 
 st.set_page_config(
-    page_title="Plan de Choque",
+    page_title=TITULO_PRINCIPAL_APP,
     page_icon=_cargar_icono_pagina(),
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -232,6 +236,69 @@ st.markdown(
         white-space: nowrap;
     }
     .metric-value-sm { font-size: clamp(1.05rem, 2.6vw, 1.45rem); }
+    .module-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        margin-top: 0.25rem;
+    }
+    .module-card,
+    .support-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 1rem;
+        min-height: 8rem;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+    }
+    .module-card-title,
+    .support-card-title {
+        color: var(--pc-ink);
+        font-size: 1.05rem;
+        font-weight: 700;
+        margin: 0 0 0.35rem;
+    }
+    .module-card-copy,
+    .support-card-copy {
+        color: #6b7280;
+        font-size: 0.9rem;
+        line-height: 1.45;
+        margin: 0;
+    }
+    .module-kicker {
+        color: var(--pc-pink-600);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        margin-bottom: 0.35rem;
+        text-transform: uppercase;
+    }
+    .module-topbar {
+        align-items: center;
+        display: flex;
+        gap: 0.75rem;
+        justify-content: space-between;
+        margin: 0 0 0.75rem;
+    }
+    .module-topbar-label {
+        color: #6b7280;
+        font-size: 0.82rem;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        margin: 0;
+        text-transform: uppercase;
+    }
+    .support-pill {
+        background: var(--pc-pink-50);
+        border: 1px solid var(--pc-pink-200);
+        border-radius: 999px;
+        color: var(--pc-pink-700);
+        display: inline-flex;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-bottom: 0.75rem;
+        padding: 0.25rem 0.65rem;
+    }
 
     /* Select localidad — borde y foco fucsia */
     [class*="st-key-select_localidad"] [data-baseweb="select"] > div,
@@ -438,6 +505,9 @@ st.markdown(
         cursor: not-allowed !important;
     }
     @media (max-width: 640px) {
+        .module-grid {
+            grid-template-columns: 1fr;
+        }
         .app-brand {
             gap: 0.5rem;
         }
@@ -828,6 +898,7 @@ def init_session_state():
         "acceso_autorizado": False,
         "reporte_ejecucion": None,
         "_pc_mostrar_formulario_correccion": False,
+        "_pc_seccion_activa": "",
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -853,6 +924,9 @@ def contrasena_acceso_esperada() -> str | None:
 CLAVE_INPUT_CONTRASENA = "input_contrasena_portada"
 CLAVE_MENSAJE_BIENVENIDA = "_mensaje_bienvenida_portada"
 CLAVE_ULTIMO_MENSAJE_BIENVENIDA = "_ultimo_mensaje_bienvenida_portada"
+CLAVE_SECCION_ACTIVA = "_pc_seccion_activa"
+SECCION_PLAN_CHOQUE = "plan_de_choque"
+SECCION_ASISTENCIA_TECNICA = "asistencia_tecnica"
 MENSAJES_PERSONALES_BIENVENIDA = (
     "Eres luz, mujer maravillosa ✨💖",
     "Gracias por ser una hermana excepcional 💕",
@@ -1195,7 +1269,7 @@ def logo_bogota_data_uri() -> str:
         return ""
 
 
-def render_encabezado_app(subtitulo: str) -> None:
+def render_encabezado_app(subtitulo: str, titulo: str = TITULO_PRINCIPAL_APP) -> None:
     logo_uri = logo_bogota_data_uri()
     logo_html = ""
     if logo_uri:
@@ -1207,7 +1281,7 @@ def render_encabezado_app(subtitulo: str) -> None:
         f"""
         <div class="app-brand">
             {logo_html}
-            <div class="app-title" role="heading" aria-level="1">Plan de Choque</div>
+            <div class="app-title" role="heading" aria-level="1">{escape(titulo)}</div>
         </div>
         <p class="app-subtitle">{escape(subtitulo)}</p>
         """,
@@ -1250,6 +1324,357 @@ def render_portada_acceso() -> None:
         st.error("Contraseña incorrecta.")
 
     st.stop()
+
+
+def _hay_estado_plan_choque_activo() -> bool:
+    """Mantiene a salvo una ejecución o resultado aunque no haya sección elegida."""
+    return any(
+        bool(st.session_state.get(clave))
+        for clave in (
+            "ejecutar_consolidacion_ahora",
+            "pendiente_consolidacion",
+            "consolidacion_work",
+            "cola_localidades",
+            "processed",
+        )
+    )
+
+
+def seccion_activa_actual() -> str:
+    seccion = str(st.session_state.get(CLAVE_SECCION_ACTIVA) or "").strip()
+    if seccion:
+        return seccion
+    if _hay_estado_plan_choque_activo():
+        return SECCION_PLAN_CHOQUE
+    return ""
+
+
+def activar_seccion(seccion: str) -> None:
+    st.session_state[CLAVE_SECCION_ACTIVA] = seccion
+
+
+def volver_a_menu_secciones() -> None:
+    st.session_state[CLAVE_SECCION_ACTIVA] = ""
+
+
+def render_selector_secciones() -> None:
+    render_encabezado_app("Seleccione una sección para empezar")
+    st.markdown(
+        """
+        <div class="module-grid">
+            <div class="module-card">
+                <div class="module-kicker">Consolidación</div>
+                <p class="module-card-title">Plan de Choque</p>
+                <p class="module-card-copy">
+                    Cruce de Matriz y Contratos por localidad, revisión de casos
+                    pendientes y descarga del ZIP completo.
+                </p>
+            </div>
+            <div class="module-card">
+                <div class="module-kicker">Soporte</div>
+                <p class="module-card-title">Asistencia Técnica</p>
+                <p class="module-card-copy">
+                    Generación de respuestas Word y matriz consolidada para
+                    solicitudes de adición y prórroga CPS.
+                </p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col_plan, col_asistencia = st.columns(2)
+    with col_plan:
+        if st.button(
+            "Abrir Plan de Choque",
+            type="primary",
+            use_container_width=True,
+            key="btn_abrir_plan_choque",
+        ):
+            activar_seccion(SECCION_PLAN_CHOQUE)
+            st.rerun()
+    with col_asistencia:
+        if st.button(
+            "Abrir Asistencia Técnica",
+            type="secondary",
+            use_container_width=True,
+            key="btn_abrir_asistencia_tecnica",
+        ):
+            activar_seccion(SECCION_ASISTENCIA_TECNICA)
+            st.rerun()
+
+
+def render_barra_seccion_actual(nombre: str) -> None:
+    bloqueado = False
+    try:
+        bloqueado = _consolidacion_corriendo()
+    except NameError:
+        bloqueado = False
+    col_titulo, col_boton = st.columns([3, 1])
+    with col_titulo:
+        st.markdown(
+            f'<p class="module-topbar-label">{escape(nombre)}</p>',
+            unsafe_allow_html=True,
+        )
+    with col_boton:
+        if st.button(
+            "Cambiar sección",
+            use_container_width=True,
+            disabled=bloqueado,
+            key=f"btn_cambiar_seccion_{nombre}",
+            help=(
+                "Espere a que termine la consolidación para cambiar de sección."
+                if bloqueado
+                else "Volver al menú de secciones."
+            ),
+        ):
+            volver_a_menu_secciones()
+            st.rerun()
+
+
+def render_seccion_asistencia_tecnica() -> None:
+    from asistencia_tecnica import (
+        ESTADOS_ASISTENCIA,
+        analizar_solicitudes,
+        enriquecer_con_radicados,
+        extraer_radicados,
+        generar_zip_asistencia,
+    )
+    import pandas as pd
+
+    render_barra_seccion_actual("Asistencia Técnica")
+    render_encabezado_app(
+        "Asistencia Técnica — respuestas CPS y matriz de seguimiento",
+    )
+
+    st.markdown(
+        """
+        <div class="module-grid">
+            <div class="support-card">
+                <span class="support-pill">Entrada</span>
+                <p class="support-card-title">Solicitud y radicado</p>
+                <p class="support-card-copy">
+                    La app lee el listado general de radicados y las solicitudes
+                    PDF de adición o prórroga.
+                </p>
+            </div>
+            <div class="support-card">
+                <span class="support-pill">Salida</span>
+                <p class="support-card-title">Word y Excel</p>
+                <p class="support-card-copy">
+                    Descarga un ZIP con las respuestas por localidad y una matriz
+                    consolidada lista para revisión.
+                </p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not PLANTILLA_ASISTENCIA_TECNICA_PATH.is_file():
+        st.error(
+            "No encuentro la plantilla Word de Asistencia Técnica dentro del proyecto."
+        )
+        return
+
+    st.markdown('<p class="section-title">Archivos de trabajo</p>', unsafe_allow_html=True)
+    with st.container(border=True):
+        col_general, col_fecha = st.columns([2, 1])
+        with col_general:
+            archivo_general = st.file_uploader(
+                "Listado general de radicados",
+                type=["pdf"],
+                accept_multiple_files=False,
+                key="at_archivo_general",
+            )
+        with col_fecha:
+            fecha_respuesta = st.date_input(
+                "Fecha de respuesta",
+                value=date.today(),
+                format="DD/MM/YYYY",
+                key="at_fecha_respuesta",
+            )
+
+        solicitudes = st.file_uploader(
+            "Solicitudes",
+            type=["pdf"],
+            accept_multiple_files=True,
+            key="at_solicitudes_pdf",
+        )
+        profesional = st.text_input(
+            "Profesional que proyecta",
+            value="Ingrith Khaterine Martínez Sánchez",
+            key="at_profesional",
+        )
+        analizar = st.button(
+            "Analizar solicitudes",
+            type="primary",
+            use_container_width=True,
+            disabled=not solicitudes,
+            key="btn_at_analizar",
+        )
+
+    if analizar:
+        archivos = [(archivo.name, archivo.getvalue()) for archivo in solicitudes or []]
+        filas, errores = analizar_solicitudes(archivos)
+        mapa_radicados = {}
+        fecha_salida = None
+        if archivo_general is not None:
+            mapa_radicados, fecha_salida, errores_radicados = extraer_radicados(
+                archivo_general.getvalue()
+            )
+            errores.extend(errores_radicados)
+        filas = enriquecer_con_radicados(filas, mapa_radicados, fecha_salida)
+        st.session_state["_pc_at_filas"] = filas
+        st.session_state["_pc_at_errores"] = errores
+        st.session_state["_pc_at_zip"] = None
+        st.session_state["_pc_at_zip_nombre"] = ""
+        st.session_state["_pc_at_resumen"] = []
+        st.session_state["_pc_at_editor_version"] = str(uuid.uuid4())
+        if filas:
+            st.success(f"Se analizaron {len(filas)} solicitud(es).")
+
+    errores = st.session_state.get("_pc_at_errores", [])
+    if errores:
+        st.warning("Hay datos para revisar antes de generar la descarga.")
+        for error in errores[:8]:
+            st.markdown(f"- {escape(str(error))}")
+        if len(errores) > 8:
+            st.markdown(f"- {len(errores) - 8} aviso(s) adicional(es).")
+
+    filas = st.session_state.get("_pc_at_filas") or []
+    if not filas:
+        return
+
+    st.markdown('<p class="section-title">Datos detectados</p>', unsafe_allow_html=True)
+    columnas_editor = [
+        "archivo",
+        "localidad",
+        "sipse",
+        "radicado_salida",
+        "fecha_salida",
+        "fecha_solicitud",
+        "contrato",
+        "contratista",
+        "supervisor",
+        "objeto",
+        "fecha_inicio",
+        "plazo_inicial",
+        "fecha_terminacion_inicial",
+        "prorroga_solicitada",
+        "fecha_terminacion_final",
+        "valor_inicial",
+        "valor_adicion",
+        "estado",
+        "observaciones",
+    ]
+    df_filas = pd.DataFrame(filas)
+    for columna in columnas_editor:
+        if columna not in df_filas.columns:
+            df_filas[columna] = ""
+
+    editor_key = "at_editor_" + st.session_state.get("_pc_at_editor_version", "base")
+    datos_editados = st.data_editor(
+        df_filas[columnas_editor],
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+        disabled=["archivo"],
+        key=editor_key,
+        column_config={
+            "archivo": st.column_config.TextColumn("Archivo"),
+            "localidad": st.column_config.SelectboxColumn(
+                "Localidad",
+                options=LOCALIDADES,
+                required=True,
+            ),
+            "sipse": st.column_config.TextColumn("SIPSE"),
+            "radicado_salida": st.column_config.TextColumn("Radicado salida"),
+            "fecha_salida": st.column_config.TextColumn("Fecha salida"),
+            "fecha_solicitud": st.column_config.TextColumn("Fecha solicitud"),
+            "contrato": st.column_config.TextColumn("Contrato"),
+            "contratista": st.column_config.TextColumn("Contratista"),
+            "supervisor": st.column_config.TextColumn("Supervisor"),
+            "objeto": st.column_config.TextColumn("Objeto"),
+            "fecha_inicio": st.column_config.TextColumn("Fecha inicio"),
+            "plazo_inicial": st.column_config.TextColumn("Plazo inicial"),
+            "fecha_terminacion_inicial": st.column_config.TextColumn("Fecha terminación"),
+            "prorroga_solicitada": st.column_config.TextColumn("Prórroga"),
+            "fecha_terminacion_final": st.column_config.TextColumn("Fecha final"),
+            "valor_inicial": st.column_config.NumberColumn("Valor inicial", format="$ %d"),
+            "valor_adicion": st.column_config.NumberColumn("Valor adición", format="$ %d"),
+            "estado": st.column_config.SelectboxColumn(
+                "Estado",
+                options=list(ESTADOS_ASISTENCIA),
+                required=True,
+            ),
+            "observaciones": st.column_config.TextColumn("Observaciones"),
+        },
+    )
+
+    col_info, col_generar = st.columns([2, 1])
+    with col_info:
+        localidades_detectadas = sorted(
+            {str(x) for x in datos_editados["localidad"].dropna().tolist() if str(x).strip()}
+        )
+        st.caption(
+            f"{len(datos_editados)} solicitud(es) · "
+            f"{len(localidades_detectadas)} localidad(es)"
+        )
+    with col_generar:
+        generar = st.button(
+            "Preparar ZIP",
+            type="primary",
+            use_container_width=True,
+            key="btn_at_generar_zip",
+        )
+
+    if generar:
+        filas_generar = datos_editados.to_dict("records")
+        faltantes = [
+            f.get("archivo", "")
+            for f in filas_generar
+            if not str(f.get("localidad") or "").strip()
+            or not str(f.get("contrato") or "").strip()
+            or not str(f.get("contratista") or "").strip()
+        ]
+        if faltantes:
+            st.warning("Revise localidad, contrato y contratista antes de generar.")
+        else:
+            try:
+                zip_bytes, nombre_zip, resumen_zip = generar_zip_asistencia(
+                    filas_generar,
+                    PLANTILLA_ASISTENCIA_TECNICA_PATH,
+                    fecha_respuesta,
+                    profesional.strip() or "Profesional DGDL",
+                )
+            except Exception as exc:
+                st.error(f"No se pudo preparar el ZIP: {exc}")
+            else:
+                st.session_state["_pc_at_zip"] = zip_bytes
+                st.session_state["_pc_at_zip_nombre"] = nombre_zip
+                st.session_state["_pc_at_resumen"] = resumen_zip
+                st.success("ZIP preparado.")
+
+    zip_bytes = st.session_state.get("_pc_at_zip")
+    if zip_bytes:
+        resumen_zip = st.session_state.get("_pc_at_resumen") or []
+        with st.container(border=True):
+            st.markdown("**Archivos generados**")
+            for item in resumen_zip:
+                st.markdown(
+                    f"- {escape(item['localidad'])}: "
+                    f"{item['solicitudes']} solicitud(es) · `{escape(item['archivo'])}`"
+                )
+            st.markdown("- Excel consolidado · `Matriz asistencia tecnica CPS.xlsx`")
+        st.download_button(
+            "Descargar ZIP de Asistencia Técnica",
+            data=zip_bytes,
+            file_name=st.session_state.get("_pc_at_zip_nombre") or "Asistencia tecnica CPS.zip",
+            mime="application/zip",
+            type="primary",
+            use_container_width=True,
+            key="btn_at_descargar_zip",
+        )
 
 
 init_session_state()
@@ -4836,6 +5261,19 @@ if not st.session_state.get("acceso_autorizado"):
 
 render_mensaje_bienvenida_pendiente()
 
+_seccion_activa = seccion_activa_actual()
+if not _seccion_activa:
+    render_selector_secciones()
+    st.stop()
+
+if _seccion_activa == SECCION_ASISTENCIA_TECNICA:
+    render_seccion_asistencia_tecnica()
+    st.stop()
+
+if _seccion_activa != SECCION_PLAN_CHOQUE:
+    volver_a_menu_secciones()
+    st.rerun()
+
 @st.cache_resource(show_spinner=False)
 def _dependencias_consolidacion():
     """Una sola carga por proceso del servidor (no en cada F5)."""
@@ -4989,6 +5427,7 @@ if st.session_state.get("ejecutar_consolidacion_ahora"):
         _barra_consolidacion = st.progress(0, text="Iniciando consolidación…")
 
 # ── Título ─────────────────────────────────────────────────────────────────────
+render_barra_seccion_actual("Plan de Choque")
 render_encabezado_app("Bogotá — consolidación por localidad")
 
 _omitir_formulario = _omitir_formulario_entrada()

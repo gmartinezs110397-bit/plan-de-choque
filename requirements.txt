@@ -4,3 +4,5 @@ openpyxl
 xlsxwriter
 msoffcrypto-tool
 xlsx-fixer
+python-docx
+pypdf
