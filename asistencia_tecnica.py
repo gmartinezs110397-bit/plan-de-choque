@@ -484,6 +484,143 @@ def _mes_reporte(fila: dict) -> str:
     return MESES_ES[fecha.month - 1].upper() if fecha else ""
 
 
+def _nombre_hoja_contrato(fila: dict, consecutivo: int, usados: set[str]) -> str:
+    contrato = _numero_contrato_corto(_texto(fila.get("contrato")))
+    base = re.sub(r"[\[\]\*\?/\\:]", " ", contrato or f"Contrato {consecutivo}")
+    base = re.sub(r"\s+", " ", base).strip()[:25] or f"Contrato {consecutivo}"
+    nombre = base
+    sufijo = 2
+    while nombre in usados:
+        extra = f" {sufijo}"
+        nombre = f"{base[:31 - len(extra)]}{extra}"
+        sufijo += 1
+    usados.add(nombre)
+    return nombre
+
+
+def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) -> None:
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    nombre = _nombre_hoja_contrato(fila, consecutivo, set(wb.sheetnames))
+    ws = wb.create_sheet(nombre)
+    ws.sheet_view.showGridLines = False
+
+    rojo = PatternFill("solid", fgColor="C00000")
+    amarillo = PatternFill("solid", fgColor="FFC000")
+    gris = PatternFill("solid", fgColor="D9D9D9")
+    gris_claro = PatternFill("solid", fgColor="F3F4F6")
+    borde = Border(
+        left=Side(style="thin", color="808080"),
+        right=Side(style="thin", color="808080"),
+        top=Side(style="thin", color="808080"),
+        bottom=Side(style="thin", color="808080"),
+    )
+
+    ws.merge_cells("A1:D1")
+    ws["A1"] = f"FICHA DE REVISIÓN SECOP - {_numero_contrato_corto(_texto(fila.get('contrato')))}"
+    ws["A1"].fill = rojo
+    ws["A1"].font = Font(bold=True, color="FFFFFF", size=13)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+
+    secciones = [
+        (
+            "Información de la solicitud",
+            [
+                ("Localidad", _canon_localidad(fila.get("localidad", "")).upper()),
+                ("SIPSE", _texto(fila.get("sipse"))),
+                ("Radicado de salida", _texto(fila.get("radicado_salida"))),
+                ("Fecha salida DGDL", parsear_fecha(fila.get("fecha_salida"))),
+                ("Archivo origen", _texto(fila.get("archivo"))),
+                ("Profesional DGDL", _texto(profesional)),
+            ],
+        ),
+        (
+            "Información del contrato",
+            [
+                ("No. de contrato", _texto(fila.get("contrato"))),
+                ("Contratista", _texto(fila.get("contratista")).upper()),
+                ("Supervisor(a)", _texto(fila.get("supervisor")).upper()),
+                ("Objeto", _texto(fila.get("objeto")).upper()),
+                ("Fecha de inicio", parsear_fecha(fila.get("fecha_inicio"))),
+                ("Plazo inicial", _texto(fila.get("plazo_inicial"))),
+                ("Valor inicial", _a_numero(fila.get("valor_inicial"))),
+                ("Fecha terminación inicial", parsear_fecha(fila.get("fecha_terminacion_inicial"))),
+            ],
+        ),
+        (
+            "Modificación solicitada",
+            [
+                ("Tipo de solicitud", _descripcion_solicitud(fila)),
+                ("Prórroga solicitada", _texto(fila.get("prorroga_solicitada"))),
+                ("Valor adición", _a_numero(fila.get("valor_adicion"))),
+                ("Fecha terminación con prórroga", parsear_fecha(fila.get("fecha_terminacion_final"))),
+                ("Estado / trámite", (_texto(fila.get("estado")) or ESTADOS_ASISTENCIA[0]).upper()),
+                ("Observaciones", _texto(fila.get("observaciones")) or "NINGUNA"),
+            ],
+        ),
+        (
+            "Verificación SECOP por Kate",
+            [
+                ("Se ajusta en SECOP", ""),
+                ("Observación SECOP", ""),
+                ("Estado del cargue SECOP", ""),
+                ("Fecha de revisión", ""),
+                ("Proceso SECOP", _texto(fila.get("proceso_secop"))),
+                ("Fecha publicación SECOP", parsear_fecha(fila.get("fecha_publicacion_secop"))),
+                ("Link SECOP", _texto(fila.get("link_secop"))),
+            ],
+        ),
+    ]
+
+    fila_excel = 3
+    for titulo, campos in secciones:
+        ws.merge_cells(start_row=fila_excel, start_column=1, end_row=fila_excel, end_column=4)
+        celda_titulo = ws.cell(fila_excel, 1, titulo)
+        celda_titulo.fill = amarillo
+        celda_titulo.font = Font(bold=True)
+        celda_titulo.alignment = Alignment(horizontal="center", vertical="center")
+        celda_titulo.border = borde
+        for col in range(1, 5):
+            ws.cell(fila_excel, col).border = borde
+        fila_excel += 1
+
+        for etiqueta, valor in campos:
+            ws.cell(fila_excel, 1, etiqueta)
+            ws.cell(fila_excel, 2, valor)
+            ws.merge_cells(start_row=fila_excel, start_column=2, end_row=fila_excel, end_column=4)
+            for col in range(1, 5):
+                celda = ws.cell(fila_excel, col)
+                celda.border = borde
+                celda.alignment = Alignment(vertical="center", wrap_text=True)
+                if col == 1:
+                    celda.fill = gris
+                    celda.font = Font(bold=True)
+                elif titulo == "Verificación SECOP por Kate" and etiqueta in {
+                    "Se ajusta en SECOP",
+                    "Observación SECOP",
+                    "Estado del cargue SECOP",
+                    "Fecha de revisión",
+                }:
+                    celda.fill = gris_claro
+                if isinstance(celda.value, date):
+                    celda.number_format = "DD/MM/YYYY"
+                if etiqueta in {"Valor inicial", "Valor adición"}:
+                    celda.number_format = '"$"#,##0'
+            fila_excel += 1
+        fila_excel += 1
+
+    ws.column_dimensions["A"].width = 28
+    ws.column_dimensions["B"].width = 28
+    ws.column_dimensions["C"].width = 28
+    ws.column_dimensions["D"].width = 28
+    for row in range(1, fila_excel):
+        ws.row_dimensions[row].height = 24
+    for row in range(1, fila_excel):
+        if ws.cell(row, 1).value in {"Objeto", "Observaciones", "Link SECOP", "Proceso SECOP"}:
+            ws.row_dimensions[row].height = 72
+    ws.freeze_panes = "A3"
+
+
 def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -628,6 +765,9 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
     ws.row_dimensions[7].height = 48
     ws.freeze_panes = "A8"
 
+    for consecutivo, fila in enumerate(filas_ordenadas, 1):
+        _agregar_ficha_contrato(wb, fila, consecutivo, profesional)
+
     salida = BytesIO()
     wb.save(salida)
     return salida.getvalue()
@@ -697,7 +837,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     }
     for row_idx, valor in valores.items():
         _set_cell_text(table.rows[row_idx].cells[1], valor)
-        _set_cell_text(table.rows[row_idx].cells[2], "X")
+        _set_cell_text(table.rows[row_idx].cells[2], "")
         _set_cell_text(table.rows[row_idx].cells[3], "")
 
 

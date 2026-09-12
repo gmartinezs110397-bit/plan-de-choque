@@ -1461,8 +1461,8 @@ def render_seccion_asistencia_tecnica() -> None:
                 <span class="support-pill">Salida</span>
                 <p class="support-card-title">Word y Excel</p>
                 <p class="support-card-copy">
-                    Descarga un ZIP con las respuestas por localidad y una matriz
-                    consolidada lista para revisión.
+                    Descarga un ZIP con las respuestas por localidad, una matriz
+                    consolidada y fichas por contrato para revisión SECOP.
                 </p>
             </div>
         </div>
@@ -1571,16 +1571,19 @@ def render_seccion_asistencia_tecnica() -> None:
     for columna in columnas_editor:
         if columna not in df_filas.columns:
             df_filas[columna] = ""
+    df_editor = df_filas[columnas_editor].copy()
+    df_editor.insert(0, "numero", range(1, len(df_editor) + 1))
 
     editor_key = "at_editor_" + st.session_state.get("_pc_at_editor_version", "base")
     datos_editados = st.data_editor(
-        df_filas[columnas_editor],
+        df_editor,
         hide_index=True,
         use_container_width=True,
         num_rows="fixed",
-        disabled=["archivo"],
+        disabled=["numero", "archivo"],
         key=editor_key,
         column_config={
+            "numero": st.column_config.NumberColumn("No.", format="%d", width="small"),
             "archivo": st.column_config.TextColumn("Archivo"),
             "localidad": st.column_config.SelectboxColumn(
                 "Localidad",
@@ -1629,7 +1632,8 @@ def render_seccion_asistencia_tecnica() -> None:
         )
 
     if generar:
-        filas_generar = datos_editados.to_dict("records")
+        datos_para_generar = datos_editados.drop(columns=["numero"], errors="ignore")
+        filas_generar = datos_para_generar.to_dict("records")
         faltantes = [
             f.get("archivo", "")
             for f in filas_generar
@@ -1665,7 +1669,10 @@ def render_seccion_asistencia_tecnica() -> None:
                     f"- {escape(item['localidad'])}: "
                     f"{item['solicitudes']} solicitud(es) · `{escape(item['archivo'])}`"
                 )
-            st.markdown("- Excel consolidado · `Matriz asistencia tecnica CPS.xlsx`")
+            st.markdown(
+                "- Excel consolidado con fichas por contrato · "
+                "`Matriz asistencia tecnica CPS.xlsx`"
+            )
         st.download_button(
             "Descargar ZIP de Asistencia Técnica",
             data=zip_bytes,
