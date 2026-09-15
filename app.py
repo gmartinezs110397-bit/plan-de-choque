@@ -299,6 +299,29 @@ st.markdown(
         margin-bottom: 0.75rem;
         padding: 0.25rem 0.65rem;
     }
+    .support-card {
+        align-items: start;
+        column-gap: 0.8rem;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        min-height: 0;
+        padding: 0.85rem 1rem;
+        row-gap: 0.15rem;
+    }
+    .support-card .support-pill {
+        font-size: 0.72rem;
+        grid-row: 1 / span 2;
+        margin: 0;
+        padding: 0.2rem 0.55rem;
+    }
+    .support-card .support-card-title {
+        font-size: 0.98rem;
+        margin: 0.05rem 0 0.12rem;
+    }
+    .support-card .support-card-copy {
+        font-size: 0.84rem;
+        line-height: 1.32;
+    }
 
     /* Select localidad — borde y foco fucsia */
     [class*="st-key-select_localidad"] [data-baseweb="select"] > div,
@@ -507,6 +530,14 @@ st.markdown(
     @media (max-width: 640px) {
         .module-grid {
             grid-template-columns: 1fr;
+        }
+        .support-card {
+            grid-template-columns: 1fr;
+        }
+        .support-card .support-pill {
+            grid-row: auto;
+            margin-bottom: 0.25rem;
+            width: max-content;
         }
         .app-brand {
             gap: 0.5rem;
@@ -1395,7 +1426,7 @@ def render_selector_secciones() -> None:
     with col_asistencia:
         if st.button(
             "Abrir Asistencia Técnica",
-            type="secondary",
+            type="primary",
             use_container_width=True,
             key="btn_abrir_asistencia_tecnica",
         ):
@@ -1451,18 +1482,16 @@ def render_seccion_asistencia_tecnica() -> None:
         <div class="module-grid">
             <div class="support-card">
                 <span class="support-pill">Entrada</span>
-                <p class="support-card-title">Solicitud y radicado</p>
+                <p class="support-card-title">PDF + radicado</p>
                 <p class="support-card-copy">
-                    La app lee el listado general de radicados y las solicitudes
-                    PDF de adición o prórroga.
+                    Listado general y solicitudes de adición o prórroga.
                 </p>
             </div>
             <div class="support-card">
                 <span class="support-pill">Salida</span>
-                <p class="support-card-title">Word y Excel</p>
+                <p class="support-card-title">ZIP final</p>
                 <p class="support-card-copy">
-                    Descarga un ZIP con las respuestas por localidad, una matriz
-                    consolidada y fichas por contrato para revisión SECOP.
+                    Respuestas Word y matriz Excel con fichas por contrato.
                 </p>
             </div>
         </div>
@@ -1529,6 +1558,7 @@ def render_seccion_asistencia_tecnica() -> None:
         st.session_state["_pc_at_zip"] = None
         st.session_state["_pc_at_zip_nombre"] = ""
         st.session_state["_pc_at_resumen"] = []
+        st.session_state["_pc_at_zip_signature"] = ""
         st.session_state["_pc_at_editor_version"] = str(uuid.uuid4())
         if filas:
             st.success(f"Se analizaron {len(filas)} solicitud(es).")
@@ -1614,50 +1644,63 @@ def render_seccion_asistencia_tecnica() -> None:
         },
     )
 
-    col_info, col_generar = st.columns([2, 1])
-    with col_info:
-        localidades_detectadas = sorted(
-            {str(x) for x in datos_editados["localidad"].dropna().tolist() if str(x).strip()}
-        )
-        st.caption(
-            f"{len(datos_editados)} solicitud(es) · "
-            f"{len(localidades_detectadas)} localidad(es)"
-        )
-    with col_generar:
-        generar = st.button(
-            "Preparar ZIP",
-            type="primary",
-            use_container_width=True,
-            key="btn_at_generar_zip",
-        )
+    localidades_detectadas = sorted(
+        {str(x) for x in datos_editados["localidad"].dropna().tolist() if str(x).strip()}
+    )
+    st.caption(
+        f"{len(datos_editados)} solicitud(es) · "
+        f"{len(localidades_detectadas)} localidad(es)"
+    )
 
-    if generar:
-        datos_para_generar = datos_editados.drop(columns=["numero"], errors="ignore")
-        filas_generar = datos_para_generar.to_dict("records")
-        faltantes = [
-            f.get("archivo", "")
-            for f in filas_generar
-            if not str(f.get("localidad") or "").strip()
-            or not str(f.get("contrato") or "").strip()
-            or not str(f.get("contratista") or "").strip()
-        ]
-        if faltantes:
-            st.warning("Revise localidad, contrato y contratista antes de generar.")
-        else:
-            try:
-                zip_bytes, nombre_zip, resumen_zip = generar_zip_asistencia(
-                    filas_generar,
-                    PLANTILLA_ASISTENCIA_TECNICA_PATH,
-                    fecha_respuesta,
-                    profesional.strip() or "Profesional DGDL",
-                )
-            except Exception as exc:
-                st.error(f"No se pudo preparar el ZIP: {exc}")
-            else:
-                st.session_state["_pc_at_zip"] = zip_bytes
-                st.session_state["_pc_at_zip_nombre"] = nombre_zip
-                st.session_state["_pc_at_resumen"] = resumen_zip
-                st.success("ZIP preparado.")
+    datos_para_generar = (
+        datos_editados.drop(columns=["numero"], errors="ignore").fillna("")
+    )
+    filas_generar = datos_para_generar.to_dict("records")
+    faltantes = [
+        f.get("archivo", "")
+        for f in filas_generar
+        if not str(f.get("localidad") or "").strip()
+        or not str(f.get("contrato") or "").strip()
+        or not str(f.get("contratista") or "").strip()
+    ]
+    if faltantes:
+        st.session_state["_pc_at_zip"] = None
+        st.session_state["_pc_at_zip_nombre"] = ""
+        st.session_state["_pc_at_resumen"] = []
+        st.session_state["_pc_at_zip_signature"] = ""
+        st.warning("Complete localidad, contrato y contratista antes de descargar.")
+    else:
+        profesional_zip = profesional.strip() or "Profesional DGDL"
+        firma_zip = json.dumps(
+            {
+                "fecha_respuesta": fecha_respuesta.isoformat(),
+                "filas": filas_generar,
+                "profesional": profesional_zip,
+            },
+            default=str,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if st.session_state.get("_pc_at_zip_signature") != firma_zip:
+            with st.spinner("Preparando descarga..."):
+                try:
+                    zip_bytes, nombre_zip, resumen_zip = generar_zip_asistencia(
+                        filas_generar,
+                        PLANTILLA_ASISTENCIA_TECNICA_PATH,
+                        fecha_respuesta,
+                        profesional_zip,
+                    )
+                except Exception as exc:
+                    st.session_state["_pc_at_zip"] = None
+                    st.session_state["_pc_at_zip_nombre"] = ""
+                    st.session_state["_pc_at_resumen"] = []
+                    st.session_state["_pc_at_zip_signature"] = ""
+                    st.error(f"No se pudo preparar el ZIP: {exc}")
+                else:
+                    st.session_state["_pc_at_zip"] = zip_bytes
+                    st.session_state["_pc_at_zip_nombre"] = nombre_zip
+                    st.session_state["_pc_at_resumen"] = resumen_zip
+                    st.session_state["_pc_at_zip_signature"] = firma_zip
 
     zip_bytes = st.session_state.get("_pc_at_zip")
     if zip_bytes:

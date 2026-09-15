@@ -201,6 +201,82 @@ def _extraer_fecha_entre(texto: str, etiqueta: str, siguientes: Iterable[str]) -
     return formato_fecha_corta(parsear_fecha(_extraer_entre(texto, etiqueta, siguientes)))
 
 
+def _limpiar_objeto_solicitud(texto: str) -> str:
+    objeto = _limpiar_texto(texto).strip(' "“”')
+    if not objeto:
+        return ""
+
+    cortes = (
+        r"\bContratista\b",
+        r"\bSupervisor\b",
+        r"\bValor\s+Inicial\b",
+        r"\bN[uú]mero\s+del\s+proceso\b",
+        r"\bFecha\s+de\s+publicaci[oó]n\b",
+        r"\bLink\s+del\s+proceso\b",
+        r"\bSolicitud\s+de\s+modificaci[oó]n\s+contractual\b",
+        r"\bEstado\s+financiero\s+del\s+contrato\b",
+        r"\bValor\s+del\s+contrato\b",
+        r"\bValor\s+ejecutado\b",
+        r"\bValor\s+pagado\b",
+        r"\bValor\s+a\s+adicionar\b",
+        r"\bC[oó]digo\s+postal\b",
+        r"\bInformaci[oó]n\s+l[ií]nea\b",
+        r"\bwww\.",
+        r"\bC[oó]digo\s*:",
+        r"\bVersi[oó]n\s*:",
+        r"\bVigencia\s*:",
+        r"\bCaso\s+HOLA\b",
+        r"\bP[aá]gina\b",
+    )
+    posiciones = []
+    for patron in cortes:
+        match = re.search(patron, objeto, flags=re.IGNORECASE)
+        if match:
+            posiciones.append(match.start())
+    if posiciones:
+        objeto = objeto[: min(posiciones)]
+    return _limpiar_texto(objeto).strip(' "“”')
+
+
+def _extraer_objeto_solicitud(seccion_resumen: str) -> str:
+    objeto = _extraer_entre(
+        seccion_resumen,
+        "Objeto",
+        [
+            "Contratista",
+            "Supervisor",
+            "Valor Inicial",
+            "Número del proceso",
+            "Numero del proceso",
+            "Fecha de publicación",
+            "Fecha de publicacion",
+            "Link del proceso",
+        ],
+    )
+    if objeto:
+        return _limpiar_objeto_solicitud(objeto)
+
+    cierre = "|".join(
+        re.escape(s)
+        for s in (
+            "Contratista",
+            "Supervisor",
+            "Valor Inicial",
+            "Número del proceso",
+            "Numero del proceso",
+            "Fecha de publicación",
+            "Fecha de publicacion",
+            "Link del proceso",
+        )
+    )
+    match = re.search(
+        rf"\bObjeto\s*:?\s*(.*?)(?=\s+(?:{cierre})\b|\s+[IVX]+\.\s|$)",
+        seccion_resumen,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    return _limpiar_objeto_solicitud(match.group(1)) if match else ""
+
+
 def _duracion_desde_texto(texto: str) -> tuple[int, int]:
     texto_norm = _normalizar(texto)
     meses = 0
@@ -269,6 +345,126 @@ def calcular_fecha_fin_prorroga(fecha_fin_inicial: date | None, prorroga_texto: 
         return None
     fin = _sumar_meses(fecha_fin_inicial, meses)
     return date.fromordinal(fin.toordinal() + dias)
+
+
+def _ultimo_dia_mes(fecha: date) -> date:
+    return date(fecha.year, fecha.month, calendar.monthrange(fecha.year, fecha.month)[1])
+
+
+def _primer_dia_mes_siguiente(fecha: date) -> date:
+    if fecha.month == 12:
+        return date(fecha.year + 1, 1, 1)
+    return date(fecha.year, fecha.month + 1, 1)
+
+
+def _ultimo_dia_mes_anterior(fecha: date) -> date:
+    mes = fecha.month - 1
+    anio = fecha.year
+    if mes == 0:
+        mes = 12
+        anio -= 1
+    return _ultimo_dia_mes(date(anio, mes, 1))
+
+
+def _meses_completos(inicio: date, fin: date) -> int:
+    return (fin.year * 12 + fin.month) - (inicio.year * 12 + inicio.month) + 1
+
+
+def _calcular_validacion_solicitud(fila: dict) -> dict:
+    fecha_inicio = parsear_fecha(fila.get("fecha_inicio"))
+    fecha_fin_solicitud = parsear_fecha(fila.get("fecha_terminacion_inicial"))
+    fecha_final_solicitud = parsear_fecha(fila.get("fecha_terminacion_final"))
+    plazo_texto = _texto(fila.get("plazo_inicial")) or PLAZO_SOLICITUD_WORD
+    prorroga_texto = _texto(fila.get("prorroga_solicitada"))
+    plazo_meses, plazo_dias = _duracion_desde_texto(plazo_texto)
+    prorroga_meses, prorroga_dias = _duracion_desde_texto(prorroga_texto)
+    valor_inicial = _a_numero(fila.get("valor_inicial_texto")) or _a_numero(fila.get("valor_inicial"))
+    valor_adicion = _a_numero(fila.get("valor_adicion_texto")) or _a_numero(fila.get("valor_adicion"))
+
+    fecha_fin_calculada = calcular_fecha_fin_inicial(fecha_inicio, plazo_texto)
+    fecha_final_calculada = calcular_fecha_fin_prorroga(fecha_fin_calculada, prorroga_texto)
+    prorroga_dias_ajustada = prorroga_dias
+    fecha_final_ajustada = fecha_final_calculada
+    ajuste_dia_31 = False
+    if fecha_final_calculada and fecha_final_calculada.day == 30:
+        if calendar.monthrange(fecha_final_calculada.year, fecha_final_calculada.month)[1] == 31:
+            ajuste_dia_31 = True
+            prorroga_dias_ajustada += 1
+            fecha_final_ajustada = date.fromordinal(fecha_final_calculada.toordinal() + 1)
+
+    valor_adicion_teorico = None
+    if (
+        fecha_fin_calculada
+        and fecha_final_ajustada
+        and valor_inicial is not None
+        and (plazo_meses or plazo_dias)
+    ):
+        dias_plazo = 30 * plazo_meses + plazo_dias
+        if dias_plazo:
+            tarifa_dia = valor_inicial / dias_plazo
+            tarifa_mes = tarifa_dia * 30
+            inicio_prorroga = date.fromordinal(fecha_fin_calculada.toordinal() + 1)
+            primer_mes_completo = (
+                inicio_prorroga
+                if inicio_prorroga.day == 1
+                else _primer_dia_mes_siguiente(inicio_prorroga)
+            )
+            ultimo_mes_completo = (
+                fecha_final_ajustada
+                if fecha_final_ajustada == _ultimo_dia_mes(fecha_final_ajustada)
+                else _ultimo_dia_mes_anterior(fecha_final_ajustada)
+            )
+
+            meses_completos = (
+                _meses_completos(primer_mes_completo, ultimo_mes_completo)
+                if primer_mes_completo <= ultimo_mes_completo
+                else 0
+            )
+            dias_antes = (
+                0
+                if inicio_prorroga.day == 1
+                else _ultimo_dia_mes(inicio_prorroga).toordinal() - inicio_prorroga.toordinal() + 1
+            )
+            dias_despues = (
+                0
+                if fecha_final_ajustada == _ultimo_dia_mes(fecha_final_ajustada)
+                else fecha_final_ajustada.day
+            )
+            if meses_completos == 0:
+                if inicio_prorroga.month == fecha_final_ajustada.month and inicio_prorroga.year == fecha_final_ajustada.year:
+                    ajuste_proporcional = 1 if calendar.monthrange(fecha_final_ajustada.year, fecha_final_ajustada.month)[1] == 31 else 0
+                else:
+                    ajuste_proporcional = (
+                        (1 if calendar.monthrange(inicio_prorroga.year, inicio_prorroga.month)[1] == 31 else 0)
+                        + (1 if fecha_final_ajustada.day == 31 else 0)
+                    )
+                dias_proporcionales = (
+                    fecha_final_ajustada.toordinal() - inicio_prorroga.toordinal() + 1 - ajuste_proporcional
+                )
+            else:
+                ajuste_proporcional = (
+                    (1 if dias_antes > 0 and calendar.monthrange(inicio_prorroga.year, inicio_prorroga.month)[1] == 31 else 0)
+                    + (1 if dias_despues > 0 and fecha_final_ajustada.day == 31 else 0)
+                )
+                dias_proporcionales = dias_antes + dias_despues - ajuste_proporcional
+            valor_adicion_teorico = round(meses_completos * tarifa_mes + dias_proporcionales * tarifa_dia)
+
+    prorroga_ajustada_texto = _formato_duracion(prorroga_meses, prorroga_dias_ajustada)
+    return {
+        "fecha_fin_calculada": fecha_fin_calculada,
+        "fecha_final_calculada": fecha_final_calculada,
+        "fecha_final_ajustada": fecha_final_ajustada,
+        "prorroga_ajustada_texto": prorroga_ajustada_texto,
+        "valor_adicion_teorico": valor_adicion_teorico,
+        "se_ajusta_fecha_fin": bool(fecha_fin_solicitud and fecha_fin_calculada and fecha_fin_solicitud == fecha_fin_calculada),
+        "se_ajusta_prorroga": not ajuste_dia_31 and bool(prorroga_texto.strip()),
+        "se_ajusta_fecha_final": bool(fecha_final_solicitud and fecha_final_calculada and fecha_final_solicitud == fecha_final_calculada),
+        "se_ajusta_adicion": bool(
+            valor_adicion is not None
+            and valor_adicion_teorico is not None
+            and abs(valor_adicion - valor_adicion_teorico) <= 1
+        ),
+    }
 
 
 def _canon_localidad(texto: str) -> str:
@@ -374,7 +570,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         "plazo_inicial": _extraer_entre(seccion_resumen, "Plazo Inicial", ["Fecha de Inicio"]),
         "fecha_inicio": _extraer_entre(seccion_resumen, "Fecha de Inicio", ["Fecha de Terminación Inicial"]),
         "fecha_terminacion_inicial": _extraer_entre(seccion_resumen, "Fecha de Terminación Inicial", ["Objeto"]),
-        "objeto": _extraer_entre(seccion_resumen, "Objeto", ["Contratista"]),
+        "objeto": _extraer_objeto_solicitud(seccion_resumen),
         "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Supervisor"]),
         "supervisor": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
         "valor_inicial_texto": _extraer_entre(seccion_resumen, "Valor Inicial", ["Número del proceso", "Numero del proceso"]),
@@ -491,10 +687,21 @@ def _orden_localidad(localidad: str) -> int:
         return 99
 
 
+def _clave_sipse_desc(fila: dict) -> tuple[int, int, str]:
+    sipse = _texto(fila.get("sipse")).strip()
+    if sipse.isdigit():
+        return (0, -int(sipse), "")
+    return (1, 0, sipse)
+
+
 def ordenar_filas(filas: Iterable[dict]) -> list[dict]:
     return sorted(
         (dict(f) for f in filas),
-        key=lambda f: (_orden_localidad(f.get("localidad", "")), _texto(f.get("sipse")), _texto(f.get("contrato"))),
+        key=lambda f: (
+            _orden_localidad(f.get("localidad", "")),
+            _clave_sipse_desc(f),
+            _texto(f.get("contrato")),
+        ),
     )
 
 
@@ -903,6 +1110,24 @@ def _set_paragraph_text(paragraph, texto: str) -> None:
         paragraph.add_run(texto)
 
 
+def _copiar_formato_run(origen, destino) -> None:
+    rpr = origen._r.rPr if origen is not None else None
+    if rpr is not None:
+        destino._r.insert(0, copy.deepcopy(rpr))
+
+
+def _set_paragraph_runs(paragraph, partes: list[tuple[str, bool | None, int | None]]) -> None:
+    referencias = list(paragraph.runs)
+    for run in referencias:
+        paragraph._p.remove(run._r)
+    for texto, negrilla, indice_referencia in partes:
+        run = paragraph.add_run(texto)
+        if indice_referencia is not None and indice_referencia < len(referencias):
+            _copiar_formato_run(referencias[indice_referencia], run)
+        if negrilla is not None:
+            run.bold = negrilla
+
+
 def _quitar_subrayado_xml(elemento) -> None:
     from docx.oxml.ns import qn
 
@@ -984,14 +1209,101 @@ def _insertar_blanco(anchor, sample_p) -> None:
     anchor.addprevious(copy.deepcopy(sample_p))
 
 
+def _aplicar_fuente_run(run) -> None:
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+
+    run.font.name = "Garamond"
+    rpr = run._element.get_or_add_rPr()
+    rfonts = rpr.get_or_add_rFonts()
+    rfonts.set(qn("w:ascii"), "Garamond")
+    rfonts.set(qn("w:hAnsi"), "Garamond")
+    rfonts.set(qn("w:eastAsia"), "Garamond")
+    run.font.size = Pt(11)
+    run.font.highlight_color = None
+
+
 def _set_cell_text(cell, texto: str) -> None:
     cell.text = str(texto or "")
     for paragraph in cell.paragraphs:
         for run in paragraph.runs:
-            run.font.highlight_color = None
+            _aplicar_fuente_run(run)
+
+
+def _aplicar_fuente_parrafo(paragraph, *, negrilla: bool | None = None, subrayado: bool | None = None) -> None:
+    for run in paragraph.runs:
+        _aplicar_fuente_run(run)
+        if negrilla is not None:
+            run.bold = negrilla
+        if subrayado is not None:
+            run.underline = subrayado
+
+
+def _aplicar_formato_tabla_solicitud(table) -> None:
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches
+
+    table.autofit = False
+    widths = [Inches(1.45), Inches(4.25), Inches(0.42), Inches(0.42)]
+    for row_idx, row in enumerate(table.rows):
+        row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+        row.height = Inches(0.29)
+        if row_idx == 4:
+            row.height = Inches(1.18)
+        for col_idx, cell in enumerate(row.cells):
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if col_idx < len(widths):
+                cell.width = widths[col_idx]
+            for paragraph in cell.paragraphs:
+                if row_idx in {0, 1} or col_idx in {1, 2, 3}:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                else:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                _aplicar_fuente_parrafo(paragraph)
+
+
+def _marcar_se_ajusta(table, row_idx: int, se_ajusta: bool | None) -> None:
+    _set_cell_text(table.rows[row_idx].cells[2], "")
+    _set_cell_text(table.rows[row_idx].cells[3], "")
+    if se_ajusta is None:
+        return
+    _set_cell_text(table.rows[row_idx].cells[2 if se_ajusta else 3], "X")
+
+
+def _observaciones_validacion(fila: dict, validacion: dict) -> list[str]:
+    observaciones: list[str] = []
+    fecha_fin_solicitud = parsear_fecha(fila.get("fecha_terminacion_inicial"))
+    fecha_final_solicitud = parsear_fecha(fila.get("fecha_terminacion_final"))
+    valor_adicion = _a_numero(fila.get("valor_adicion_texto")) or _a_numero(fila.get("valor_adicion"))
+
+    fecha_fin_calculada = validacion.get("fecha_fin_calculada")
+    if fecha_fin_solicitud and fecha_fin_calculada and fecha_fin_solicitud != fecha_fin_calculada:
+        observaciones.append(f"Fecha de terminación: Sería el {formato_fecha_larga(fecha_fin_calculada)}.")
+
+    prorroga_texto = _texto(fila.get("prorroga_solicitada")).strip()
+    prorroga_ajustada = _texto(validacion.get("prorroga_ajustada_texto")).strip()
+    if prorroga_texto and prorroga_ajustada and _normalizar(prorroga_texto) != _normalizar(prorroga_ajustada):
+        observaciones.append(f"Prorroga: Sería por {prorroga_ajustada}.")
+
+    fecha_final_ajustada = validacion.get("fecha_final_ajustada")
+    if fecha_final_solicitud and fecha_final_ajustada and fecha_final_solicitud != fecha_final_ajustada:
+        observaciones.append(
+            f"Fecha de terminación con la prórroga: Sería el {formato_fecha_larga(fecha_final_ajustada)}."
+        )
+
+    valor_adicion_teorico = validacion.get("valor_adicion_teorico")
+    if (
+        valor_adicion is not None
+        and valor_adicion_teorico is not None
+        and abs(valor_adicion - valor_adicion_teorico) > 1
+    ):
+        observaciones.append(f"Adición: Sería por {formato_moneda(valor_adicion_teorico)}.")
+    return observaciones
 
 
 def _llenar_tabla_solicitud(table, fila: dict) -> None:
+    validacion = _calcular_validacion_solicitud(fila)
     valores = {
         2: _texto(fila.get("contrato")),
         3: _texto(fila.get("contratista")),
@@ -1006,20 +1318,46 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     }
     for row_idx, valor in valores.items():
         _set_cell_text(table.rows[row_idx].cells[1], valor)
-        _set_cell_text(table.rows[row_idx].cells[2], "")
-        _set_cell_text(table.rows[row_idx].cells[3], "")
+    _marcar_se_ajusta(
+        table,
+        8,
+        validacion["se_ajusta_fecha_fin"]
+        if validacion.get("fecha_fin_calculada") and parsear_fecha(fila.get("fecha_terminacion_inicial"))
+        else None,
+    )
+    _marcar_se_ajusta(
+        table,
+        9,
+        validacion["se_ajusta_prorroga"] if _texto(fila.get("prorroga_solicitada")).strip() else None,
+    )
+    _marcar_se_ajusta(
+        table,
+        10,
+        validacion["se_ajusta_adicion"]
+        if validacion.get("valor_adicion_teorico") is not None
+        and (_a_numero(fila.get("valor_adicion_texto")) is not None or _a_numero(fila.get("valor_adicion")) is not None)
+        else None,
+    )
+    _marcar_se_ajusta(
+        table,
+        11,
+        validacion["se_ajusta_fecha_final"]
+        if validacion.get("fecha_final_calculada") and parsear_fecha(fila.get("fecha_terminacion_final"))
+        else None,
+    )
+    _aplicar_formato_tabla_solicitud(table)
 
 
 def _quitar_resaltados(doc) -> None:
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
-            run.font.highlight_color = None
+            _aplicar_fuente_run(run)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
-                        run.font.highlight_color = None
+                        _aplicar_fuente_run(run)
 
 
 def _cargo_localidad(localidad: str, supervisor: str) -> str:
@@ -1028,8 +1366,11 @@ def _cargo_localidad(localidad: str, supervisor: str) -> str:
     return f"{cargo} Local de {localidad}"
 
 
-def _texto_observacion_vigencia(fila: dict) -> str:
-    fin_final = parsear_fecha(fila.get("fecha_terminacion_final"))
+def _texto_observacion_vigencia(fila: dict, validacion: dict | None = None) -> str:
+    fin_final = None
+    if validacion:
+        fin_final = validacion.get("fecha_final_ajustada")
+    fin_final = fin_final or parsear_fecha(fila.get("fecha_terminacion_final"))
     if not fin_final or fin_final <= CIERRE_VIGENCIA_FISCAL_2026:
         return ""
     return (
@@ -1054,7 +1395,11 @@ def generar_documento_localidad(
     filas = ordenar_filas(filas)
     localidad = _canon_localidad(filas[0].get("localidad", ""))
     supervisor = _texto(filas[0].get("supervisor")).upper()
-    sipses = [_texto(f.get("sipse")).strip() for f in filas if _texto(f.get("sipse")).strip()]
+    sipses = []
+    for fila in filas:
+        sipse = _texto(fila.get("sipse")).strip()
+        if sipse and sipse not in sipses:
+            sipses.append(sipse)
     sipses_txt = ", ".join(sipses) if sipses else "SIN NÚMERO SIPSE"
     radicado = _texto(filas[0].get("radicado_salida")).strip()
     fecha_salida = parsear_fecha(filas[0].get("fecha_salida"))
@@ -1077,17 +1422,35 @@ def generar_documento_localidad(
         if texto.startswith("Bogotá D.C."):
             _set_paragraph_text(p, f"Bogotá D.C., {formato_fecha_larga(fecha_respuesta)}")
         elif texto.startswith("PARA:"):
-            _set_paragraph_text(p, f"PARA:\t{supervisor}")
-        elif texto.startswith("Alcalde") or texto.startswith("Alcaldesa"):
-            _set_paragraph_text(p, _cargo_localidad(localidad, supervisor))
-        elif texto.startswith("ASUNTO:"):
-            _set_paragraph_text(
+            _set_paragraph_runs(
                 p,
-                (
-                    "ASUNTO:\tRESPUESTA A SOLICITUDES SIPSE: "
-                    f"{sipses_txt}, SOBRE ADICIONES Y PRÓRROGAS A CONTRATOS DE PRESTACIÓN "
-                    "DE SERVICIOS PROFESIONALES Y DE APOYO A LA GESTIÓN."
-                ),
+                [
+                    ("PARA:", True, 0),
+                    ("\t", False, 2),
+                    (supervisor, True, 3),
+                ],
+            )
+        elif texto.startswith("Alcalde") or texto.startswith("Alcaldesa"):
+            _set_paragraph_runs(
+                p,
+                [
+                    ("\t", False, 0),
+                    (_cargo_localidad(localidad, supervisor), False, 1),
+                ],
+            )
+        elif texto.startswith("ASUNTO:"):
+            asunto = (
+                "RESPUESTA A SOLICITUDES SIPSE: "
+                f"{sipses_txt}, SOBRE ADICIONES Y PRÓRROGAS A CONTRATOS DE PRESTACIÓN "
+                "DE SERVICIOS PROFESIONALES Y DE APOYO A LA GESTIÓN."
+            )
+            _set_paragraph_runs(
+                p,
+                [
+                    ("ASUNTO:", True, 0),
+                    ("\t", False, 1),
+                    (asunto, False, 2),
+                ],
             )
         elif "mediante memorando de radicado" in texto:
             fecha_txt = formato_fecha_larga(fecha_salida) or formato_fecha_larga(fecha_respuesta)
@@ -1116,6 +1479,7 @@ def generar_documento_localidad(
 
     anchor = recomendaciones._p
     for fila in filas:
+        validacion = _calcular_validacion_solicitud(fila)
         _insertar_parrafo(anchor, sample_heading, f"SOLICITUD {_texto(fila.get('sipse')) or _texto(fila.get('archivo'))}".strip())
         _insertar_blanco(anchor, sample_blank)
         tbl_xml = copy.deepcopy(sample_table)
@@ -1123,11 +1487,14 @@ def generar_documento_localidad(
         _llenar_tabla_solicitud(tabla, fila)
         anchor.addprevious(tbl_xml)
         _insertar_blanco(anchor, sample_blank)
-        _insertar_parrafo(anchor, sample_normal, "Observaciones respecto de se ajusta Si/No:")
+        _insertar_parrafo(anchor, sample_normal, "Observaciones respecto de se ajusta Si/No:", con_subrayado=True)
         _insertar_blanco(anchor, sample_blank)
-        observacion_vigencia = _texto_observacion_vigencia(fila)
+        observaciones = _observaciones_validacion(fila, validacion)
+        observacion_vigencia = _texto_observacion_vigencia(fila, validacion)
         if observacion_vigencia:
-            _insertar_parrafo(anchor, sample_normal, f"•\t{observacion_vigencia}", sin_subrayado=True)
+            observaciones.append(observacion_vigencia)
+        for observacion in observaciones:
+            _insertar_parrafo(anchor, sample_normal, f"•\t{observacion}", sin_subrayado=True)
             _insertar_blanco(anchor, sample_blank)
         _insertar_parrafo(
             anchor,
