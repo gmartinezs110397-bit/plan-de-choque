@@ -51,6 +51,9 @@ MESES_ES = (
     "diciembre",
 )
 
+PLAZO_SOLICITUD_WORD = "9 meses"
+CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
+
 ESTADOS_ASISTENCIA = (
     "EN PROCESO DE ANÁLISIS",
     "EN PROCESO DE APROBACIÓN",
@@ -181,6 +184,19 @@ def _extraer_entre(texto: str, etiqueta: str, siguientes: Iterable[str]) -> str:
     return _limpiar_texto(match.group(1))
 
 
+def _extraer_seccion(texto: str, inicio_patron: str, fin_patrones: Iterable[str]) -> str:
+    inicio = re.search(inicio_patron, texto, flags=re.IGNORECASE | re.DOTALL)
+    if not inicio:
+        return texto
+    desde = inicio.end()
+    fin = len(texto)
+    for patron in fin_patrones:
+        match = re.search(patron, texto[desde:], flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            fin = min(fin, desde + match.start())
+    return texto[desde:fin]
+
+
 def _extraer_fecha_entre(texto: str, etiqueta: str, siguientes: Iterable[str]) -> str:
     return formato_fecha_corta(parsear_fecha(_extraer_entre(texto, etiqueta, siguientes)))
 
@@ -209,6 +225,22 @@ def _formato_duracion(meses: int, dias: int) -> str:
     if dias:
         partes.append(f"{dias} día" + ("s" if dias != 1 else ""))
     return " y ".join(partes) if partes else ""
+
+
+def _datos_calculadora(fila: dict) -> dict:
+    plazo_meses, plazo_dias = _duracion_desde_texto(_texto(fila.get("plazo_inicial")))
+    prorroga_meses, prorroga_dias = _duracion_desde_texto(_texto(fila.get("prorroga_solicitada")))
+    return {
+        "fecha_inicio": parsear_fecha(fila.get("fecha_inicio")) or _texto(fila.get("fecha_inicio")),
+        "plazo_meses": plazo_meses,
+        "plazo_dias": plazo_dias,
+        "valor_total": _a_numero(fila.get("valor_inicial_texto")) or _a_numero(fila.get("valor_inicial")),
+        "prorroga_meses": prorroga_meses,
+        "prorroga_dias": prorroga_dias,
+        "texto_plazo": _texto(fila.get("plazo_inicial")),
+        "texto_prorroga": _texto(fila.get("prorroga_solicitada")),
+        "texto_valor": _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
+    }
 
 
 def _sumar_meses(fecha: date, meses: int) -> date:
@@ -316,25 +348,41 @@ def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[
 def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict, list[str]]:
     texto_pdf, errores = extraer_texto_pdf(nombre_archivo, contenido)
     texto = re.sub(r"\s+", " ", texto_pdf.replace("\xa0", " "))
+    seccion_resumen = _extraer_seccion(
+        texto,
+        r"\bI\.\s*RESUMEN\s+CONTRACTUAL\b",
+        [r"\bII\.\s*INFORMACI[oó]N\s+DE\s+LA\s+MODIFICACI[oó]N\s+SOLICITADA\b"],
+    )
+    seccion_modificacion = _extraer_seccion(
+        texto,
+        r"\bII\.\s*INFORMACI[oó]N\s+DE\s+LA\s+MODIFICACI[oó]N\s+SOLICITADA\b",
+        [
+            r"\bIII\.\s*INFORMACI[oó]N\s+DE\s+MODIFICACIONES\s+ANTERIORES\b",
+            r"\bESTADO\s+FINANCIERO\b",
+            r"\bSOLICITUD\s+DE\s+MODIFICACI[oó]N\s+CONTRACTUAL\b",
+        ],
+    )
     fila: dict = {
         "archivo": nombre_archivo,
         "sipse": _extraer_sipse(nombre_archivo, texto),
         "localidad": _extraer_localidad(texto),
         "fecha_solicitud": _extraer_fecha_entre(texto, "Fecha de Solicitud", ["Área de Origen", "Area de Origen"]),
         "area_origen": _extraer_entre(texto, "Área de Origen", ["I. RESUMEN CONTRACTUAL", "Número Contrato"]),
-        "contrato": _extraer_entre(texto, "Número Contrato", ["Fecha de Suscripción"]),
-        "fecha_suscripcion": _extraer_fecha_entre(texto, "Fecha de Suscripción", ["Tipo de Contrato"]),
-        "tipo_contrato": _extraer_entre(texto, "Tipo de Contrato", ["Plazo Inicial"]),
-        "plazo_inicial": _extraer_entre(texto, "Plazo Inicial", ["Fecha de Inicio"]),
-        "fecha_inicio": _extraer_fecha_entre(texto, "Fecha de Inicio", ["Fecha de Terminación Inicial"]),
-        "fecha_terminacion_inicial": _extraer_fecha_entre(texto, "Fecha de Terminación Inicial", ["Objeto"]),
-        "objeto": _extraer_entre(texto, "Objeto", ["Contratista"]),
-        "contratista": _extraer_entre(texto, "Contratista", ["Supervisor"]),
-        "supervisor": _extraer_entre(texto, "Supervisor", ["Valor Inicial"]),
-        "valor_inicial": _a_numero(_extraer_entre(texto, "Valor Inicial", ["Número del proceso", "Numero del proceso"])),
-        "proceso_secop": _extraer_entre(texto, "Número del proceso SECOP I o II", ["Fecha de publicación"]),
-        "fecha_publicacion_secop": _extraer_fecha_entre(texto, "Fecha de publicación del proceso en SECOP I o II", ["Link del proceso"]),
+        "contrato": _extraer_entre(seccion_resumen, "Número Contrato", ["Fecha de Suscripción"]),
+        "fecha_suscripcion": _extraer_entre(seccion_resumen, "Fecha de Suscripción", ["Tipo de Contrato"]),
+        "tipo_contrato": _extraer_entre(seccion_resumen, "Tipo de Contrato", ["Plazo Inicial"]),
+        "plazo_inicial": _extraer_entre(seccion_resumen, "Plazo Inicial", ["Fecha de Inicio"]),
+        "fecha_inicio": _extraer_entre(seccion_resumen, "Fecha de Inicio", ["Fecha de Terminación Inicial"]),
+        "fecha_terminacion_inicial": _extraer_entre(seccion_resumen, "Fecha de Terminación Inicial", ["Objeto"]),
+        "objeto": _extraer_entre(seccion_resumen, "Objeto", ["Contratista"]),
+        "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Supervisor"]),
+        "supervisor": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
+        "valor_inicial_texto": _extraer_entre(seccion_resumen, "Valor Inicial", ["Número del proceso", "Numero del proceso"]),
+        "valor_inicial": _a_numero(_extraer_entre(seccion_resumen, "Valor Inicial", ["Número del proceso", "Numero del proceso"])),
+        "proceso_secop": _extraer_entre(seccion_resumen, "Número del proceso SECOP I o II", ["Fecha de publicación"]),
+        "fecha_publicacion_secop": _extraer_entre(seccion_resumen, "Fecha de publicación del proceso en SECOP I o II", ["Link del proceso"]),
         "link_secop": "",
+        "valor_adicion_texto": "",
         "valor_adicion": None,
         "prorroga_solicitada": "",
         "fecha_terminacion_final": "",
@@ -346,43 +394,32 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     if url:
         fila["link_secop"] = url.group(0).strip()
 
-    valor_adicion = re.search(r"Valor\s+a\s+Adicionar\s*:\s*\$?\s*([\d\.\,]+)", texto, flags=re.IGNORECASE)
+    valor_adicion = re.search(r"Valor\s+a\s+Adicionar\s*:\s*(\$?\s*[\d\.\,]+)", seccion_modificacion, flags=re.IGNORECASE)
     if not valor_adicion:
-        valor_adicion = re.search(r"Adici[oó]n\s+Valor\s+Pr[oó]rroga\s+Tiempo.*?\$\s*([\d\.\,]+)", texto, flags=re.IGNORECASE | re.DOTALL)
+        valor_adicion = re.search(
+            r"Adici[oó]n\s+Valor\s+Pr[oó]rroga\s+Tiempo.*?(\$\s*[\d\.\,]+)",
+            seccion_modificacion,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
     if valor_adicion:
+        fila["valor_adicion_texto"] = _limpiar_texto(valor_adicion.group(1))
         fila["valor_adicion"] = _a_numero(valor_adicion.group(1))
 
     match_prorroga = re.search(
         r"Tiempo\s*:\s*(.*?)(?:Adici[oó]n\s+y\s+Pr[oó]rroga|Fecha\s+Terminaci[oó]n\s+Final|III\.)",
-        texto,
+        seccion_modificacion,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if match_prorroga:
         fila["prorroga_solicitada"] = _limpiar_texto(match_prorroga.group(1))
 
-    fechas_finales = re.findall(
-        r"Fecha\s+Terminaci[oó]n\s+Final\s*:\s*(.*?)(?=\s+(?:III\.|ESTADO FINANCIERO|Valor:|CDP|Tiempo:|N/A)|$)",
-        texto,
+    match_fecha_final = re.search(
+        r"Fecha\s+Terminaci[oó]n\s+Final\s*:?\s*(.*?)\s*$",
+        seccion_modificacion,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    for candidato in fechas_finales:
-        fecha = parsear_fecha(candidato)
-        if fecha:
-            fila["fecha_terminacion_final"] = formato_fecha_corta(fecha)
-            break
-
-    fecha_inicio = parsear_fecha(fila["fecha_inicio"])
-    if not fila["fecha_terminacion_inicial"]:
-        fila["fecha_terminacion_inicial"] = formato_fecha_corta(
-            calcular_fecha_fin_inicial(fecha_inicio, fila["plazo_inicial"])
-        )
-    if not fila["fecha_terminacion_final"]:
-        fila["fecha_terminacion_final"] = formato_fecha_corta(
-            calcular_fecha_fin_prorroga(
-                parsear_fecha(fila["fecha_terminacion_inicial"]),
-                fila["prorroga_solicitada"],
-            )
-        )
+    if match_fecha_final:
+        fila["fecha_terminacion_final"] = _limpiar_texto(match_fecha_final.group(1))
 
     for campo in ("contrato", "objeto", "contratista", "supervisor", "plazo_inicial", "prorroga_solicitada"):
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
@@ -508,6 +545,7 @@ def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) 
     rojo = PatternFill("solid", fgColor="C00000")
     amarillo = PatternFill("solid", fgColor="FFC000")
     gris = PatternFill("solid", fgColor="D9D9D9")
+    gris = PatternFill("solid", fgColor="D9D9D9")
     gris_claro = PatternFill("solid", fgColor="F3F4F6")
     borde = Border(
         left=Side(style="thin", color="808080"),
@@ -538,13 +576,13 @@ def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) 
             "Información del contrato",
             [
                 ("No. de contrato", _texto(fila.get("contrato"))),
-                ("Contratista", _texto(fila.get("contratista")).upper()),
-                ("Supervisor(a)", _texto(fila.get("supervisor")).upper()),
-                ("Objeto", _texto(fila.get("objeto")).upper()),
-                ("Fecha de inicio", parsear_fecha(fila.get("fecha_inicio"))),
+                ("Contratista", _texto(fila.get("contratista"))),
+                ("Supervisor(a)", _texto(fila.get("supervisor"))),
+                ("Objeto", _texto(fila.get("objeto"))),
+                ("Fecha de inicio", _texto(fila.get("fecha_inicio"))),
                 ("Plazo inicial", _texto(fila.get("plazo_inicial"))),
-                ("Valor inicial", _a_numero(fila.get("valor_inicial"))),
-                ("Fecha terminación inicial", parsear_fecha(fila.get("fecha_terminacion_inicial"))),
+                ("Valor inicial", _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))),
+                ("Fecha terminación inicial", _texto(fila.get("fecha_terminacion_inicial"))),
             ],
         ),
         (
@@ -552,8 +590,8 @@ def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) 
             [
                 ("Tipo de solicitud", _descripcion_solicitud(fila)),
                 ("Prórroga solicitada", _texto(fila.get("prorroga_solicitada"))),
-                ("Valor adición", _a_numero(fila.get("valor_adicion"))),
-                ("Fecha terminación con prórroga", parsear_fecha(fila.get("fecha_terminacion_final"))),
+                ("Valor adición", _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion"))),
+                ("Fecha terminación con prórroga", _texto(fila.get("fecha_terminacion_final"))),
                 ("Estado / trámite", (_texto(fila.get("estado")) or ESTADOS_ASISTENCIA[0]).upper()),
                 ("Observaciones", _texto(fila.get("observaciones")) or "NINGUNA"),
             ],
@@ -639,6 +677,7 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
 
     rojo = PatternFill("solid", fgColor="C00000")
     amarillo = PatternFill("solid", fgColor="FFC000")
+    gris = PatternFill("solid", fgColor="D9D9D9")
     borde = Border(
         left=Side(style="thin", color="808080"),
         right=Side(style="thin", color="808080"),
@@ -705,17 +744,17 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
             "N/A",
             _descripcion_solicitud(fila),
             _numero_contrato_corto(_texto(fila.get("contrato"))),
-            _texto(fila.get("objeto")).upper(),
-            _texto(fila.get("contratista")).upper(),
-            _texto(fila.get("plazo_inicial")).upper(),
-            _a_numero(fila.get("valor_inicial")),
-            _texto(fila.get("prorroga_solicitada")).upper(),
-            _a_numero(fila.get("valor_adicion")),
+            _texto(fila.get("objeto")),
+            _texto(fila.get("contratista")),
+            _texto(fila.get("plazo_inicial")),
+            _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
+            _texto(fila.get("prorroga_solicitada")),
+            _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
             (_texto(fila.get("estado")) or ESTADOS_ASISTENCIA[0]).upper(),
-            _texto(fila.get("radicado_salida")),
-            parsear_fecha(fila.get("fecha_salida")),
+            "",
+            "",
             (_texto(fila.get("observaciones")) or "NINGUNA").upper(),
-            _mes_reporte(fila),
+            "",
             "",
             "",
             str(profesional or "").upper(),
@@ -731,6 +770,88 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
                 celda.number_format = "DD/MM/YYYY"
             if col in {13, 15}:
                 celda.number_format = '"$"#,##0'
+
+    ws_calc = wb.create_sheet("Calculadora")
+    ws_calc.sheet_view.showGridLines = False
+    ws_calc.merge_cells("A1:L1")
+    ws_calc["A1"] = "DATOS PARA VERIFICAR EN CALCULADORA"
+    ws_calc["A1"].fill = rojo
+    ws_calc["A1"].font = Font(bold=True, color="FFFFFF", size=13)
+    ws_calc["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws_calc.merge_cells("A2:L2")
+    ws_calc["A2"] = (
+        "Entradas tomadas de cada solicitud. Revise estos datos contra el PDF antes de validar en SECOP."
+    )
+    ws_calc["A2"].alignment = Alignment(wrap_text=True, vertical="center")
+
+    encabezados_calc = [
+        "No.",
+        "Localidad",
+        "Contrato",
+        "Fecha de inicio",
+        "Plazo - Meses",
+        "Plazo - Días",
+        "Valor total del contrato (COP)",
+        "Prórroga - Meses",
+        "Prórroga - Días",
+        "Texto plazo en solicitud",
+        "Texto prórroga en solicitud",
+        "Valor inicial en solicitud",
+    ]
+    for col, titulo in enumerate(encabezados_calc, 1):
+        celda = ws_calc.cell(4, col, titulo)
+        celda.fill = amarillo
+        celda.font = Font(bold=True)
+        celda.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        celda.border = borde
+
+    for idx, fila in enumerate(filas_ordenadas, 5):
+        localidad = _canon_localidad(fila.get("localidad", ""))
+        datos_calc = _datos_calculadora(fila)
+        valores_calc = [
+            idx - 4,
+            localidad.upper(),
+            _numero_contrato_corto(_texto(fila.get("contrato"))),
+            datos_calc["fecha_inicio"],
+            datos_calc["plazo_meses"],
+            datos_calc["plazo_dias"],
+            datos_calc["valor_total"],
+            datos_calc["prorroga_meses"],
+            datos_calc["prorroga_dias"],
+            datos_calc["texto_plazo"],
+            datos_calc["texto_prorroga"],
+            datos_calc["texto_valor"],
+        ]
+        for col, valor in enumerate(valores_calc, 1):
+            celda = ws_calc.cell(idx, col, valor)
+            celda.border = borde
+            celda.alignment = Alignment(vertical="center", wrap_text=col in {10, 11, 12})
+            if col in {4} and isinstance(valor, date):
+                celda.number_format = "DD/MM/YYYY"
+            if col == 7:
+                celda.number_format = '"$"#,##0'
+            if col in {4, 5, 6, 7, 8, 9}:
+                celda.fill = gris
+
+    widths_calc = {
+        "A": 8,
+        "B": 18,
+        "C": 16,
+        "D": 16,
+        "E": 14,
+        "F": 12,
+        "G": 24,
+        "H": 16,
+        "I": 14,
+        "J": 24,
+        "K": 24,
+        "L": 22,
+    }
+    for col, width in widths_calc.items():
+        ws_calc.column_dimensions[col].width = width
+    ws_calc.row_dimensions[1].height = 28
+    ws_calc.row_dimensions[4].height = 38
+    ws_calc.freeze_panes = "A5"
 
     widths = {
         "A": 12,
@@ -782,11 +903,39 @@ def _set_paragraph_text(paragraph, texto: str) -> None:
         paragraph.add_run(texto)
 
 
-def _copiar_parrafo_xml(sample_p, texto: str):
+def _quitar_subrayado_xml(elemento) -> None:
+    from docx.oxml.ns import qn
+
+    for rpr in elemento.findall(".//" + qn("w:rPr")):
+        for underline in list(rpr.findall(qn("w:u"))):
+            rpr.remove(underline)
+
+
+def _ajustar_subrayado_rpr(rpr, subrayado: bool) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    for underline in list(rpr.findall(qn("w:u"))):
+        rpr.remove(underline)
+    if subrayado:
+        underline = OxmlElement("w:u")
+        underline.set(qn("w:val"), "single")
+        rpr.append(underline)
+
+
+def _copiar_parrafo_xml(
+    sample_p,
+    texto: str,
+    *,
+    sin_subrayado: bool = False,
+    con_subrayado: bool = False,
+):
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
     p = copy.deepcopy(sample_p)
+    if sin_subrayado:
+        _quitar_subrayado_xml(p)
     primer_rpr = None
     for r in p.findall(qn("w:r")):
         rpr = r.find(qn("w:rPr"))
@@ -797,7 +946,13 @@ def _copiar_parrafo_xml(sample_p, texto: str):
         if child.tag != qn("w:pPr"):
             p.remove(child)
     r = OxmlElement("w:r")
+    if primer_rpr is None and (sin_subrayado or con_subrayado):
+        primer_rpr = OxmlElement("w:rPr")
     if primer_rpr is not None:
+        if sin_subrayado:
+            _ajustar_subrayado_rpr(primer_rpr, False)
+        elif con_subrayado:
+            _ajustar_subrayado_rpr(primer_rpr, True)
         r.append(primer_rpr)
     t = OxmlElement("w:t")
     t.set(qn("xml:space"), "preserve")
@@ -807,8 +962,22 @@ def _copiar_parrafo_xml(sample_p, texto: str):
     return p
 
 
-def _insertar_parrafo(anchor, sample_p, texto: str) -> None:
-    anchor.addprevious(_copiar_parrafo_xml(sample_p, texto))
+def _insertar_parrafo(
+    anchor,
+    sample_p,
+    texto: str,
+    *,
+    sin_subrayado: bool = False,
+    con_subrayado: bool = False,
+) -> None:
+    anchor.addprevious(
+        _copiar_parrafo_xml(
+            sample_p,
+            texto,
+            sin_subrayado=sin_subrayado,
+            con_subrayado=con_subrayado,
+        )
+    )
 
 
 def _insertar_blanco(anchor, sample_p) -> None:
@@ -825,15 +994,15 @@ def _set_cell_text(cell, texto: str) -> None:
 def _llenar_tabla_solicitud(table, fila: dict) -> None:
     valores = {
         2: _texto(fila.get("contrato")),
-        3: _texto(fila.get("contratista")).upper(),
-        4: _texto(fila.get("objeto")).upper(),
-        5: formato_fecha_corta(parsear_fecha(fila.get("fecha_inicio"))),
-        6: _texto(fila.get("plazo_inicial")),
-        7: formato_moneda(fila.get("valor_inicial")),
-        8: formato_fecha_corta(parsear_fecha(fila.get("fecha_terminacion_inicial"))),
+        3: _texto(fila.get("contratista")),
+        4: _texto(fila.get("objeto")),
+        5: _texto(fila.get("fecha_inicio")),
+        6: PLAZO_SOLICITUD_WORD,
+        7: _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
+        8: _texto(fila.get("fecha_terminacion_inicial")),
         9: _texto(fila.get("prorroga_solicitada")),
-        10: formato_moneda(fila.get("valor_adicion")),
-        11: formato_fecha_corta(parsear_fecha(fila.get("fecha_terminacion_final"))),
+        10: _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
+        11: _texto(fila.get("fecha_terminacion_final")),
     }
     for row_idx, valor in valores.items():
         _set_cell_text(table.rows[row_idx].cells[1], valor)
@@ -860,16 +1029,11 @@ def _cargo_localidad(localidad: str, supervisor: str) -> str:
 
 
 def _texto_observacion_vigencia(fila: dict) -> str:
-    fin_inicial = parsear_fecha(fila.get("fecha_terminacion_inicial"))
     fin_final = parsear_fecha(fila.get("fecha_terminacion_final"))
-    anio = fin_inicial.year if fin_inicial else (fin_final.year if fin_final else date.today().year)
-    if fin_inicial and fin_final and fin_final.year <= fin_inicial.year:
-        return (
-            f"Prorroga: No supera la vigencia fiscal {anio}, según la fecha de terminación "
-            "con prórroga registrada en la solicitud."
-        )
+    if not fin_final or fin_final <= CIERRE_VIGENCIA_FISCAL_2026:
+        return ""
     return (
-        f"Prorroga: Supera la vigencia fiscal {anio}, si bien la regla general impide la ejecución "
+        "Prorroga: Supera la vigencia fiscal 2026, si bien la regla general impide la ejecución "
         "contractual más allá de la vigencia fiscal en curso, existe habilitación legal para su prórroga "
         "excepcional, siempre y cuando se sustente en necesidades claramente justificadas, se respeten "
         "los límites establecidos para la contratación estatal y se observen estrictamente los procedimientos "
@@ -961,11 +1125,23 @@ def generar_documento_localidad(
         _insertar_blanco(anchor, sample_blank)
         _insertar_parrafo(anchor, sample_normal, "Observaciones respecto de se ajusta Si/No:")
         _insertar_blanco(anchor, sample_blank)
-        _insertar_parrafo(anchor, sample_normal, _texto_observacion_vigencia(fila))
+        observacion_vigencia = _texto_observacion_vigencia(fila)
+        if observacion_vigencia:
+            _insertar_parrafo(anchor, sample_normal, f"•\t{observacion_vigencia}", sin_subrayado=True)
+            _insertar_blanco(anchor, sample_blank)
+        _insertar_parrafo(
+            anchor,
+            sample_intro,
+            "En cuanto a la información que registra a la fecha en el contrato electrónico se observa que:",
+            con_subrayado=True,
+        )
         _insertar_blanco(anchor, sample_blank)
-        _insertar_parrafo(anchor, sample_intro, "En cuanto a la información que registra a la fecha en el contrato electrónico se observa que:")
-        _insertar_blanco(anchor, sample_blank)
-        _insertar_parrafo(anchor, sample_normal, "El contratista ha cargado la documentación e información que evidencia su ejecución contractual.")
+        _insertar_parrafo(
+            anchor,
+            sample_normal,
+            "a.\tEl contratista ha cargado la documentación e información que evidencia su ejecución contractual.",
+            sin_subrayado=True,
+        )
         _insertar_blanco(anchor, sample_blank)
         _insertar_blanco(anchor, sample_blank)
 
