@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v2"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v3"
 
 ESTADOS_ASISTENCIA = (
     "EN PROCESO DE ANÁLISIS",
@@ -1257,7 +1257,9 @@ def _aplicar_formato_tabla_solicitud(table) -> None:
             if col_idx < len(widths):
                 cell.width = widths[col_idx]
             for paragraph in cell.paragraphs:
-                if row_idx in {0, 1} or col_idx in {1, 2, 3}:
+                if row_idx == 4 and col_idx == 1:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                elif row_idx in {0, 1} or col_idx in {1, 2, 3}:
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 else:
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -1308,7 +1310,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     valores = {
         2: _texto(fila.get("contrato")),
         3: _texto(fila.get("contratista")),
-        4: _texto(fila.get("objeto")),
+        4: _texto(fila.get("objeto")).upper(),
         5: _texto(fila.get("fecha_inicio")),
         6: PLAZO_SOLICITUD_WORD,
         7: _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
