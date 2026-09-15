@@ -1464,6 +1464,7 @@ def render_barra_seccion_actual(nombre: str) -> None:
 
 def render_seccion_asistencia_tecnica() -> None:
     from asistencia_tecnica import (
+        ASISTENCIA_TECNICA_GENERADOR_VERSION,
         ESTADOS_ASISTENCIA,
         analizar_solicitudes,
         enriquecer_con_radicados,
@@ -1675,6 +1676,7 @@ def render_seccion_asistencia_tecnica() -> None:
             {
                 "fecha_respuesta": fecha_respuesta.isoformat(),
                 "filas": filas_generar,
+                "generador": ASISTENCIA_TECNICA_GENERADOR_VERSION,
                 "profesional": profesional_zip,
             },
             default=str,
