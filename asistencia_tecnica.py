@@ -1206,6 +1206,34 @@ def _insertar_parrafo(
     )
 
 
+def _aplicar_sangria_vineta(parrafo_xml) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    ppr = parrafo_xml.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = OxmlElement("w:pPr")
+        parrafo_xml.insert(0, ppr)
+
+    for tabs in list(ppr.findall(qn("w:tabs"))):
+        ppr.remove(tabs)
+
+    ind = ppr.find(qn("w:ind"))
+    if ind is None:
+        ind = OxmlElement("w:ind")
+        ppr.append(ind)
+    ind.set(qn("w:left"), "360")
+    ind.set(qn("w:hanging"), "180")
+    for attr in ("w:firstLine", "w:firstLineChars", "w:hangingChars"):
+        ind.attrib.pop(qn(attr), None)
+
+
+def _insertar_vineta_observacion(anchor, sample_p, texto: str) -> None:
+    parrafo = _copiar_parrafo_xml(sample_p, f"• {texto}", sin_subrayado=True)
+    _aplicar_sangria_vineta(parrafo)
+    anchor.addprevious(parrafo)
+
+
 def _insertar_blanco(anchor, sample_p) -> None:
     anchor.addprevious(copy.deepcopy(sample_p))
 
@@ -1538,7 +1566,7 @@ def generar_documento_localidad(
         if observacion_vigencia:
             observaciones.append(observacion_vigencia)
         for observacion in observaciones:
-            _insertar_parrafo(anchor, sample_normal, f"•\t{observacion}", sin_subrayado=True)
+            _insertar_vineta_observacion(anchor, sample_normal, observacion)
             _insertar_blanco(anchor, sample_blank)
         _insertar_parrafo(
             anchor,
