@@ -1360,6 +1360,47 @@ def _quitar_resaltados(doc) -> None:
                         _aplicar_fuente_run(run)
 
 
+def _aceptar_cambios_y_quitar_comentarios_xml(xml: str) -> str:
+    xml = re.sub(r"<w:commentRangeStart\b[^>]*/>", "", xml)
+    xml = re.sub(r"<w:commentRangeEnd\b[^>]*/>", "", xml)
+    xml = re.sub(r"<w:commentReference\b[^>]*/>", "", xml)
+    xml = re.sub(r"<w:del\b[^>]*>.*?</w:del>", "", xml, flags=re.DOTALL)
+    xml = re.sub(r"<w:moveFrom\b[^>]*>.*?</w:moveFrom>", "", xml, flags=re.DOTALL)
+    xml = re.sub(r"<w:(?:ins|moveTo)\b[^>]*>", "", xml)
+    xml = re.sub(r"</w:(?:ins|moveTo)>", "", xml)
+    xml = re.sub(r"<w:[A-Za-z]+PrChange\b[^>]*>.*?</w:[A-Za-z]+PrChange>", "", xml, flags=re.DOTALL)
+    xml = re.sub(r"<w:trackRevisions\b[^>]*/>", "", xml)
+    return xml
+
+
+def _limpiar_docx_final(docx_bytes: bytes) -> bytes:
+    entrada = BytesIO(docx_bytes)
+    salida = BytesIO()
+    with zipfile.ZipFile(entrada, "r") as zin, zipfile.ZipFile(salida, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            nombre = item.filename
+            if re.fullmatch(r"word/comments[^/]*\.xml", nombre):
+                continue
+            data = zin.read(nombre)
+            if nombre.endswith(".xml") and (nombre.startswith("word/") or nombre == "[Content_Types].xml"):
+                xml = data.decode("utf-8", errors="ignore")
+                if nombre == "[Content_Types].xml":
+                    xml = re.sub(r"<Override\b[^>]*PartName=\"/word/comments[^\">]*\.xml\"[^>]*/>", "", xml)
+                elif nombre.startswith("word/"):
+                    xml = _aceptar_cambios_y_quitar_comentarios_xml(xml)
+                data = xml.encode("utf-8")
+            elif nombre.endswith(".rels"):
+                xml = data.decode("utf-8", errors="ignore")
+                xml = re.sub(
+                    r"<Relationship\b[^>]*(?:comments|commentsExtended|commentsIds|commentsExtensible)[^>]*/>",
+                    "",
+                    xml,
+                )
+                data = xml.encode("utf-8")
+            zout.writestr(item, data)
+    return salida.getvalue()
+
+
 def _cargo_localidad(localidad: str, supervisor: str) -> str:
     nombre = _normalizar(supervisor)
     cargo = "Alcaldesa" if any(p in nombre.split() for p in ("maria", "angela", "angelica", "diana", "paola", "catherine", "claudia", "andrea", "luisa")) else "Alcalde(sa)"
@@ -1515,7 +1556,7 @@ def generar_documento_localidad(
     _quitar_resaltados(doc)
     salida = BytesIO()
     doc.save(salida)
-    return salida.getvalue()
+    return _limpiar_docx_final(salida.getvalue())
 
 
 def generar_zip_asistencia(
