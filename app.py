@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import pickle
 import random
@@ -32,6 +33,77 @@ PLANTILLA_ASISTENCIA_TECNICA_PATH = (
     _APP_DIR / "templates" / "asistencia_tecnica" / "MODELO_DE_RESPUESTA_CPS.docx"
 )
 TITULO_PRINCIPAL_APP = "Dirección para la Gestión del Desarrollo Local"
+
+
+def _calcular_version_sesion_app() -> str:
+    archivos_version = [
+        "app.py",
+        "asistencia_tecnica.py",
+        "avance_plan_choque.py",
+        "constantes.py",
+        "cxp_cruce.py",
+        "hoja_estrategias.py",
+        "hoja_liquidados_con_saldo.py",
+        "hoja_proximos_a_perder.py",
+        "hoja_suspendidos.py",
+        "hoja_tramites_sectores.py",
+        "localidades.py",
+        "reporte_ejecucion.py",
+        "tabla_resumen_proyecto.py",
+    ]
+    partes = []
+    for nombre in archivos_version:
+        ruta = _APP_DIR / nombre
+        if ruta.is_file():
+            stat = ruta.stat()
+            partes.append(f"{nombre}:{stat.st_size}:{stat.st_mtime_ns}")
+    for patron in ("templates/**/*", "assets/**/*"):
+        for ruta in sorted(_APP_DIR.glob(patron)):
+            if ruta.is_file():
+                stat = ruta.stat()
+                partes.append(f"{ruta.relative_to(_APP_DIR).as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
+    digest = hashlib.sha256("|".join(partes).encode("utf-8")).hexdigest()[:16]
+    return f"build-{digest}"
+
+
+APP_SESSION_VERSION = _calcular_version_sesion_app()
+CLAVE_VERSION_SESION_APP = "_pc_app_session_version"
+CLAVE_AVISO_VERSION_REFRESCADA = "_pc_app_version_refrescada"
+CLAVES_LIMPIAR_AL_CAMBIAR_VERSION = {
+    "consolidated_df",
+    "processed",
+    "file_stats",
+    "last_processed_at",
+    "pendiente_consolidacion",
+    "consolidacion_en_curso",
+    "ejecutar_consolidacion_ahora",
+    "cola_ejecucion",
+    "error_ultima_ejecucion",
+    "errores_ejecucion",
+    "fecha_analisis",
+    "fecha_corte_seleccionada",
+    "mes_corte_seleccionado",
+    "cruce_informe",
+    "cruce_detalle",
+    "contratos_actualizados",
+    "cruce_resumen_global",
+    "tabla_resumen_lib_y_fen",
+    "tabla_resumen_con_perdida",
+    "tabla_resumen_proximos_a_perder",
+    "tabla_resumen_bogdata_matriz",
+    "tabla_resumen_depurados",
+    "tabla_resumen_por_depurar_vigencia",
+    "tabla_resumen_cps_pn",
+    "titulo_saldo_corte",
+    "desempate_wizard_idx",
+    "desempate_wizard_mapa",
+    "reporte_ejecucion",
+    "_pc_mostrar_formulario_correccion",
+}
+PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION = (
+    "_pc_at_",
+    "at_editor_",
+)
 
 
 def _cargar_icono_pagina():
@@ -896,6 +968,21 @@ MESES_ES = (
 
 
 def init_session_state():
+    version_anterior = st.session_state.get(CLAVE_VERSION_SESION_APP)
+    if version_anterior and version_anterior != APP_SESSION_VERSION:
+        for key in list(st.session_state.keys()):
+            if key in CLAVES_LIMPIAR_AL_CAMBIAR_VERSION or any(
+                str(key).startswith(prefijo)
+                for prefijo in PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION
+            ):
+                del st.session_state[key]
+        try:
+            st.cache_data.clear()
+        except Exception:
+            pass
+        st.session_state[CLAVE_AVISO_VERSION_REFRESCADA] = True
+    st.session_state[CLAVE_VERSION_SESION_APP] = APP_SESSION_VERSION
+
     defaults = {
         "cola_localidades": [],
         "consolidated_df": None,
@@ -1759,6 +1846,11 @@ def render_seccion_asistencia_tecnica() -> None:
 
 
 init_session_state()
+if st.session_state.pop(CLAVE_AVISO_VERSION_REFRESCADA, False):
+    st.info(
+        "La app se actualizó y limpié las descargas preparadas de la sesión. "
+        "Vuelve a preparar el ZIP para asegurar que salga con la versión nueva."
+    )
 
 
 def mes_en_espanol(fecha: datetime | date) -> str:
