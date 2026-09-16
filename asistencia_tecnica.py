@@ -53,7 +53,10 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v6"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v8"
+PLANTILLA_CALCULADORA_PATH = (
+    Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
+)
 
 ESTADOS_ASISTENCIA = (
     "EN PROCESO DE ANÁLISIS",
@@ -882,6 +885,95 @@ def _nombre_hoja_contrato(fila: dict, consecutivo: int, usados: set[str]) -> str
     return nombre
 
 
+def _nombre_hoja_calculadora(fila: dict, consecutivo: int, usados: set[str]) -> str:
+    contrato = _numero_contrato_corto(_texto(fila.get("contrato")))
+    base = re.sub(r"[\[\]\*\?/\\:]", " ", f"Calc {contrato or consecutivo}")
+    base = re.sub(r"\s+", " ", base).strip()[:31] or f"Calc {consecutivo}"
+    nombre = base
+    sufijo = 2
+    while nombre in usados:
+        extra = f" {sufijo}"
+        nombre = f"{base[:31 - len(extra)]}{extra}"
+        sufijo += 1
+    usados.add(nombre)
+    return nombre
+
+
+def _copiar_dimensiones_hoja(origen, destino) -> None:
+    destino.sheet_view.showGridLines = origen.sheet_view.showGridLines
+    destino.freeze_panes = origen.freeze_panes
+    destino.sheet_format = copy.copy(origen.sheet_format)
+    destino.sheet_properties = copy.copy(origen.sheet_properties)
+    destino.page_margins = copy.copy(origen.page_margins)
+    destino.page_setup = copy.copy(origen.page_setup)
+    destino.print_options = copy.copy(origen.print_options)
+    for key, dimension in origen.column_dimensions.items():
+        nueva = destino.column_dimensions[key]
+        nueva.width = dimension.width
+        nueva.hidden = dimension.hidden
+        nueva.outlineLevel = dimension.outlineLevel
+        nueva.collapsed = dimension.collapsed
+    for key, dimension in origen.row_dimensions.items():
+        nueva = destino.row_dimensions[key]
+        nueva.height = dimension.height
+        nueva.hidden = dimension.hidden
+        nueva.outlineLevel = dimension.outlineLevel
+        nueva.collapsed = dimension.collapsed
+
+
+def _copiar_celda_calculadora(origen, destino) -> None:
+    destino.value = origen.value
+    if origen.has_style:
+        destino._style = copy.copy(origen._style)
+    if origen.number_format:
+        destino.number_format = origen.number_format
+    if origen.has_style:
+        destino.font = copy.copy(origen.font)
+        destino.fill = copy.copy(origen.fill)
+        destino.border = copy.copy(origen.border)
+        destino.alignment = copy.copy(origen.alignment)
+        destino.protection = copy.copy(origen.protection)
+    if origen.hyperlink:
+        destino._hyperlink = copy.copy(origen.hyperlink)
+    if origen.comment:
+        destino.comment = copy.copy(origen.comment)
+
+
+def _agregar_calculadora_contrato(wb, fila: dict, consecutivo: int) -> None:
+    from openpyxl import load_workbook
+
+    if not PLANTILLA_CALCULADORA_PATH.exists():
+        raise FileNotFoundError("No se encontró la plantilla de calculadora CPS.")
+
+    wb_origen = load_workbook(PLANTILLA_CALCULADORA_PATH, data_only=False)
+    ws_origen = wb_origen["Calculadora"] if "Calculadora" in wb_origen.sheetnames else wb_origen.active
+    nombre = _nombre_hoja_calculadora(fila, consecutivo, set(wb.sheetnames))
+    ws = wb.create_sheet(nombre)
+
+    _copiar_dimensiones_hoja(ws_origen, ws)
+    for fila_origen in ws_origen.iter_rows():
+        for celda_origen in fila_origen:
+            _copiar_celda_calculadora(celda_origen, ws[celda_origen.coordinate])
+    for rango in ws_origen.merged_cells.ranges:
+        ws.merge_cells(str(rango))
+
+    datos_calc = _datos_calculadora(fila)
+    entradas = {
+        "B4": datos_calc["fecha_inicio"],
+        "B5": datos_calc["plazo_meses"],
+        "B6": datos_calc["plazo_dias"],
+        "B7": datos_calc["valor_total"],
+        "B8": datos_calc["prorroga_meses"],
+        "B9": datos_calc["prorroga_dias"],
+    }
+    for coordenada, valor in entradas.items():
+        ws[coordenada] = None if _es_vacio(valor) else valor
+    ws["B4"].number_format = "DD/MM/YYYY"
+    for coordenada in ("B7", "B31", "C31", "D31", "B32", "B36", "C36", "B37", "C37", "D37"):
+        ws[coordenada].number_format = '"$"#,##0'
+    ws.sheet_view.showGridLines = False
+
+
 def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) -> None:
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
@@ -1118,10 +1210,10 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
             if col in {13, 15}:
                 celda.number_format = '"$"#,##0'
 
-    ws_calc = wb.create_sheet("Calculadora")
+    ws_calc = wb.create_sheet("Datos calculadora")
     ws_calc.sheet_view.showGridLines = False
     ws_calc.merge_cells("A1:L1")
-    ws_calc["A1"] = "DATOS PARA VERIFICAR EN CALCULADORA"
+    ws_calc["A1"] = "DATOS ENVIADOS A LA CALCULADORA"
     ws_calc["A1"].fill = rojo
     ws_calc["A1"].font = Font(bold=True, color="FFFFFF", size=13)
     ws_calc["A1"].alignment = Alignment(horizontal="center", vertical="center")
@@ -1233,8 +1325,16 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
     ws.row_dimensions[7].height = 48
     ws.freeze_panes = "A8"
 
+    try:
+        wb.calculation.calcMode = "auto"
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+    except AttributeError:
+        pass
+
     for consecutivo, fila in enumerate(filas_ordenadas, 1):
         _agregar_ficha_contrato(wb, fila, consecutivo, profesional)
+        _agregar_calculadora_contrato(wb, fila, consecutivo)
 
     salida = BytesIO()
     wb.save(salida)
@@ -1717,7 +1817,7 @@ def generar_documento_localidad(
         _insertar_parrafo(
             anchor,
             sample_normal,
-            "a.\tEl contratista ha cargado la documentación e información que evidencia su ejecución contractual.",
+            "a. El contratista ha cargado la documentación e información que evidencia su ejecución contractual.",
             sin_subrayado=True,
         )
         _insertar_blanco(anchor, sample_blank)
