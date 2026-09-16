@@ -1657,19 +1657,48 @@ def render_seccion_asistencia_tecnica() -> None:
         datos_editados.drop(columns=["numero"], errors="ignore").fillna("")
     )
     filas_generar = datos_para_generar.to_dict("records")
-    faltantes = [
-        f.get("archivo", "")
-        for f in filas_generar
-        if not str(f.get("localidad") or "").strip()
-        or not str(f.get("contrato") or "").strip()
-        or not str(f.get("contratista") or "").strip()
+
+    def _campo_asistencia_vacio(valor) -> bool:
+        texto = str(valor or "").strip()
+        if not texto:
+            return True
+        texto_norm = texto.lower().replace(" ", "")
+        return texto_norm in {"nan", "nat", "none", "n/a", "na", "n/an/a", "nana", "noaplica"}
+
+    campos_obligatorios = [
+        ("localidad", "Localidad"),
+        ("contrato", "Contrato"),
+        ("contratista", "Contratista"),
+        ("objeto", "Objeto"),
+        ("fecha_inicio", "Fecha inicio"),
+        ("plazo_inicial", "Plazo inicial"),
+        ("valor_inicial", "Valor inicial"),
+        ("fecha_terminacion_inicial", "Fecha terminación"),
+        ("prorroga_solicitada", "Prórroga"),
+        ("valor_adicion", "Valor adición"),
+        ("fecha_terminacion_final", "Fecha final"),
     ]
-    if faltantes:
+    problemas_filas = []
+    for idx, fila in enumerate(filas_generar, start=1):
+        campos_vacios = [
+            etiqueta
+            for campo, etiqueta in campos_obligatorios
+            if _campo_asistencia_vacio(fila.get(campo))
+        ]
+        if campos_vacios:
+            nombre = str(fila.get("sipse") or fila.get("contrato") or fila.get("archivo") or f"fila {idx}")
+            problemas_filas.append(f"{idx}. {nombre}: {', '.join(campos_vacios)}")
+
+    if problemas_filas:
         st.session_state["_pc_at_zip"] = None
         st.session_state["_pc_at_zip_nombre"] = ""
         st.session_state["_pc_at_resumen"] = []
         st.session_state["_pc_at_zip_signature"] = ""
-        st.warning("Complete localidad, contrato y contratista antes de descargar.")
+        st.warning("Complete los campos faltantes en Datos detectados antes de descargar.")
+        for problema in problemas_filas[:10]:
+            st.markdown(f"- {escape(problema)}")
+        if len(problemas_filas) > 10:
+            st.markdown(f"- {len(problemas_filas) - 10} fila(s) adicional(es) con datos pendientes.")
     else:
         profesional_zip = profesional.strip() or "Profesional DGDL"
         firma_zip = json.dumps(

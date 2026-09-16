@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v12"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v15"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -92,6 +92,99 @@ def _limpiar_texto(texto: str) -> str:
     texto = re.sub(r"(?<=\w)-\s+(?=\w)", "-", texto)
     texto = re.sub(r"\s+", " ", texto)
     return texto.strip(" \n\r\t:")
+
+
+_PDF_CONTROL_TRANSLATION = str.maketrans(
+    {
+        "\x03": " ",
+        "\x07": "$",
+        "\x0b": "(",
+        "\x0c": ")",
+        "\x11": ".",
+        "\x12": "/",
+        "\x13": "0",
+        "\x14": "1",
+        "\x15": "2",
+        "\x16": "3",
+        "\x17": "4",
+        "\x18": "5",
+        "\x19": "6",
+        "\x1a": "7",
+        "\x1b": "8",
+        "\x1c": "9",
+    }
+)
+
+_PDF_PALABRAS_CODIFICADAS = {
+    "GH": "de",
+    "HO": "el",
+    "PHV": "mes",
+    "PHVHV": "meses",
+    "GtD": "día",
+    "GtDV": "días",
+    "HQHUR": "enero",
+    "IHEUHUR": "febrero",
+    "PDUCR": "marzo",
+    "DEULO": "abril",
+    "PDBR": "mayo",
+    "MXQLR": "junio",
+    "MXOLR": "julio",
+    "DJRVWR": "agosto",
+    "VHSWLHPEUH": "septiembre",
+    "RFWXEUH": "octubre",
+    "QRYLHPEUH": "noviembre",
+    "GLFLHPEUH": "diciembre",
+}
+
+
+def _decodificar_fuente_pdf(texto: str) -> str:
+    """Corrige texto extraído de PDFs con fuentes embebidas sin mapa Unicode."""
+    if _es_vacio(texto):
+        return ""
+    valor = str(texto).translate(_PDF_CONTROL_TRANSLATION)
+    palabras = sorted(_PDF_PALABRAS_CODIFICADAS.items(), key=lambda item: len(item[0]), reverse=True)
+    for codificado, limpio in palabras:
+        valor = re.sub(rf"\b{re.escape(codificado)}\b", limpio, valor, flags=re.IGNORECASE)
+    return valor
+
+
+def _es_no_aplica_texto(texto: str) -> bool:
+    valor = _limpiar_texto(texto)
+    if not valor:
+        return False
+    tokens = re.findall(r"(?:n\s*/?\s*a|no\s+aplica)", valor, flags=re.IGNORECASE)
+    residuo = re.sub(r"(?:n\s*/?\s*a|no\s+aplica)", "", valor, flags=re.IGNORECASE)
+    residuo = re.sub(r"[\s,.;:/\\|()-]+", "", residuo)
+    return bool(tokens) and not residuo
+
+
+def _limpiar_prorroga_solicitada(texto: str) -> str:
+    valor = _limpiar_texto(texto)
+    return "" if _es_no_aplica_texto(valor) else valor
+
+
+def _extraer_duracion_prorroga_desde_texto(texto: str) -> str:
+    valor = _limpiar_prorroga_solicitada(_decodificar_fuente_pdf(texto))
+    if not valor:
+        return ""
+    valor = re.sub(r"^Tiempo\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
+    valor = re.sub(r"^Pr[oó�]rroga\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
+    meses = 0
+    dias = 0
+    match_meses = re.search(r"(?:\((\d+)\)|\b(\d+))\s*mes(?:es)?\b", valor, flags=re.IGNORECASE)
+    if match_meses:
+        meses = int(match_meses.group(1) or match_meses.group(2))
+    match_dias = re.search(r"(?:\((\d+)\)|\b(\d+))\s*d[ií�]a(?:s)?\b", valor, flags=re.IGNORECASE)
+    if match_dias:
+        dias = int(match_dias.group(1) or match_dias.group(2))
+        if meses and dias > 31:
+            dias = 0
+    partes: list[str] = []
+    if meses:
+        partes.append(f"{meses} mes" + ("es" if meses != 1 else ""))
+    if dias:
+        partes.append(f"{dias} día" + ("s" if dias != 1 else ""))
+    return " y ".join(partes)
 
 
 def _mes_numero(nombre: str) -> int | None:
@@ -326,6 +419,7 @@ def _extraer_objeto_solicitud(seccion_resumen: str) -> str:
 
 
 def _extraer_prorroga_solicitada(seccion_modificacion: str) -> str:
+    seccion_modificacion = _decodificar_fuente_pdf(seccion_modificacion)
     cierres = (
         r"Adici\S+n\s+y\s+Pr[oó�]rroga",
         r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)",
@@ -346,29 +440,54 @@ def _extraer_prorroga_solicitada(seccion_modificacion: str) -> str:
         rf"\bTiempo\s+((?:\d+\s*(?:mes(?:es)?|d[ií�]a(?:s)?)[^\.]*)+?)(?=\s+(?:{cierre})|$)",
     )
     for patron in patrones:
-        match = re.search(patron, seccion_modificacion, flags=re.IGNORECASE | re.DOTALL)
-        if match:
+        for match in re.finditer(patron, seccion_modificacion, flags=re.IGNORECASE | re.DOTALL):
             valor = _limpiar_texto(match.group(1))
-            valor = re.sub(r"^Tiempo\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
-            if valor and _normalizar(valor) not in {"n/a", "na"}:
+            valor = _extraer_duracion_prorroga_desde_texto(valor)
+            if valor:
                 return valor
     return ""
 
 
 def _extraer_fecha_terminacion_final(texto: str) -> str:
+    texto = _decodificar_fuente_pdf(texto)
     patrones = (
         r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)\s*:?\s*([^\n\r]{0,180})",
         r"Fecha\s+Final\s*:?\s*([^\n\r]{0,140})",
     )
     for patron in patrones:
         for match in re.finditer(patron, texto, flags=re.IGNORECASE | re.DOTALL):
-            fecha = parsear_fecha(match.group(1))
+            fragmento = re.sub(
+                r"\bAdici[oó�]n\s+y\s+Pr[oó�]rroga\s+\d+\b",
+                " ",
+                match.group(1),
+                flags=re.IGNORECASE,
+            )
+            fecha = parsear_fecha(fragmento)
             if fecha:
                 return formato_fecha_corta(fecha)
     return ""
 
 
+def _extraer_valor_adicion_solicitada(*fuentes: str) -> tuple[str, int | None]:
+    patrones = (
+        r"(?:Valor\s+a\s+Adicionar|Valor\s+Adici[oó�]n(?:\s+Solicitada)?|Adici[oó�]n\s+Valor)\s*:?\s*(\$?\s*[\d\.\,]+)",
+        r"Adici[oó�]n\s+Valor\s+Pr[oó�]rroga\s+Tiempo.*?(\$\s*[\d\.\,]+)",
+        r"adici[oó�]n\s+por\s+valor\s+de.*?(\$\s*[\d\.\,]+)",
+    )
+    for fuente in fuentes:
+        texto = _decodificar_fuente_pdf(fuente)
+        for patron in patrones:
+            for match in re.finditer(patron, texto, flags=re.IGNORECASE | re.DOTALL):
+                valor = _limpiar_texto(match.group(1))
+                numero = _a_numero(valor)
+                if numero is not None:
+                    return valor, numero
+    return "", None
+
+
 def _duracion_desde_texto(texto: str) -> tuple[int, int]:
+    if _es_no_aplica_texto(texto):
+        return 0, 0
     texto_norm = _normalizar(texto)
     meses = 0
     dias = 0
@@ -466,7 +585,7 @@ def _calcular_validacion_solicitud(fila: dict) -> dict:
     fecha_fin_solicitud = parsear_fecha(fila.get("fecha_terminacion_inicial"))
     fecha_final_solicitud = parsear_fecha(fila.get("fecha_terminacion_final"))
     plazo_texto = _texto(fila.get("plazo_inicial")) or PLAZO_SOLICITUD_WORD
-    prorroga_texto = _texto(fila.get("prorroga_solicitada"))
+    prorroga_texto = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada"))
     plazo_meses, plazo_dias = _duracion_desde_texto(plazo_texto)
     prorroga_meses, prorroga_dias = _duracion_desde_texto(prorroga_texto)
     valor_inicial = _a_numero(fila.get("valor_inicial_texto")) or _a_numero(fila.get("valor_inicial"))
@@ -648,6 +767,10 @@ def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[
 
 def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict, list[str]]:
     texto_pdf, errores = extraer_texto_pdf(nombre_archivo, contenido)
+    texto_pdf_decodificado = _decodificar_fuente_pdf(texto_pdf)
+    texto_decodificado = re.sub(r"\s+", " ", texto_pdf_decodificado.replace("\xa0", " "))
+    if texto_pdf_decodificado and texto_pdf_decodificado != texto_pdf:
+        texto_pdf = f"{texto_pdf}\n{texto_pdf_decodificado}"
     texto = re.sub(r"\s+", " ", texto_pdf.replace("\xa0", " "))
     siguientes_resumen_patrones = [
         r"Objeto",
@@ -680,7 +803,8 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         "archivo": nombre_archivo,
         "sipse": _extraer_sipse(nombre_archivo, texto),
         "localidad": _extraer_localidad(texto),
-        "fecha_solicitud": _extraer_fecha_entre(texto, "Fecha de Solicitud", ["Área de Origen", "Area de Origen"]),
+        "fecha_solicitud": _extraer_fecha_entre(texto, "Fecha de Solicitud", ["Área de Origen", "Area de Origen"])
+        or _extraer_fecha_entre(texto_decodificado, "Fecha de Solicitud", ["Área de Origen", "Area de Origen"]),
         "area_origen": _extraer_entre(texto, "Área de Origen", ["I. RESUMEN CONTRACTUAL", "Número Contrato"]),
         "contrato": _extraer_entre(seccion_resumen, "Número Contrato", ["Fecha de Suscripción"]),
         "fecha_suscripcion": _extraer_entre(seccion_resumen, "Fecha de Suscripción", ["Tipo de Contrato"]),
@@ -733,20 +857,10 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     if url:
         fila["link_secop"] = url.group(0).strip()
 
-    valor_adicion = re.search(
-        r"(?:Valor\s+a\s+Adicionar|Valor\s+Adici[oó]n(?:\s+Solicitada)?|Adici[oó]n\s+Valor)\s*:?\s*(\$?\s*[\d\.\,]+)",
-        seccion_modificacion,
-        flags=re.IGNORECASE,
-    )
-    if not valor_adicion:
-        valor_adicion = re.search(
-            r"Adici[oó]n\s+Valor\s+Pr[oó]rroga\s+Tiempo.*?(\$\s*[\d\.\,]+)",
-            seccion_modificacion,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-    if valor_adicion:
-        fila["valor_adicion_texto"] = _limpiar_texto(valor_adicion.group(1))
-        fila["valor_adicion"] = _a_numero(valor_adicion.group(1))
+    valor_adicion_texto, valor_adicion_numero = _extraer_valor_adicion_solicitada(seccion_modificacion, texto)
+    if valor_adicion_numero is not None:
+        fila["valor_adicion_texto"] = valor_adicion_texto
+        fila["valor_adicion"] = valor_adicion_numero
 
     fila["prorroga_solicitada"] = (
         _extraer_prorroga_solicitada(seccion_modificacion)
@@ -759,6 +873,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
 
     for campo in ("contrato", "objeto", "contratista", "supervisor", "plazo_inicial", "prorroga_solicitada"):
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
+    fila["prorroga_solicitada"] = _limpiar_prorroga_solicitada(fila["prorroga_solicitada"])
     fila["contrato"] = fila["contrato"].replace(" ", "")
     fila["objeto"] = fila["objeto"].strip(' "“”')
     fila["contratista"] = _limpiar_contratista(fila["contratista"])
@@ -1750,7 +1865,7 @@ def _observaciones_validacion(fila: dict, validacion: dict) -> list[str]:
     if fecha_fin_solicitud and fecha_fin_calculada and fecha_fin_solicitud != fecha_fin_calculada:
         observaciones.append(f"Fecha de terminación: Sería el {formato_fecha_larga(fecha_fin_calculada)}.")
 
-    prorroga_texto = _texto(fila.get("prorroga_solicitada")).strip()
+    prorroga_texto = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada")).strip()
     prorroga_ajustada = _texto(validacion.get("prorroga_ajustada_texto")).strip()
     if prorroga_texto and prorroga_ajustada and _normalizar(prorroga_texto) != _normalizar(prorroga_ajustada):
         observaciones.append(f"Prorroga: Sería por {prorroga_ajustada}.")
@@ -1773,6 +1888,7 @@ def _observaciones_validacion(fila: dict, validacion: dict) -> list[str]:
 
 def _llenar_tabla_solicitud(table, fila: dict) -> None:
     validacion = _calcular_validacion_solicitud(fila)
+    prorroga_solicitada = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada"))
     valores = {
         2: _texto(fila.get("contrato")),
         3: _limpiar_contratista(fila.get("contratista")),
@@ -1781,7 +1897,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
         6: PLAZO_SOLICITUD_WORD,
         7: _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
         8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")),
-        9: _texto(fila.get("prorroga_solicitada")),
+        9: prorroga_solicitada,
         10: _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
         11: _formatear_fecha_tabla(fila.get("fecha_terminacion_final")),
     }
@@ -1797,7 +1913,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     _marcar_se_ajusta(
         table,
         9,
-        validacion["se_ajusta_prorroga"] if _texto(fila.get("prorroga_solicitada")).strip() else None,
+        validacion["se_ajusta_prorroga"] if prorroga_solicitada else None,
     )
     _marcar_se_ajusta(
         table,
