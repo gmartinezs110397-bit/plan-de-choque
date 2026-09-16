@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v15"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v17"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -448,6 +448,32 @@ def _extraer_prorroga_solicitada(seccion_modificacion: str) -> str:
     return ""
 
 
+def _parsear_fecha_terminacion_final_fragmento(fragmento: str) -> date | None:
+    texto = _limpiar_texto(_decodificar_fuente_pdf(fragmento))
+    for mes_nombre in MESES_ES:
+        patron_mes = rf"\b{mes_nombre}\b\s+de\s+(\d{{4}})"
+        for match in re.finditer(patron_mes, texto, flags=re.IGNORECASE):
+            previo = texto[: match.start()]
+            previo = re.sub(
+                r"\bAdici[oó�]n\s+y\s+Pr[oó�]rroga\s+\d+\s+de\s*$",
+                " ",
+                previo,
+                flags=re.IGNORECASE,
+            )
+            candidatos_dia = [
+                int(valor)
+                for valor in re.findall(r"\b(\d{1,2})\b", previo)
+                if 1 <= int(valor) <= 31
+            ]
+            if not candidatos_dia:
+                continue
+            try:
+                return date(int(match.group(1)), _mes_numero(mes_nombre) or 1, candidatos_dia[-1])
+            except ValueError:
+                continue
+    return parsear_fecha(texto)
+
+
 def _extraer_fecha_terminacion_final(texto: str) -> str:
     texto = _decodificar_fuente_pdf(texto)
     patrones = (
@@ -462,7 +488,7 @@ def _extraer_fecha_terminacion_final(texto: str) -> str:
                 match.group(1),
                 flags=re.IGNORECASE,
             )
-            fecha = parsear_fecha(fragmento)
+            fecha = _parsear_fecha_terminacion_final_fragmento(fragmento)
             if fecha:
                 return formato_fecha_corta(fecha)
     return ""
@@ -1010,6 +1036,14 @@ def _nombre_word_localidad(localidad: str, filas: Iterable[dict]) -> str:
     return f"{_limpiar_nombre_descarga(' - '.join(partes))}.docx"
 
 
+def _nombre_excel_asistencia(filas: Iterable[dict]) -> str:
+    numeros = _numeros_proceso_nombre(filas)
+    partes = ["Matriz asistencia técnica CPS"]
+    if numeros:
+        partes.append(numeros)
+    return f"{_limpiar_nombre_descarga(' - '.join(partes))}.xlsx"
+
+
 def _descripcion_solicitud(fila: dict) -> str:
     tiene_adicion = (_a_numero(fila.get("valor_adicion")) or 0) > 0
     tiene_prorroga = bool(_texto(fila.get("prorroga_solicitada")).strip())
@@ -1254,6 +1288,16 @@ def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) 
     ws.freeze_panes = "A3"
 
 
+def _aplicar_fuente_excel_asistencia(wb) -> None:
+    for ws in wb.worksheets:
+        for row in ws.iter_rows():
+            for cell in row:
+                fuente = copy.copy(cell.font)
+                fuente.name = "Garamond"
+                fuente.size = 11
+                cell.font = fuente
+
+
 def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -1339,13 +1383,13 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
             "N/A",
             _descripcion_solicitud(fila),
             _numero_contrato_corto(_texto(fila.get("contrato"))),
-            _texto(fila.get("objeto")),
+            _texto(fila.get("objeto")).upper(),
             _texto(fila.get("contratista")),
             _texto(fila.get("plazo_inicial")),
             _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
             _texto(fila.get("prorroga_solicitada")),
             _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
-            (_texto(fila.get("estado")) or ESTADOS_ASISTENCIA[0]).upper(),
+            "ENVIADO A REVISIÓN",
             "",
             "",
             (_texto(fila.get("observaciones")) or "NINGUNA").upper(),
@@ -1491,6 +1535,8 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
     for consecutivo, fila in enumerate(filas_ordenadas, 1):
         _agregar_ficha_contrato(wb, fila, consecutivo, profesional)
         _agregar_calculadora_contrato(wb, fila, consecutivo)
+
+    _aplicar_fuente_excel_asistencia(wb)
 
     salida = BytesIO()
     wb.save(salida)
@@ -2172,7 +2218,7 @@ def generar_zip_asistencia(
             resumen.append({"localidad": localidad, "solicitudes": len(grupo), "archivo": nombre})
 
         excel = generar_excel_asistencia(filas_ordenadas, profesional=profesional)
-        zf.writestr("Matriz asistencia tecnica CPS.xlsx", excel)
+        zf.writestr(_nombre_excel_asistencia(filas_ordenadas), excel)
 
     localidades_txt = ",".join(_canon_localidad(f.get("localidad", "")) for f in filas_ordenadas)
     nombre_zip = f"Asistencia tecnica CPS {fecha_respuesta.year} ({_nombre_archivo_seguro(localidades_txt)[:80]}).zip"
