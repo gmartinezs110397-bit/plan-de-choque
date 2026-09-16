@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v9"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v11"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -530,7 +530,11 @@ def _calcular_validacion_solicitud(fila: dict) -> dict:
         "valor_adicion_teorico": valor_adicion_teorico,
         "se_ajusta_fecha_fin": bool(fecha_fin_solicitud and fecha_fin_calculada and fecha_fin_solicitud == fecha_fin_calculada),
         "se_ajusta_prorroga": not ajuste_dia_31 and bool(prorroga_texto.strip()),
-        "se_ajusta_fecha_final": bool(fecha_final_solicitud and fecha_final_calculada and fecha_final_solicitud == fecha_final_calculada),
+        "se_ajusta_fecha_final": bool(
+            fecha_final_solicitud
+            and fecha_final_ajustada
+            and fecha_final_solicitud == fecha_final_ajustada
+        ),
         "se_ajusta_adicion": bool(
             valor_adicion is not None
             and valor_adicion_teorico is not None
@@ -1621,16 +1625,44 @@ def _aplicar_fuente_run(run) -> None:
     run.font.highlight_color = None
 
 
+def _aplicar_fuente_marca_parrafo(paragraph) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    ppr = paragraph._p.get_or_add_pPr()
+    rpr = ppr.find(qn("w:rPr"))
+    if rpr is None:
+        rpr = OxmlElement("w:rPr")
+        ppr.append(rpr)
+
+    rfonts = rpr.find(qn("w:rFonts"))
+    if rfonts is None:
+        rfonts = OxmlElement("w:rFonts")
+        rpr.append(rfonts)
+    rfonts.set(qn("w:ascii"), "Garamond")
+    rfonts.set(qn("w:hAnsi"), "Garamond")
+    rfonts.set(qn("w:eastAsia"), "Garamond")
+
+    for tag in ("w:sz", "w:szCs"):
+        item = rpr.find(qn(tag))
+        if item is None:
+            item = OxmlElement(tag)
+            rpr.append(item)
+        item.set(qn("w:val"), "22")
+
+
 def _set_cell_text(cell, texto: str) -> None:
     cell.text = str(texto or "")
     for paragraph in cell.paragraphs:
         paragraph.paragraph_format.space_before = 0
         paragraph.paragraph_format.space_after = 0
+        _aplicar_fuente_marca_parrafo(paragraph)
         for run in paragraph.runs:
             _aplicar_fuente_run(run)
 
 
 def _aplicar_fuente_parrafo(paragraph, *, negrilla: bool | None = None, subrayado: bool | None = None) -> None:
+    _aplicar_fuente_marca_parrafo(paragraph)
     for run in paragraph.runs:
         _aplicar_fuente_run(run)
         if negrilla is not None:
@@ -1742,7 +1774,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
         table,
         11,
         validacion["se_ajusta_fecha_final"]
-        if validacion.get("fecha_final_calculada") and parsear_fecha(fila.get("fecha_terminacion_final"))
+        if validacion.get("fecha_final_ajustada") and parsear_fecha(fila.get("fecha_terminacion_final"))
         else None,
     )
     _aplicar_formato_tabla_solicitud(table)
