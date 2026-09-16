@@ -39,6 +39,7 @@ def _calcular_version_sesion_app() -> str:
     archivos_version = [
         "app.py",
         "asistencia_tecnica.py",
+        "pdf_ocr.py",
         "avance_plan_choque.py",
         "constantes.py",
         "cxp_cruce.py",
@@ -1632,15 +1633,16 @@ def render_seccion_asistencia_tecnica() -> None:
 
     if analizar:
         archivos = [(archivo.name, archivo.getvalue()) for archivo in solicitudes or []]
-        filas, errores = analizar_solicitudes(archivos)
-        mapa_radicados = {}
-        fecha_salida = None
-        if archivo_general is not None:
-            mapa_radicados, fecha_salida, errores_radicados = extraer_radicados(
-                archivo_general.getvalue()
-            )
-            errores.extend(errores_radicados)
-        filas = enriquecer_con_radicados(filas, mapa_radicados, fecha_salida)
+        with st.spinner("Leyendo solicitudes…"):
+            filas, errores = analizar_solicitudes(archivos)
+            mapa_radicados = {}
+            fecha_salida = None
+            if archivo_general is not None:
+                mapa_radicados, fecha_salida, errores_radicados = extraer_radicados(
+                    archivo_general.getvalue()
+                )
+                errores.extend(errores_radicados)
+            filas = enriquecer_con_radicados(filas, mapa_radicados, fecha_salida)
         st.session_state["_pc_at_filas"] = filas
         st.session_state["_pc_at_errores"] = errores
         st.session_state["_pc_at_zip"] = None
@@ -1657,7 +1659,9 @@ def render_seccion_asistencia_tecnica() -> None:
         for error in errores[:8]:
             st.markdown(f"- {escape(str(error))}")
         if len(errores) > 8:
-            st.markdown(f"- {len(errores) - 8} aviso(s) adicional(es).")
+            with st.expander(f"Ver {len(errores) - 8} aviso(s) adicional(es)"):
+                for error in errores[8:]:
+                    st.markdown(f"- {escape(str(error))}")
 
     filas = st.session_state.get("_pc_at_filas") or []
     if not filas:

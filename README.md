@@ -59,3 +59,13 @@ cd "ruta\al\proyecto"
 ```
 
 Abre `http://localhost:8501`.
+
+## PDFs escaneados en Asistencia Técnica
+
+Se utiliza OCR como respaldo en las páginas sin texto legible. La app indica las
+solicitudes leídas como imagen para revisar fechas, plazos y valores antes de descargar.
+Los PDFs que necesitan contraseña deben desbloquearse antes de cargarlos.
+
+Streamlit Cloud instala Tesseract y el idioma español desde `packages.txt`.
+Para usar OCR localmente, instala las dependencias de `requirements.txt` y
+Tesseract con español (`spa`) disponible en sus datos de idiomas.

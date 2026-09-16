@@ -6,3 +6,8 @@ msoffcrypto-tool
 xlsx-fixer
 python-docx
 pypdf
+pypdfium2>=4.30,<6
+pytesseract>=0.3.13,<0.4
+Pillow
+opencv-python-headless>=4.10,<5
+numpy

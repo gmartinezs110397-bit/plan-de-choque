@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v20"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-ocr-respaldo-v21"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -745,6 +745,11 @@ def _extraer_localidad(texto: str) -> str:
         return ""
     candidato = _limpiar_texto(match.group(1).split("Edificio")[0])
     candidato = candidato.split("Código")[0].strip()
+    norm = re.sub(r"^(la|los|las|el)\s+", "", _normalizar(candidato))
+    for localidad in sorted(LOCALIDADES_RADICADO, key=len, reverse=True):
+        nombre = re.sub(r"^(la|los|las|el)\s+", "", _normalizar(localidad))
+        if norm == nombre or norm.startswith(nombre + " "):
+            return localidad
     return _canon_localidad(candidato)
 
 
@@ -767,27 +772,98 @@ def _extraer_sipse(nombre_archivo: str, texto: str) -> str:
     return candidatos[0] if candidatos else ""
 
 
+def _texto_pdf_necesita_ocr(texto: str) -> bool:
+    limpio = _decodificar_fuente_pdf(texto)
+    caracteres = [c for c in limpio if not c.isspace()]
+    if len(caracteres) < 80:
+        return not re.search(r"\b20\d{12}\b", limpio)
+    ilegibles = sum(c == "\ufffd" or unicodedata.category(c).startswith("C") for c in caracteres)
+    if ilegibles / len(caracteres) > 0.02:
+        return True
+    normalizado = _normalizar(limpio)
+    return not re.search(
+        r"\b(?:de|la|el|en|del|contrato|contratista|objeto|fecha|radicado|prorroga|solicitud)\b|\b20\d{12}\b",
+        normalizado,
+    )
+
+
+def _pagina_pdf_con_imagen_grande(pagina) -> bool:
+    referencia_recursos = pagina.get("/Resources")
+    if not referencia_recursos:
+        return False
+    recursos = referencia_recursos.get_object()
+    referencias = recursos.get("/XObject")
+    objetos = referencias.get_object() if referencias else {}
+    for referencia in objetos.values():
+        objeto = referencia.get_object()
+        if objeto.get("/Subtype") == "/Image":
+            if objeto.get("/Width", 0) >= 800 and objeto.get("/Height", 0) >= 500:
+                return True
+    return False
+
+
 def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[str]]:
+    from pdf_ocr import extraer_paginas_ocr
+
     errores: list[str] = []
+    paginas: list[str] = []
+    pendientes: list[int] | None = []
+    fallos_lectura: dict[int, str] = {}
     try:
         from pypdf import PdfReader
 
         reader = PdfReader(BytesIO(contenido))
-        paginas: list[str] = []
-        for page in reader.pages:
-            texto_plano = page.extract_text() or ""
-            partes = [texto_plano]
+        if reader.is_encrypted and not reader.decrypt(""):
+            return "", [f"{nombre_archivo}: el PDF necesita contraseña para abrirse."]
+        for indice, page in enumerate(reader.pages):
+            partes = []
+            try:
+                texto_plano = page.extract_text() or ""
+                partes.append(texto_plano)
+            except Exception as exc:
+                fallos_lectura[indice] = str(exc)
             try:
                 texto_layout = page.extract_text(extraction_mode="layout") or ""
-            except TypeError:
-                texto_layout = ""
-            if texto_layout and _normalizar(texto_layout) != _normalizar(texto_plano):
-                partes.append(texto_layout)
-            paginas.append("\n".join(partes))
-        return "\n".join(paginas), errores
+                if texto_layout and _normalizar(texto_layout) != _normalizar("\n".join(partes)):
+                    partes.append(texto_layout)
+            except Exception:
+                pass
+            texto_pagina = "\n".join(partes)
+            paginas.append(texto_pagina)
+            necesita_ocr = _texto_pdf_necesita_ocr(texto_pagina)
+            if not necesita_ocr:
+                fallos_lectura.pop(indice, None)
+            if not necesita_ocr and max((len(_limpiar_texto(p)) for p in partes), default=0) < 400:
+                try:
+                    necesita_ocr = _pagina_pdf_con_imagen_grande(page)
+                except Exception:
+                    pass
+            if necesita_ocr:
+                pendientes.append(indice)
     except Exception as exc:  # pragma: no cover - depende del PDF recibido.
-        errores.append(f"{nombre_archivo}: no se pudo leer el PDF ({exc}).")
-        return "", errores
+        fallos_lectura[-1] = str(exc)
+        pendientes = None
+
+    if pendientes is None or pendientes:
+        textos_ocr, avisos_ocr = extraer_paginas_ocr(contenido, pendientes)
+        for indice, texto in textos_ocr.items():
+            while len(paginas) <= indice:
+                paginas.append("")
+            # Sustituir la página evita mezclar fechas y valores de dos lecturas.
+            paginas[indice] = texto
+            fallos_lectura.pop(indice, None)
+        if textos_ocr:
+            fallos_lectura.pop(-1, None)
+            numeros = ", ".join(str(i + 1) for i in sorted(textos_ocr))
+            errores.append(
+                f"{nombre_archivo}: se leyó como imagen (OCR), página(s) {numeros}. "
+                "Revise los datos detectados, especialmente fechas y valores."
+            )
+        errores.extend(f"{nombre_archivo}: {aviso}" for aviso in avisos_ocr)
+    for indice, error in fallos_lectura.items():
+        ubicacion = f", página {indice + 1}" if indice >= 0 else ""
+        errores.append(f"{nombre_archivo}{ubicacion}: no se pudo extraer el texto ({error}).")
+    return "\n".join(paginas), errores
 
 
 def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict, list[str]]:
@@ -940,6 +1016,12 @@ def extraer_radicados(contenido_pdf: bytes) -> tuple[dict[str, str], date | None
         for idx, localidad in enumerate(LOCALIDADES_RADICADO)
         if idx < len(numeros)
     }
+    if mapa and len(numeros) < len(LOCALIDADES_RADICADO) and any("(OCR)" in aviso for aviso in errores):
+        mapa = {}
+        errores.append(
+            "El listado escaneado no permitió reconocer los 20 radicados. "
+            "Complete los radicados en Datos detectados para evitar asignarlos a otra localidad."
+        )
 
     fecha = None
     match = re.search(r"Fecha\s*:\s*(\d{1,2})-(\d{1,2})-(\d{1,4})", texto, flags=re.IGNORECASE)
