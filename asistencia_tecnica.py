@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v3"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v4"
 
 ESTADOS_ASISTENCIA = (
     "EN PROCESO DE ANÁLISIS",
@@ -710,6 +710,28 @@ def _nombre_archivo_seguro(texto: str) -> str:
     texto = _normalizar(texto)
     texto = re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
     return texto or "archivo"
+
+
+def _limpiar_nombre_descarga(texto: str) -> str:
+    texto = re.sub(r'[<>:"/\\|?*]+', " ", _texto(texto))
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto or "archivo"
+
+
+def _numeros_proceso_nombre(filas: Iterable[dict]) -> str:
+    numeros: list[str] = []
+    for fila in filas:
+        numero = _texto(fila.get("sipse")).strip()
+        if not numero:
+            archivo = Path(_texto(fila.get("archivo"))).stem
+            candidatos = re.findall(r"\b1\d{5}\b", archivo)
+            numero = candidatos[0] if candidatos else ""
+        if not numero:
+            numero = _texto(fila.get("contrato")).strip()
+        numero = re.sub(r"[^A-Za-z0-9-]+", "", numero)
+        if numero and numero not in numeros:
+            numeros.append(numero)
+    return "-".join(numeros)
 
 
 def _descripcion_solicitud(fila: dict) -> str:
@@ -1611,7 +1633,12 @@ def generar_zip_asistencia(
         for localidad in localidades:
             grupo = [f for f in filas_ordenadas if _canon_localidad(f.get("localidad", "")) == localidad]
             docx = generar_documento_localidad(grupo, plantilla_docx, fecha_respuesta, profesional)
-            nombre = f"Respuesta asistencia tecnica {localidad} {fecha_respuesta.year}.docx"
+            numeros = _numeros_proceso_nombre(grupo)
+            nombre_partes = ["Respuesta asistencia tecnica", localidad]
+            if numeros:
+                nombre_partes.append(numeros)
+            nombre_partes.append(str(fecha_respuesta.year))
+            nombre = f"{_limpiar_nombre_descarga(' '.join(nombre_partes))}.docx"
             zf.writestr(nombre, docx)
             resumen.append({"localidad": localidad, "solicitudes": len(grupo), "archivo": nombre})
 
