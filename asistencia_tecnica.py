@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v4"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v6"
 
 ESTADOS_ASISTENCIA = (
     "EN PROCESO DE ANÁLISIS",
@@ -185,6 +185,14 @@ def _extraer_entre(texto: str, etiqueta: str, siguientes: Iterable[str]) -> str:
     return _limpiar_texto(match.group(1))
 
 
+def _extraer_entre_patrones(texto: str, etiquetas: Iterable[str], siguientes: Iterable[str]) -> str:
+    inicio = "|".join(f"(?:{patron})" for patron in etiquetas)
+    cierre = "|".join(f"(?:{patron})" for patron in siguientes)
+    patron = rf"(?:{inicio})\s*:?\s*(.*?)(?=\s+(?:{cierre})(?:[^:]{{0,80}})?:|\s+[IVX]+\.\s|$)"
+    match = re.search(patron, texto, flags=re.IGNORECASE | re.DOTALL)
+    return _limpiar_texto(match.group(1)) if match else ""
+
+
 def _extraer_seccion(texto: str, inicio_patron: str, fin_patrones: Iterable[str]) -> str:
     inicio = re.search(inicio_patron, texto, flags=re.IGNORECASE | re.DOTALL)
     if not inicio:
@@ -200,6 +208,42 @@ def _extraer_seccion(texto: str, inicio_patron: str, fin_patrones: Iterable[str]
 
 def _extraer_fecha_entre(texto: str, etiqueta: str, siguientes: Iterable[str]) -> str:
     return formato_fecha_corta(parsear_fecha(_extraer_entre(texto, etiqueta, siguientes)))
+
+
+def _formatear_fecha_tabla(valor) -> str:
+    fecha = parsear_fecha(valor)
+    return formato_fecha_corta(fecha) if fecha else _texto(valor)
+
+
+def _limpiar_contratista(texto: str) -> str:
+    contratista = _limpiar_texto(texto)
+    if not contratista:
+        return ""
+    cortes = (
+        r"\bC[eé]dula\b",
+        r"\bC\.?\s*C\.?\b",
+        r"\bIdentificaci[oó]n\b",
+        r"\bDocumento\b",
+        r"\bNIT\b",
+        r"\bInterventor\b",
+        r"\bApoyo\s+a\s+la\s+supervisi[oó]n\b",
+        r"\bSupervisor\b",
+        r"\bValor\s+Inicial\b",
+        r"\bN[uú]mero\s+del\s+proceso\b",
+        r"\bFecha\s+de\s+publicaci[oó]n\b",
+        r"\bLink\s+del\s+proceso\b",
+    )
+    posiciones = []
+    for patron in cortes:
+        match = re.search(patron, contratista, flags=re.IGNORECASE)
+        if match:
+            posiciones.append(match.start())
+    if posiciones:
+        contratista = contratista[: min(posiciones)]
+    match_numero = re.search(r"\s+\d{6,}(?:\s|$)", contratista)
+    if match_numero:
+        contratista = contratista[: match_numero.start()]
+    return _limpiar_texto(contratista).strip(" :-")
 
 
 def _limpiar_objeto_solicitud(texto: str) -> str:
@@ -240,18 +284,18 @@ def _limpiar_objeto_solicitud(texto: str) -> str:
 
 
 def _extraer_objeto_solicitud(seccion_resumen: str) -> str:
-    objeto = _extraer_entre(
+    objeto = _extraer_entre_patrones(
         seccion_resumen,
-        "Objeto",
         [
-            "Contratista",
-            "Supervisor",
-            "Valor Inicial",
-            "Número del proceso",
-            "Numero del proceso",
-            "Fecha de publicación",
-            "Fecha de publicacion",
-            "Link del proceso",
+            r"Objeto(?:\s+(?:contractual|del\s+contrato))?",
+        ],
+        [
+            r"Contratista",
+            r"Supervisor",
+            r"Valor\s+Inicial",
+            r"N[uú]mero\s+del\s+proceso",
+            r"Fecha\s+de\s+publicaci[oó]n",
+            r"Link\s+del\s+proceso",
         ],
     )
     if objeto:
@@ -276,6 +320,30 @@ def _extraer_objeto_solicitud(seccion_resumen: str) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     return _limpiar_objeto_solicitud(match.group(1)) if match else ""
+
+
+def _extraer_prorroga_solicitada(seccion_modificacion: str) -> str:
+    cierres = (
+        r"Adici\S+n\s+y\s+Pr[oó�]rroga",
+        r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)",
+        r"Valor\s+a\s+Adicionar",
+        r"Valor\s+Adici\S+n",
+        r"III\.",
+        r"SOLICITUD\s+DE\s+MODIFICACI\S+N\s+CONTRACTUAL",
+        r"ESTADO\s+FINANCIERO",
+    )
+    cierre = "|".join(f"(?:{patron})" for patron in cierres)
+    patrones = (
+        rf"\bTiempo\s*:\s*(.*?)(?=\s+(?:{cierre})|$)",
+        rf"(?:Pr[oó�]rroga\s*(?:Solicitada|Tiempo)?|Plazo\s+de\s+la\s+Pr[oó�]rroga\s+Solicitada)\s*:\s*(.*?)(?=\s+(?:{cierre})|$)",
+    )
+    for patron in patrones:
+        match = re.search(patron, seccion_modificacion, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            valor = _limpiar_texto(match.group(1))
+            if valor and _normalizar(valor) not in {"n/a", "na"}:
+                return valor
+    return ""
 
 
 def _duracion_desde_texto(texto: str) -> tuple[int, int]:
@@ -545,18 +613,31 @@ def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[
 def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict, list[str]]:
     texto_pdf, errores = extraer_texto_pdf(nombre_archivo, contenido)
     texto = re.sub(r"\s+", " ", texto_pdf.replace("\xa0", " "))
+    siguientes_resumen_patrones = [
+        r"Objeto",
+        r"Contratista",
+        r"Interventor",
+        r"Supervisor",
+        r"Valor\s+Inicial",
+        r"Valor\s+Adiciones",
+        r"Valor\s+Total\s+Actual",
+        r"N[uú�]mero\s+del\s+proceso(?:\s+SECOP(?:\s+I\s+o\s+II)?)?",
+        r"Fecha\s+de\s+publicaci\S+n",
+        r"Link\s+del\s+proceso",
+        r"Solicitud\s+de\s+modificaci\S+n\s+contractual",
+        r"Estado\s+financiero\s+del\s+contrato",
+    ]
     seccion_resumen = _extraer_seccion(
         texto,
         r"\bI\.\s*RESUMEN\s+CONTRACTUAL\b",
-        [r"\bII\.\s*INFORMACI[oó]N\s+DE\s+LA\s+MODIFICACI[oó]N\s+SOLICITADA\b"],
+        [r"\bII\.\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b"],
     )
     seccion_modificacion = _extraer_seccion(
         texto,
-        r"\bII\.\s*INFORMACI[oó]N\s+DE\s+LA\s+MODIFICACI[oó]N\s+SOLICITADA\b",
+        r"\bII\.\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b",
         [
-            r"\bIII\.\s*INFORMACI[oó]N\s+DE\s+MODIFICACIONES\s+ANTERIORES\b",
+            r"\bIII\.\s*INFORMACI\S*N\s+DE\s+MODIFICACIONES\s+ANTERIORES\b",
             r"\bESTADO\s+FINANCIERO\b",
-            r"\bSOLICITUD\s+DE\s+MODIFICACI[oó]N\s+CONTRACTUAL\b",
         ],
     )
     fila: dict = {
@@ -569,14 +650,39 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         "fecha_suscripcion": _extraer_entre(seccion_resumen, "Fecha de Suscripción", ["Tipo de Contrato"]),
         "tipo_contrato": _extraer_entre(seccion_resumen, "Tipo de Contrato", ["Plazo Inicial"]),
         "plazo_inicial": _extraer_entre(seccion_resumen, "Plazo Inicial", ["Fecha de Inicio"]),
-        "fecha_inicio": _extraer_entre(seccion_resumen, "Fecha de Inicio", ["Fecha de Terminación Inicial"]),
-        "fecha_terminacion_inicial": _extraer_entre(seccion_resumen, "Fecha de Terminación Inicial", ["Objeto"]),
+        "fecha_inicio": _extraer_entre(
+            seccion_resumen,
+            "Fecha de Inicio",
+            ["Prórrogas realizadas", "Prorrogas realizadas", "Fecha de Terminación Inicial", "Fecha de Terminación Actual"],
+        ),
+        "fecha_terminacion_inicial": _extraer_entre_patrones(
+            seccion_resumen,
+            [
+                r"Fecha\s+de\s+Terminaci\S+n\s+(?:Inicial|Actual)",
+                r"Fecha\s+Terminaci\S+n\s+(?:Inicial|Actual)",
+            ],
+            siguientes_resumen_patrones,
+        ),
         "objeto": _extraer_objeto_solicitud(seccion_resumen),
-        "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Supervisor"]),
+        "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Interventor", "Supervisor"]),
         "supervisor": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
-        "valor_inicial_texto": _extraer_entre(seccion_resumen, "Valor Inicial", ["Número del proceso", "Numero del proceso"]),
-        "valor_inicial": _a_numero(_extraer_entre(seccion_resumen, "Valor Inicial", ["Número del proceso", "Numero del proceso"])),
-        "proceso_secop": _extraer_entre(seccion_resumen, "Número del proceso SECOP I o II", ["Fecha de publicación"]),
+        "valor_inicial_texto": _extraer_entre(
+            seccion_resumen,
+            "Valor Inicial",
+            ["Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
+        ),
+        "valor_inicial": _a_numero(
+            _extraer_entre(
+                seccion_resumen,
+                "Valor Inicial",
+                ["Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
+            )
+        ),
+        "proceso_secop": _extraer_entre_patrones(
+            seccion_resumen,
+            [r"N[uú�]mero\s+del\s+proceso(?:\s+SECOP(?:\s+I\s+o\s+II)?)?"],
+            [r"Fecha\s+de\s+publicaci\S+n", r"Link\s+del\s+proceso", r"II\."],
+        ),
         "fecha_publicacion_secop": _extraer_entre(seccion_resumen, "Fecha de publicación del proceso en SECOP I o II", ["Link del proceso"]),
         "link_secop": "",
         "valor_adicion_texto": "",
@@ -591,7 +697,11 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     if url:
         fila["link_secop"] = url.group(0).strip()
 
-    valor_adicion = re.search(r"Valor\s+a\s+Adicionar\s*:\s*(\$?\s*[\d\.\,]+)", seccion_modificacion, flags=re.IGNORECASE)
+    valor_adicion = re.search(
+        r"(?:Valor\s+a\s+Adicionar|Valor\s+Adici[oó]n(?:\s+Solicitada)?|Adici[oó]n\s+Valor)\s*:?\s*(\$?\s*[\d\.\,]+)",
+        seccion_modificacion,
+        flags=re.IGNORECASE,
+    )
     if not valor_adicion:
         valor_adicion = re.search(
             r"Adici[oó]n\s+Valor\s+Pr[oó]rroga\s+Tiempo.*?(\$\s*[\d\.\,]+)",
@@ -602,16 +712,10 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         fila["valor_adicion_texto"] = _limpiar_texto(valor_adicion.group(1))
         fila["valor_adicion"] = _a_numero(valor_adicion.group(1))
 
-    match_prorroga = re.search(
-        r"Tiempo\s*:\s*(.*?)(?:Adici[oó]n\s+y\s+Pr[oó]rroga|Fecha\s+Terminaci[oó]n\s+Final|III\.)",
-        seccion_modificacion,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match_prorroga:
-        fila["prorroga_solicitada"] = _limpiar_texto(match_prorroga.group(1))
+    fila["prorroga_solicitada"] = _extraer_prorroga_solicitada(seccion_modificacion)
 
     match_fecha_final = re.search(
-        r"Fecha\s+Terminaci[oó]n\s+Final\s*:?\s*(.*?)\s*$",
+        r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)\s*:?\s*(.*?)(?:\s+(?:III\.|INFORMACI\S*N\s+DE\s+MODIFICACIONES|ESTADO\s+FINANCIERO|ANEXOS|Firma|C[oó�]digo\s*:)|$)",
         seccion_modificacion,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -622,6 +726,10 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
     fila["contrato"] = fila["contrato"].replace(" ", "")
     fila["objeto"] = fila["objeto"].strip(' "“”')
+    fila["contratista"] = _limpiar_contratista(fila["contratista"])
+    for campo in ("fecha_inicio", "fecha_terminacion_inicial", "fecha_terminacion_final"):
+        if fila.get(campo):
+            fila[campo] = _formatear_fecha_tabla(fila[campo])
 
     requeridos = ("localidad", "contrato", "contratista", "fecha_inicio", "plazo_inicial")
     faltantes = [campo for campo in requeridos if not fila.get(campo)]
@@ -732,6 +840,15 @@ def _numeros_proceso_nombre(filas: Iterable[dict]) -> str:
         if numero and numero not in numeros:
             numeros.append(numero)
     return "-".join(numeros)
+
+
+def _nombre_word_localidad(localidad: str, filas: Iterable[dict]) -> str:
+    alcaldia = f"Alcaldía Local de {_canon_localidad(localidad)}"
+    numeros = _numeros_proceso_nombre(filas)
+    partes = [alcaldia, "SIPSE"]
+    if numeros:
+        partes.append(numeros)
+    return f"{_limpiar_nombre_descarga(' - '.join(partes))}.docx"
 
 
 def _descripcion_solicitud(fila: dict) -> str:
@@ -1277,6 +1394,8 @@ def _aplicar_fuente_run(run) -> None:
 def _set_cell_text(cell, texto: str) -> None:
     cell.text = str(texto or "")
     for paragraph in cell.paragraphs:
+        paragraph.paragraph_format.space_before = 0
+        paragraph.paragraph_format.space_after = 0
         for run in paragraph.runs:
             _aplicar_fuente_run(run)
 
@@ -1300,8 +1419,6 @@ def _aplicar_formato_tabla_solicitud(table) -> None:
     for row_idx, row in enumerate(table.rows):
         row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
         row.height = Inches(0.29)
-        if row_idx == 4:
-            row.height = Inches(1.18)
         for col_idx, cell in enumerate(row.cells):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             if col_idx < len(widths):
@@ -1359,15 +1476,15 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     validacion = _calcular_validacion_solicitud(fila)
     valores = {
         2: _texto(fila.get("contrato")),
-        3: _texto(fila.get("contratista")),
-        4: _texto(fila.get("objeto")).upper(),
-        5: _texto(fila.get("fecha_inicio")),
+        3: _limpiar_contratista(fila.get("contratista")),
+        4: _limpiar_objeto_solicitud(fila.get("objeto")).upper(),
+        5: _formatear_fecha_tabla(fila.get("fecha_inicio")),
         6: PLAZO_SOLICITUD_WORD,
         7: _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
-        8: _texto(fila.get("fecha_terminacion_inicial")),
+        8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")),
         9: _texto(fila.get("prorroga_solicitada")),
         10: _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
-        11: _texto(fila.get("fecha_terminacion_final")),
+        11: _formatear_fecha_tabla(fila.get("fecha_terminacion_final")),
     }
     for row_idx, valor in valores.items():
         _set_cell_text(table.rows[row_idx].cells[1], valor)
@@ -1633,12 +1750,7 @@ def generar_zip_asistencia(
         for localidad in localidades:
             grupo = [f for f in filas_ordenadas if _canon_localidad(f.get("localidad", "")) == localidad]
             docx = generar_documento_localidad(grupo, plantilla_docx, fecha_respuesta, profesional)
-            numeros = _numeros_proceso_nombre(grupo)
-            nombre_partes = ["Respuesta asistencia tecnica", localidad]
-            if numeros:
-                nombre_partes.append(numeros)
-            nombre_partes.append(str(fecha_respuesta.year))
-            nombre = f"{_limpiar_nombre_descarga(' '.join(nombre_partes))}.docx"
+            nombre = _nombre_word_localidad(localidad, grupo)
             zf.writestr(nombre, docx)
             resumen.append({"localidad": localidad, "solicitudes": len(grupo), "archivo": nombre})
 
