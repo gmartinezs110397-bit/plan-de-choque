@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v18"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v19"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -1815,12 +1815,25 @@ def _aplicar_fuente_run(run) -> None:
 
     run.font.name = "Garamond"
     rpr = run._element.get_or_add_rPr()
+    _quitar_mayusculas_forzadas_rpr(rpr)
     rfonts = rpr.get_or_add_rFonts()
     rfonts.set(qn("w:ascii"), "Garamond")
     rfonts.set(qn("w:hAnsi"), "Garamond")
     rfonts.set(qn("w:eastAsia"), "Garamond")
     run.font.size = Pt(11)
     run.font.highlight_color = None
+
+
+def _quitar_mayusculas_forzadas_rpr(rpr) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    for tag in ("w:caps", "w:smallCaps"):
+        for item in list(rpr.findall(qn(tag))):
+            rpr.remove(item)
+        item = OxmlElement(tag)
+        item.set(qn("w:val"), "0")
+        rpr.append(item)
 
 
 def _aplicar_fuente_marca_parrafo(paragraph) -> None:
@@ -1832,6 +1845,7 @@ def _aplicar_fuente_marca_parrafo(paragraph) -> None:
     if rpr is None:
         rpr = OxmlElement("w:rPr")
         ppr.append(rpr)
+    _quitar_mayusculas_forzadas_rpr(rpr)
 
     rfonts = rpr.find(qn("w:rFonts"))
     if rfonts is None:
