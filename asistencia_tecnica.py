@@ -51,9 +51,8 @@ MESES_ES = (
     "diciembre",
 )
 
-PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v19"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v20"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -610,7 +609,7 @@ def _calcular_validacion_solicitud(fila: dict) -> dict:
     fecha_inicio = parsear_fecha(fila.get("fecha_inicio"))
     fecha_fin_solicitud = parsear_fecha(fila.get("fecha_terminacion_inicial"))
     fecha_final_solicitud = parsear_fecha(fila.get("fecha_terminacion_final"))
-    plazo_texto = _texto(fila.get("plazo_inicial")) or PLAZO_SOLICITUD_WORD
+    plazo_texto = _texto(fila.get("plazo_inicial"))
     prorroga_texto = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada"))
     plazo_meses, plazo_dias = _duracion_desde_texto(plazo_texto)
     prorroga_meses, prorroga_dias = _duracion_desde_texto(prorroga_texto)
@@ -1954,7 +1953,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
         3: _limpiar_contratista(fila.get("contratista")).upper(),
         4: _limpiar_objeto_solicitud(fila.get("objeto")).upper(),
         5: _formatear_fecha_tabla(fila.get("fecha_inicio")).lower(),
-        6: PLAZO_SOLICITUD_WORD.lower(),
+        6: _texto(fila.get("plazo_inicial")).lower(),
         7: (_texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))).lower(),
         8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")).lower(),
         9: prorroga_solicitada.lower(),
