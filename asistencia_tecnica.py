@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v11"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v12"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -334,18 +334,37 @@ def _extraer_prorroga_solicitada(seccion_modificacion: str) -> str:
         r"III\.",
         r"SOLICITUD\s+DE\s+MODIFICACI\S+N\s+CONTRACTUAL",
         r"ESTADO\s+FINANCIERO",
+        r"https?://",
+        r"C[oó�]digo\s*:",
+        r"Edificio\s+Li",
     )
     cierre = "|".join(f"(?:{patron})" for patron in cierres)
     patrones = (
         rf"\bTiempo\s*:\s*(.*?)(?=\s+(?:{cierre})|$)",
         rf"(?:Pr[oó�]rroga\s*(?:Solicitada|Tiempo)?|Plazo\s+de\s+la\s+Pr[oó�]rroga\s+Solicitada)\s*:\s*(.*?)(?=\s+(?:{cierre})|$)",
+        rf"Adici\S+n\s+Valor\s+Pr[oó�]rroga\s+Tiempo.*?\$\s*[\d\.\,]+\s*(?:Tiempo\s*:?\s*)?(.*?)(?=\s+(?:{cierre})|$)",
+        rf"\bTiempo\s+((?:\d+\s*(?:mes(?:es)?|d[ií�]a(?:s)?)[^\.]*)+?)(?=\s+(?:{cierre})|$)",
     )
     for patron in patrones:
         match = re.search(patron, seccion_modificacion, flags=re.IGNORECASE | re.DOTALL)
         if match:
             valor = _limpiar_texto(match.group(1))
+            valor = re.sub(r"^Tiempo\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
             if valor and _normalizar(valor) not in {"n/a", "na"}:
                 return valor
+    return ""
+
+
+def _extraer_fecha_terminacion_final(texto: str) -> str:
+    patrones = (
+        r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)\s*:?\s*([^\n\r]{0,180})",
+        r"Fecha\s+Final\s*:?\s*([^\n\r]{0,140})",
+    )
+    for patron in patrones:
+        for match in re.finditer(patron, texto, flags=re.IGNORECASE | re.DOTALL):
+            fecha = parsear_fecha(match.group(1))
+            if fecha:
+                return formato_fecha_corta(fecha)
     return ""
 
 
@@ -610,7 +629,17 @@ def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[
         from pypdf import PdfReader
 
         reader = PdfReader(BytesIO(contenido))
-        paginas = [page.extract_text() or "" for page in reader.pages]
+        paginas: list[str] = []
+        for page in reader.pages:
+            texto_plano = page.extract_text() or ""
+            partes = [texto_plano]
+            try:
+                texto_layout = page.extract_text(extraction_mode="layout") or ""
+            except TypeError:
+                texto_layout = ""
+            if texto_layout and _normalizar(texto_layout) != _normalizar(texto_plano):
+                partes.append(texto_layout)
+            paginas.append("\n".join(partes))
         return "\n".join(paginas), errores
     except Exception as exc:  # pragma: no cover - depende del PDF recibido.
         errores.append(f"{nombre_archivo}: no se pudo leer el PDF ({exc}).")
@@ -670,7 +699,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
             ],
             siguientes_resumen_patrones,
         ),
-        "objeto": _extraer_objeto_solicitud(seccion_resumen),
+        "objeto": _extraer_objeto_solicitud(seccion_resumen) or _extraer_objeto_solicitud(texto),
         "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Interventor", "Supervisor"]),
         "supervisor": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
         "valor_inicial_texto": _extraer_entre(
@@ -719,15 +748,14 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         fila["valor_adicion_texto"] = _limpiar_texto(valor_adicion.group(1))
         fila["valor_adicion"] = _a_numero(valor_adicion.group(1))
 
-    fila["prorroga_solicitada"] = _extraer_prorroga_solicitada(seccion_modificacion)
-
-    match_fecha_final = re.search(
-        r"Fecha\s+(?:de\s+)?Terminaci\S+n\s+(?:con\s+la\s+Pr[oó�]rroga|Final)\s*:?\s*(.*?)(?:\s+(?:III\.|INFORMACI\S*N\s+DE\s+MODIFICACIONES|ESTADO\s+FINANCIERO|ANEXOS|Firma|C[oó�]digo\s*:)|$)",
-        seccion_modificacion,
-        flags=re.IGNORECASE | re.DOTALL,
+    fila["prorroga_solicitada"] = (
+        _extraer_prorroga_solicitada(seccion_modificacion)
+        or _extraer_prorroga_solicitada(texto)
     )
-    if match_fecha_final:
-        fila["fecha_terminacion_final"] = _limpiar_texto(match_fecha_final.group(1))
+    fila["fecha_terminacion_final"] = (
+        _extraer_fecha_terminacion_final(seccion_modificacion)
+        or _extraer_fecha_terminacion_final(texto)
+    )
 
     for campo in ("contrato", "objeto", "contratista", "supervisor", "plazo_inicial", "prorroga_solicitada"):
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
@@ -742,6 +770,15 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     faltantes = [campo for campo in requeridos if not fila.get(campo)]
     if faltantes:
         errores.append(f"{nombre_archivo}: revise {', '.join(faltantes)}.")
+    revisar = []
+    if not fila.get("objeto"):
+        revisar.append("objeto")
+    if fila.get("valor_adicion_texto") and not fila.get("prorroga_solicitada"):
+        revisar.append("prórroga")
+    if fila.get("prorroga_solicitada") and not fila.get("fecha_terminacion_final"):
+        revisar.append("fecha de terminación con la prórroga")
+    if revisar:
+        errores.append(f"{nombre_archivo}: complete {', '.join(revisar)} en Datos detectados.")
     return fila, errores
 
 
