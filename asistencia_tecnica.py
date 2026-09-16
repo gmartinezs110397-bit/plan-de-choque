@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v8"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-15-word-final-limpio-v9"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -1445,6 +1445,136 @@ def _insertar_parrafo(
     )
 
 
+def _siguiente_id_numbering(numbering, tag: str, attr: str) -> int:
+    from docx.oxml.ns import qn
+
+    valores = []
+    for elemento in numbering.findall(qn(tag)):
+        valor = elemento.get(qn(attr))
+        if valor and valor.isdigit():
+            valores.append(int(valor))
+    return (max(valores) + 1) if valores else 1
+
+
+def _crear_abstract_lista_alfabetica(doc) -> int:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    numbering = doc.part.numbering_part.element
+    abstract_id = _siguiente_id_numbering(numbering, "w:abstractNum", "w:abstractNumId")
+
+    abstract = OxmlElement("w:abstractNum")
+    abstract.set(qn("w:abstractNumId"), str(abstract_id))
+
+    nsid = OxmlElement("w:nsid")
+    nsid.set(qn("w:val"), "5A5A1100")
+    abstract.append(nsid)
+
+    multi = OxmlElement("w:multiLevelType")
+    multi.set(qn("w:val"), "singleLevel")
+    abstract.append(multi)
+
+    lvl = OxmlElement("w:lvl")
+    lvl.set(qn("w:ilvl"), "0")
+    for tag, value in (
+        ("w:start", "1"),
+        ("w:numFmt", "lowerLetter"),
+        ("w:lvlText", "%1."),
+        ("w:lvlJc", "left"),
+    ):
+        item = OxmlElement(tag)
+        item.set(qn("w:val"), value)
+        lvl.append(item)
+
+    ppr = OxmlElement("w:pPr")
+    ind = OxmlElement("w:ind")
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "360")
+    ppr.append(ind)
+    lvl.append(ppr)
+
+    rpr = OxmlElement("w:rPr")
+    rfonts = OxmlElement("w:rFonts")
+    rfonts.set(qn("w:ascii"), "Garamond")
+    rfonts.set(qn("w:hAnsi"), "Garamond")
+    rfonts.set(qn("w:cs"), "Arial")
+    rpr.append(rfonts)
+    size = OxmlElement("w:sz")
+    size.set(qn("w:val"), "22")
+    rpr.append(size)
+    size_cs = OxmlElement("w:szCs")
+    size_cs.set(qn("w:val"), "22")
+    rpr.append(size_cs)
+    lvl.append(rpr)
+    abstract.append(lvl)
+
+    nums = numbering.findall(qn("w:num"))
+    if nums:
+        numbering.insert(numbering.index(nums[0]), abstract)
+    else:
+        numbering.append(abstract)
+    return abstract_id
+
+
+def _crear_num_lista_alfabetica(doc, abstract_id: int) -> int:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    numbering = doc.part.numbering_part.element
+    num_id = _siguiente_id_numbering(numbering, "w:num", "w:numId")
+
+    num = OxmlElement("w:num")
+    num.set(qn("w:numId"), str(num_id))
+    abstract = OxmlElement("w:abstractNumId")
+    abstract.set(qn("w:val"), str(abstract_id))
+    num.append(abstract)
+    override = OxmlElement("w:lvlOverride")
+    override.set(qn("w:ilvl"), "0")
+    start = OxmlElement("w:startOverride")
+    start.set(qn("w:val"), "1")
+    override.append(start)
+    num.append(override)
+    numbering.append(num)
+    return num_id
+
+
+def _aplicar_lista_alfabetica(parrafo_xml, num_id: int) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    ppr = parrafo_xml.find(qn("w:pPr"))
+    if ppr is None:
+        ppr = OxmlElement("w:pPr")
+        parrafo_xml.insert(0, ppr)
+
+    for num_pr in list(ppr.findall(qn("w:numPr"))):
+        ppr.remove(num_pr)
+    for tabs in list(ppr.findall(qn("w:tabs"))):
+        ppr.remove(tabs)
+
+    num_pr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "0")
+    num = OxmlElement("w:numId")
+    num.set(qn("w:val"), str(num_id))
+    num_pr.append(ilvl)
+    num_pr.append(num)
+    ppr.insert(0, num_pr)
+
+    ind = ppr.find(qn("w:ind"))
+    if ind is None:
+        ind = OxmlElement("w:ind")
+        ppr.append(ind)
+    ind.set(qn("w:left"), "720")
+    ind.set(qn("w:hanging"), "360")
+
+
+def _insertar_item_lista_alfabetica(anchor, sample_p, texto: str, num_id: int) -> None:
+    parrafo = _copiar_parrafo_xml(sample_p, texto, sin_subrayado=True)
+    _aplicar_lista_alfabetica(parrafo, num_id)
+    anchor.addprevious(parrafo)
+
+
 def _aplicar_sangria_vineta(parrafo_xml) -> None:
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
@@ -1727,6 +1857,7 @@ def generar_documento_localidad(
     sample_normal = copy.deepcopy(next((p._p for p in paragraphs if p.text.strip().lower().startswith("prorroga:")), first_solicitud._p))
     sample_intro = copy.deepcopy(next((p._p for p in paragraphs if p.text.strip().lower().startswith("en cuanto")), first_solicitud._p))
     sample_table = copy.deepcopy(doc.tables[0]._tbl)
+    abstract_lista_alfabetica = _crear_abstract_lista_alfabetica(doc)
 
     for p in doc.paragraphs:
         texto = p.text.strip()
@@ -1814,11 +1945,12 @@ def generar_documento_localidad(
             con_subrayado=True,
         )
         _insertar_blanco(anchor, sample_blank)
-        _insertar_parrafo(
+        num_lista_secop = _crear_num_lista_alfabetica(doc, abstract_lista_alfabetica)
+        _insertar_item_lista_alfabetica(
             anchor,
             sample_normal,
-            "a. El contratista ha cargado la documentación e información que evidencia su ejecución contractual.",
-            sin_subrayado=True,
+            "El contratista ha cargado la documentación e información que evidencia su ejecución contractual.",
+            num_lista_secop,
         )
         _insertar_blanco(anchor, sample_blank)
         _insertar_blanco(anchor, sample_blank)
