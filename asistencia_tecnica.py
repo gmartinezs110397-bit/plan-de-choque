@@ -53,7 +53,7 @@ MESES_ES = (
 
 PLAZO_SOLICITUD_WORD = "9 meses"
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v17"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-word-final-limpio-v18"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -1936,16 +1936,16 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
     validacion = _calcular_validacion_solicitud(fila)
     prorroga_solicitada = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada"))
     valores = {
-        2: _texto(fila.get("contrato")),
-        3: _limpiar_contratista(fila.get("contratista")),
+        2: _texto(fila.get("contrato")).upper(),
+        3: _limpiar_contratista(fila.get("contratista")).upper(),
         4: _limpiar_objeto_solicitud(fila.get("objeto")).upper(),
-        5: _formatear_fecha_tabla(fila.get("fecha_inicio")),
-        6: PLAZO_SOLICITUD_WORD,
-        7: _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
-        8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")),
-        9: prorroga_solicitada,
-        10: _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
-        11: _formatear_fecha_tabla(fila.get("fecha_terminacion_final")),
+        5: _formatear_fecha_tabla(fila.get("fecha_inicio")).lower(),
+        6: PLAZO_SOLICITUD_WORD.lower(),
+        7: (_texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))).lower(),
+        8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")).lower(),
+        9: prorroga_solicitada.lower(),
+        10: (_texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion"))).lower(),
+        11: _formatear_fecha_tabla(fila.get("fecha_terminacion_final")).lower(),
     }
     for row_idx, valor in valores.items():
         _set_cell_text(table.rows[row_idx].cells[1], valor)
