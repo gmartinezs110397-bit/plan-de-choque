@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-16-ocr-respaldo-v21"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-17-revision-4-cps-v22"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -2220,6 +2220,18 @@ def generar_documento_localidad(
                     (asunto, False, 2),
                 ],
             )
+        elif texto.startswith("Importante resaltar que la Dirección para la Gestión del Desarrollo Local"):
+            if radicado:
+                fecha_txt = formato_fecha_larga(fecha_salida) or formato_fecha_larga(fecha_respuesta)
+                _set_paragraph_text(
+                    p,
+                    re.sub(
+                        r"(a través del radicado ).*?(, emitió)",
+                        lambda m: f"{m.group(1)}{radicado} del {fecha_txt}{m.group(2)}",
+                        texto,
+                        count=1,
+                    ),
+                )
         elif "mediante memorando de radicado" in texto:
             fecha_txt = formato_fecha_larga(fecha_salida) or formato_fecha_larga(fecha_respuesta)
             if radicado:
