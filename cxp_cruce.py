@@ -526,6 +526,7 @@ def aplicar_desempate_en_contratos(
         valores_excel,
         crear_columna=crear_columna,
         titulo_columna=titulo_mes,
+        localidad=localidad,
     )
     return bytes_nuevos, detalle_nuevo
 
@@ -1657,6 +1658,7 @@ def exportar_contratos_preservando_formato(
     titulo_columna: str,
     mapa_k3_suspendidos: dict | None = None,
     mapa_k4_liquidados: dict[str, float] | None = None,
+    localidad: str | None = None,
 ) -> tuple[bytes, list[str], list[str]]:
     """
     Guarda el libro original intacto (filas 1-2, formatos, otras hojas).
@@ -1811,7 +1813,7 @@ def exportar_contratos_preservando_formato(
             )
 
     try:
-        advertencias.extend(actualizar_estrategias_en_libro(wb, fecha_analisis))
+        advertencias.extend(actualizar_estrategias_en_libro(wb, fecha_analisis, localidad))
     except ValueError as e:
         observaciones.append(f"Estrategias: {e}")
     except Exception as e:
@@ -1975,6 +1977,7 @@ def procesar_localidad_cxp(
             titulo_columna=titulo_mes,
             mapa_k3_suspendidos=mapa_k3_suspendidos,
             mapa_k4_liquidados=mapa_k4_liquidados,
+            localidad=localidad,
         )
     )
     if not _encabezados_saldo_cps_coloreados(bytes_export):

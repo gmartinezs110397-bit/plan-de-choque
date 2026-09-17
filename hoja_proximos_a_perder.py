@@ -154,7 +154,7 @@ def actualizar_hoja_proximos_a_perder(
     Escribe SALDO MES y ESTADO ACTUAL MES desde Matriz.
     Formato y encabezados de mes copiados del mes anterior (igual que Suspendidos).
     Verde: pasa a LIQUIDADO. Amarillo: no liquidado y saldo cero.
-    Conteo: filas sin color (no liquidado y saldo ≠ 0); no puede superar el mes anterior.
+    Conteo: filas sin color (no liquidado y saldo ≠ 0); tope si el mes anterior es positivo.
     Suma: todos los saldos.
     """
     if not _hoja_tiene_filas_contratista(ws):

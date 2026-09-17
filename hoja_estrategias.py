@@ -245,12 +245,22 @@ def actualizar_hoja_estrategias(
     ws,
     fecha: datetime | date,
     totales_fuentes: dict[str, tuple[float | int | None, float | int | None]],
+    localidad: str | None = None,
 ) -> list[str]:
     """
-    Actualiza títulos en E3/F3 y valores en E/F según nombre en columna B.
+    Actualiza título de localidad/año, E3/F3 y valores en E/F según columna B.
     No agrega columnas; solo reemplaza valores (respeta fórmulas existentes).
     """
     advertencias: list[str] = []
+
+    if localidad and localidad.strip():
+        for fila in ws.iter_rows(min_row=1, max_row=FILA_TITULOS - 1):
+            for celda in fila:
+                texto = _normalizar(str(celda.value or ""))
+                if "estrategia" in texto and "plan de choque" in texto:
+                    celda.value = (
+                        f"ESTRATEGIAS PLAN DE CHOQUE {localidad.strip().upper()} {fecha.year}"
+                    )
 
     # Títulos fila 3 (amarillo); datos filas 4+ (verde)
     celda_te = ws.cell(FILA_TITULOS, COL_CONTRATOS, value=titulo_contratos_estrategias(fecha))
@@ -320,13 +330,14 @@ def actualizar_hoja_estrategias(
 def actualizar_estrategias_en_libro(
     wb,
     fecha: datetime | date,
+    localidad: str | None = None,
 ) -> list[str]:
     nombres = list(wb.sheetnames)
     nombre_est = resolver_hoja_estrategias(nombres)
     if not nombre_est:
         return []
     totales = _construir_totales_desde_libro(wb, nombres, fecha)
-    return actualizar_hoja_estrategias(wb[nombre_est], fecha, totales)
+    return actualizar_hoja_estrategias(wb[nombre_est], fecha, totales, localidad)
 
 
 __all__ = [

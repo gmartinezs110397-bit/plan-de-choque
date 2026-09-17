@@ -9,6 +9,8 @@ from typing import Iterable
 
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.series import SeriesLabel
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -106,10 +108,43 @@ class FilaCpsPn:
 
 
 @dataclass(frozen=True)
+class FilaDepuraTipoCto:
+    numero: int
+    localidad: str
+    tipo_contrato: str
+    cantidad_inicial: int
+    depurados: int
+
+
+@dataclass(frozen=True)
+class FilaDismAntiguedadCto:
+    numero: int
+    localidad: str
+    vigencia: int | None
+    cantidad_inicial: int
+    depurados: int
+
+
+@dataclass(frozen=True)
 class FilaPorDepurarVigencia:
     numero: int
     localidad: str
-    conteos_por_vigencia: dict[int, tuple[int, int]]
+    conteos_por_vigencia: dict[int | None, tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class FilaDepurarXVigencia:
+    numero: int
+    localidad: str
+    vigencia: int | None
+    estado: str
+    cantidad: int
+    saldo_final: float
+
+
+ESTADOS_DEPURAR = [
+    "En Ejecución", "Suspendido", "Terminado En Proceso De Liquidación", "Liquidado",
+]
 
 
 def normalizar(texto: object) -> str:
@@ -169,6 +204,28 @@ def _mascara_fila_real(df: pd.DataFrame) -> pd.Series:
     if col_contrato:
         return ~df[col_contrato].map(_es_celda_vacia)
     return pd.Series(True, index=df.index)
+
+
+def _datos_contratos_resumen(df: pd.DataFrame) -> tuple[pd.Series, pd.Series, pd.Series]:
+    col_vigencia = _columna(df, "ano", "suscripcion")
+    col_saldo = _columna(df, "saldo", "final")
+    if not col_vigencia or not col_saldo:
+        raise ValueError("La Matriz no tiene las columnas Año Suscripción y Saldo Final.")
+    iniciales = ~df[col_vigencia].map(_es_celda_vacia)
+    for partes in (("nombre", "contratista"), ("numero", "contrato")):
+        col = _columna(df, *partes)
+        if col:
+            iniciales |= ~df[col].map(_es_celda_vacia)
+    saldos = pd.to_numeric(df[col_saldo], errors="coerce")
+    invalidos = iniciales & (saldos.isna() | saldos.isin([float("inf"), -float("inf")]))
+    if invalidos.any():
+        raise ValueError(
+            f"Hay {int(invalidos.sum())} contratos con Saldo Final vacío o no numérico. "
+            "Complete esos saldos en la Matriz para comprobar los pendientes entre pestañas."
+        )
+    vigencias = pd.to_numeric(df[col_vigencia], errors="coerce")
+    vigencias = vigencias.where(vigencias.mod(1).eq(0))
+    return iniciales, vigencias, saldos
 
 
 def _fecha_datetime(valor: object) -> datetime | None:
@@ -296,17 +353,8 @@ def fila_depurados_desde_matriz(
     localidad: str,
 ) -> FilaDepurados:
     """Cuenta contratos iniciales y depurados desde Año Suscripción y Saldo Final."""
-    col_vigencia = _columna(df_matriz, "ano", "suscripcion")
-    col_saldo = _columna(df_matriz, "saldo", "final")
-    if not col_vigencia or not col_saldo:
-        raise ValueError(
-            "La Matriz no tiene las columnas Año Suscripción y Saldo Final."
-        )
-
-    filas_con_vigencia = ~df_matriz[col_vigencia].map(_es_celda_vacia)
-    saldo_vacio = df_matriz[col_saldo].map(_es_celda_vacia)
-    saldo_cero = pd.to_numeric(df_matriz[col_saldo], errors="coerce").fillna(0).eq(0)
-    depurados = filas_con_vigencia & (saldo_vacio | saldo_cero)
+    filas_con_vigencia, _, saldos = _datos_contratos_resumen(df_matriz)
+    depurados = filas_con_vigencia & saldos.eq(0)
     numero = numero_localidad(localidad)
 
     return FilaDepurados(
@@ -336,9 +384,9 @@ def fila_cps_pn_desde_matriz(
             and "persona natural" in valor
         )
     )
-    saldo_vacio = df_matriz[col_saldo].map(_es_celda_vacia)
-    saldo_cero = pd.to_numeric(df_matriz[col_saldo], errors="coerce").fillna(0).eq(0)
-    depurados = es_cps_pn & (saldo_vacio | saldo_cero)
+    iniciales, _, saldos = _datos_contratos_resumen(df_matriz)
+    es_cps_pn &= iniciales
+    depurados = es_cps_pn & saldos.eq(0)
     numero = numero_localidad(localidad)
 
     return FilaCpsPn(
@@ -354,24 +402,13 @@ def fila_por_depurar_vigencia_desde_matriz(
     localidad: str,
 ) -> FilaPorDepurarVigencia:
     """Cuenta inicial y con saldo por Año Suscripción."""
-    col_vigencia = _columna(df_matriz, "ano", "suscripcion")
-    col_saldo = _columna(df_matriz, "saldo", "final")
-    if not col_vigencia or not col_saldo:
-        raise ValueError(
-            "La Matriz no tiene las columnas Año Suscripción y Saldo Final."
-        )
-
-    vigencias = pd.to_numeric(df_matriz[col_vigencia], errors="coerce")
-    saldo_vacio = df_matriz[col_saldo].map(_es_celda_vacia)
-    saldos = pd.to_numeric(df_matriz[col_saldo], errors="coerce")
-    tiene_saldo = (~saldo_vacio) & saldos.fillna(0).ne(0)
-    conteos: dict[int, tuple[int, int]] = {}
-
-    for vigencia in sorted(int(v) for v in vigencias.dropna().unique()):
-        filas_vigencia = vigencias.eq(vigencia)
-        inicial = int(filas_vigencia.sum())
-        con_saldo = int((filas_vigencia & tiene_saldo).sum())
-        conteos[vigencia] = (inicial, con_saldo)
+    iniciales, vigencias, saldos = _datos_contratos_resumen(df_matriz)
+    datos = pd.DataFrame({"vigencia": vigencias[iniciales], "pendiente": saldos[iniciales].ne(0)})
+    agrupados = datos.groupby("vigencia", dropna=False)["pendiente"].agg(inicial="size", con_saldo="sum")
+    conteos = {
+        int(vigencia) if pd.notna(vigencia) else None: (int(conteo["inicial"]), int(conteo["con_saldo"]))
+        for vigencia, conteo in agrupados.iterrows()
+    }
 
     numero = numero_localidad(localidad)
     return FilaPorDepurarVigencia(
@@ -379,6 +416,106 @@ def fila_por_depurar_vigencia_desde_matriz(
         localidad=nombre_localidad_reporte(localidad),
         conteos_por_vigencia=conteos,
     )
+
+
+def filas_depura_tipos_ctos_desde_matriz(
+    df_matriz: pd.DataFrame,
+    localidad: str,
+) -> list[FilaDepuraTipoCto]:
+    """Desglosa los contratos iniciales y depurados por Clasificacion al corte."""
+    col_tipo = _columna(df_matriz, "clasificacion")
+    col_vigencia = _columna(df_matriz, "ano", "suscripcion")
+    col_saldo = _columna(df_matriz, "saldo", "final")
+    if not col_tipo or not col_vigencia or not col_saldo:
+        raise ValueError(
+            "La Matriz no tiene las columnas Clasificación, Año Suscripción y Saldo Final."
+        )
+
+    # El universo y el criterio de depuracion coinciden con la hoja DEPURADOS.
+    iniciales, _, saldos = _datos_contratos_resumen(df_matriz)
+    depurados = saldos.eq(0)
+    grupos: dict[str, list] = {}
+    for tipo, depurado in zip(df_matriz.loc[iniciales, col_tipo], depurados[iniciales]):
+        etiqueta = (
+            "Sin clasificación" if _es_celda_vacia(tipo)
+            else " ".join(str(tipo).split())
+        )
+        grupo = grupos.setdefault(normalizar(etiqueta), [etiqueta, 0, 0])
+        grupo[1] += 1
+        grupo[2] += int(depurado)
+
+    numero = numero_localidad(localidad)
+    nombre = nombre_localidad_reporte(localidad)
+    return [
+        FilaDepuraTipoCto(numero, nombre, etiqueta, inicial, depurado)
+        for _, (etiqueta, inicial, depurado) in sorted(grupos.items())
+    ]
+
+
+def filas_dism_antiguedad_ctos_desde_matriz(
+    df_matriz: pd.DataFrame,
+    localidad: str,
+) -> list[FilaDismAntiguedadCto]:
+    """Cuenta por ano de suscripcion los contratos iniciales y con saldo cero."""
+    col_vigencia = _columna(df_matriz, "ano", "suscripcion")
+    col_saldo = _columna(df_matriz, "saldo", "final")
+    if not col_vigencia or not col_saldo:
+        raise ValueError(
+            "La Matriz no tiene las columnas Año Suscripción y Saldo Final."
+        )
+
+    iniciales, vigencias, saldos = _datos_contratos_resumen(df_matriz)
+    saldo_cero = saldos.eq(0)
+    datos = pd.DataFrame({
+        "vigencia": vigencias[iniciales],
+        "depurado": saldo_cero[iniciales],
+    })
+    conteos = datos.groupby("vigencia", dropna=False)["depurado"].agg(
+        cantidad_inicial="size", depurados="sum",
+    )
+    numero = numero_localidad(localidad)
+    nombre = nombre_localidad_reporte(localidad)
+    return [
+        FilaDismAntiguedadCto(
+            numero=numero, localidad=nombre,
+            vigencia=int(vigencia) if pd.notna(vigencia) else None,
+            cantidad_inicial=int(conteo["cantidad_inicial"]),
+            depurados=int(conteo["depurados"]),
+        )
+        for vigencia, conteo in conteos.iterrows()
+    ]
+
+
+def filas_depurar_x_vigencia_desde_matriz(
+    df_matriz: pd.DataFrame,
+    localidad: str,
+) -> list[FilaDepurarXVigencia]:
+    col_estado = _columna(df_matriz, "estado", "actual")
+    if not col_estado:
+        raise ValueError("La Matriz no tiene la columna Estado Actual.")
+    iniciales, vigencias, saldos = _datos_contratos_resumen(df_matriz)
+    pendientes = iniciales & saldos.notna() & saldos.ne(0)
+    etiquetas = {normalizar(e): e for e in ESTADOS_DEPURAR}
+
+    def estado_reporte(valor):
+        etiqueta = "Sin información" if _es_celda_vacia(valor) else " ".join(str(valor).split())
+        return etiquetas.setdefault(normalizar(etiqueta), etiqueta)
+
+    datos = pd.DataFrame({
+        "vigencia": vigencias[pendientes],
+        "estado": df_matriz.loc[pendientes, col_estado].map(estado_reporte),
+        "saldo": saldos[pendientes],
+    })
+    conteos = datos.groupby(["vigencia", "estado"], dropna=False)["saldo"].agg(cantidad="size", saldo="sum")
+    numero = numero_localidad(localidad)
+    nombre = nombre_localidad_reporte(localidad)
+    return [
+        FilaDepurarXVigencia(
+            numero, nombre, int(vigencia) if pd.notna(vigencia) else None, estado,
+            int(conteo["cantidad"]), float(conteo["saldo"]),
+        )
+        for (vigencia, estado), conteo in conteos.iterrows()
+    ]
 
 
 def _filas_perdida_desde_matriz(
@@ -618,20 +755,100 @@ def ordenar_filas_cps_pn(filas: Iterable[FilaCpsPn | dict]) -> list[FilaCpsPn]:
     return sorted(normalizadas, key=lambda f: f.numero)
 
 
+def ordenar_filas_depura_tipos_ctos(
+    filas: Iterable[FilaDepuraTipoCto | dict],
+) -> list[FilaDepuraTipoCto]:
+    normalizadas = [
+        fila if isinstance(fila, FilaDepuraTipoCto) else FilaDepuraTipoCto(
+            numero=int(fila["numero"]),
+            localidad=str(fila["localidad"]),
+            tipo_contrato=str(fila["tipo_contrato"]),
+            cantidad_inicial=int(fila.get("cantidad_inicial", 0) or 0),
+            depurados=int(fila.get("depurados", 0) or 0),
+        )
+        for fila in filas
+    ]
+    return sorted(normalizadas, key=lambda f: (f.numero, normalizar(f.tipo_contrato)))
+
+
+def ordenar_filas_dism_antiguedad_ctos(
+    filas: Iterable[FilaDismAntiguedadCto | dict],
+) -> list[FilaDismAntiguedadCto]:
+    normalizadas = [
+        fila if isinstance(fila, FilaDismAntiguedadCto) else FilaDismAntiguedadCto(
+            numero=int(fila["numero"]),
+            localidad=str(fila["localidad"]),
+            vigencia=int(fila["vigencia"]) if fila.get("vigencia") is not None else None,
+            cantidad_inicial=int(fila.get("cantidad_inicial", 0) or 0),
+            depurados=int(fila.get("depurados", 0) or 0),
+        )
+        for fila in filas
+    ]
+    return sorted(normalizadas, key=lambda f: (f.numero, f.vigencia is None, f.vigencia or 0))
+
+
+def ordenar_filas_depurar_x_vigencia(
+    filas: Iterable[FilaDepurarXVigencia | dict],
+) -> list[FilaDepurarXVigencia]:
+    normalizadas = [
+        fila if isinstance(fila, FilaDepurarXVigencia) else FilaDepurarXVigencia(
+            numero=int(fila["numero"]), localidad=str(fila["localidad"]),
+            vigencia=int(fila["vigencia"]) if fila.get("vigencia") is not None else None,
+            estado=str(fila["estado"]), cantidad=int(fila["cantidad"]),
+            saldo_final=float(fila["saldo_final"]),
+        )
+        for fila in filas
+    ]
+    return sorted(normalizadas, key=lambda f: (f.numero, f.vigencia is None, f.vigencia or 0, normalizar(f.estado)))
+
+
+def _validar_totales_pendientes(
+    depurados, tipos, antiguedad, vigencias, pendientes,
+) -> None:
+    fuentes = [
+        ("DEPURADOS", [(f.numero, f.cantidad_inicial - f.depurados) for f in depurados]),
+        ("DEPURA. TIPOS CTOS", [(f.numero, f.cantidad_inicial - f.depurados) for f in tipos]),
+        ("DISM. ANTIGÜEDAD CTOS", [(f.numero, f.cantidad_inicial - f.depurados) for f in antiguedad]),
+        ("POR DEPURAR x VIGENCIA", [(f.numero, sum(c[1] for c in f.conteos_por_vigencia.values())) for f in vigencias]),
+    ]
+    totales = {}
+    for nombre, filas in fuentes:
+        if not filas:
+            continue
+        por_localidad = {}
+        for numero, cantidad in filas:
+            por_localidad[numero] = por_localidad.get(numero, 0) + cantidad
+        totales[nombre] = por_localidad
+    por_localidad = {}
+    for fila in pendientes:
+        por_localidad[fila.numero] = por_localidad.get(fila.numero, 0) + fila.cantidad
+    totales["DEPURAR X VIGENCIA"] = por_localidad
+    localidades = sorted({n for cantidades in totales.values() for n in cantidades})
+    for numero in localidades:
+        conteos = {nombre: cantidades.get(numero, 0) for nombre, cantidades in totales.items()}
+        if len(set(conteos.values())) > 1:
+            detalle = "; ".join(f"{nombre}: {cantidad}" for nombre, cantidad in conteos.items())
+            raise ValueError(
+                f"No coinciden los contratos por depurar de {LOCALIDADES_NOMBRE_REPORTE[numero]} "
+                f"entre pestañas ({detalle}). Vuelva a consolidar la Matriz del mismo corte."
+            )
+
+
 def _fila_por_depurar_vigencia_desde_dict(
     fila: FilaPorDepurarVigencia | dict,
 ) -> FilaPorDepurarVigencia:
     if isinstance(fila, FilaPorDepurarVigencia):
         return fila
     conteos_raw = fila.get("conteos_por_vigencia", {}) or {}
-    conteos: dict[int, tuple[int, int]] = {}
+    conteos: dict[int | None, tuple[int, int]] = {}
     for vigencia, valores in conteos_raw.items():
         if isinstance(valores, dict):
             inicial = valores.get("inicial", 0)
             con_saldo = valores.get("con_saldo", 0)
         else:
             inicial, con_saldo = valores
-        conteos[int(vigencia)] = (int(inicial or 0), int(con_saldo or 0))
+        llave = None if vigencia in (None, "null") else int(vigencia)
+        conteos[llave] = (int(inicial or 0), int(con_saldo or 0))
     return FilaPorDepurarVigencia(
         numero=int(fila["numero"]),
         localidad=str(fila["localidad"]),
@@ -667,8 +884,21 @@ def crear_excel_tabla_resumen_proyecto(
     filas_depurados: Iterable[FilaDepurados | dict] | None = None,
     filas_por_depurar_vigencia: Iterable[FilaPorDepurarVigencia | dict] | None = None,
     filas_cps_pn: Iterable[FilaCpsPn | dict] | None = None,
+    filas_depura_tipos_ctos: Iterable[FilaDepuraTipoCto | dict] | None = None,
+    filas_dism_antiguedad_ctos: Iterable[FilaDismAntiguedadCto | dict] | None = None,
+    filas_depurar_x_vigencia: Iterable[FilaDepurarXVigencia | dict] | None = None,
 ) -> bytes:
     """Crea el Excel Tabla Resumen Proyecto con las pestañas ya definidas."""
+    filas_depurados = ordenar_filas_depurados(filas_depurados or [])
+    filas_depura_tipos_ctos = ordenar_filas_depura_tipos_ctos(filas_depura_tipos_ctos or [])
+    filas_dism_antiguedad_ctos = ordenar_filas_dism_antiguedad_ctos(filas_dism_antiguedad_ctos or [])
+    filas_por_depurar_vigencia = ordenar_filas_por_depurar_vigencia(filas_por_depurar_vigencia or [])
+    pendientes = ordenar_filas_depurar_x_vigencia(filas_depurar_x_vigencia or [])
+    if filas_depurar_x_vigencia is not None:
+        _validar_totales_pendientes(
+            filas_depurados, filas_depura_tipos_ctos, filas_dism_antiguedad_ctos,
+            filas_por_depurar_vigencia, pendientes,
+        )
     wb = Workbook()
     ws_lib = wb.active
     ws_lib.title = "LIB Y FEN"
@@ -705,6 +935,9 @@ def crear_excel_tabla_resumen_proyecto(
         filas_cps_pn or [],
         fecha_corte,
     )
+    _crear_hoja_depura_tipos_ctos(wb, filas_depura_tipos_ctos or [], fecha_corte)
+    _crear_hoja_dism_antiguedad_ctos(wb, filas_dism_antiguedad_ctos or [], fecha_corte)
+    _crear_hoja_depurar_x_vigencia(wb, pendientes, filas_depurados, fecha_corte)
     out = BytesIO()
     wb.save(out)
     return out.getvalue()
@@ -940,7 +1173,7 @@ def _crear_hoja_depurados(
         ws.cell(idx, 3).value = fila.cantidad_inicial
         ws.cell(idx, 4).value = fila.depurados
         ws.cell(idx, 5).value = f"=C{idx}-D{idx}"
-        ws.cell(idx, 6).value = f"=D{idx}/C{idx}"
+        ws.cell(idx, 6).value = f"=IF(C{idx}=0,0,D{idx}/C{idx})"
 
     total_row = 3 + len(filas_ordenadas)
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
@@ -951,7 +1184,7 @@ def _crear_hoja_depurados(
         ws.cell(total_row, 3).value = f"=SUM(C{first_data}:C{last_data})"
         ws.cell(total_row, 4).value = f"=SUM(D{first_data}:D{last_data})"
         ws.cell(total_row, 5).value = f"=SUM(E{first_data}:E{last_data})"
-        ws.cell(total_row, 6).value = f"=D{total_row}/C{total_row}"
+        ws.cell(total_row, 6).value = f"=IF(C{total_row}=0,0,D{total_row}/C{total_row})"
     else:
         for col in range(3, 7):
             ws.cell(total_row, col).value = 0
@@ -1023,7 +1256,7 @@ def _crear_hoja_cps_pn(
         ws.cell(idx, 3).value = fila.cantidad_inicial
         ws.cell(idx, 4).value = fila.depurados
         ws.cell(idx, 5).value = f"=C{idx}-D{idx}"
-        ws.cell(idx, 6).value = f"=D{idx}/C{idx}"
+        ws.cell(idx, 6).value = f"=IF(C{idx}=0,0,D{idx}/C{idx})"
 
     total_row = 3 + len(filas_ordenadas)
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
@@ -1034,12 +1267,312 @@ def _crear_hoja_cps_pn(
         ws.cell(total_row, 3).value = f"=SUM(C{first_data}:C{last_data})"
         ws.cell(total_row, 4).value = f"=SUM(D{first_data}:D{last_data})"
         ws.cell(total_row, 5).value = f"=SUM(E{first_data}:E{last_data})"
-        ws.cell(total_row, 6).value = f"=D{total_row}/C{total_row}"
+        ws.cell(total_row, 6).value = f"=IF(C{total_row}=0,0,D{total_row}/C{total_row})"
     else:
         for col in range(3, 7):
             ws.cell(total_row, col).value = 0
 
     _formatear_hoja_depurados(ws, total_row)
+
+
+def _crear_hoja_depura_tipos_ctos(
+    wb,
+    filas: Iterable[FilaDepuraTipoCto | dict],
+    fecha_corte: datetime | date,
+) -> None:
+    ws = wb.create_sheet("DEPURA. TIPOS CTOS")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "C00000"
+    f = _fecha_datetime(fecha_corte) or datetime.now()
+    headers = [
+        "TIPOS DE CONTRATO",
+        "CANTIDAD DE CTOS INICIAL",
+        f"CTOS DEPURADOS A {f.day} DE {_nombre_mes_es(f)} DE {f.year}",
+        "CTOS POR DEPURAR",
+        "% de Avance",
+    ]
+    grupos: dict[int, list[FilaDepuraTipoCto]] = {}
+    for fila in ordenar_filas_depura_tipos_ctos(filas):
+        grupos.setdefault(fila.numero, []).append(fila)
+
+    borde = Side(style="thin", color="808080")
+    border = Border(left=borde, right=borde, top=borde, bottom=borde)
+    fill_rojo = PatternFill("solid", fgColor="C00000")
+    fill_amarillo = PatternFill("solid", fgColor="FFC000")
+    for columna, ancho in {"A": 56, "B": 22, "C": 26, "D": 22, "E": 17}.items():
+        ws.column_dimensions[columna].width = ancho
+
+    inicio = 1
+    for filas_localidad in grupos.values():
+        ws.merge_cells(start_row=inicio, start_column=1, end_row=inicio, end_column=5)
+        ws.cell(inicio, 1).value = filas_localidad[0].localidad
+        for col in range(1, 6):
+            cell = ws.cell(inicio, col)
+            cell.fill = fill_rojo
+            cell.font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[inicio].height = 24
+
+        header_row = inicio + 1
+        primera = inicio + 2
+        total_row = primera + len(filas_localidad)
+        for col, header in enumerate(headers, start=1):
+            ws.cell(header_row, col).value = header
+        for row, fila in enumerate(filas_localidad, start=primera):
+            # Las clasificaciones son texto de la Matriz, nunca formulas de entrada.
+            ws.cell(row, 1).value = fila.tipo_contrato
+            ws.cell(row, 1).data_type = "s"
+            ws.cell(row, 2).value = fila.cantidad_inicial
+            ws.cell(row, 3).value = fila.depurados
+            ws.cell(row, 4).value = f"=B{row}-C{row}"
+            ws.cell(row, 5).value = f"=IF(B{row}=0,0,C{row}/B{row})"
+
+        ws.cell(total_row, 1).value = "TOTAL"
+        for col in (2, 3):
+            letra = get_column_letter(col)
+            ws.cell(total_row, col).value = f"=SUM({letra}{primera}:{letra}{total_row - 1})"
+        ws.cell(total_row, 4).value = f"=B{total_row}-C{total_row}"
+        ws.cell(total_row, 5).value = f"=IF(B{total_row}=0,0,C{total_row}/B{total_row})"
+
+        for row in range(header_row, total_row + 1):
+            destacado = row in (header_row, total_row)
+            for col in range(1, 6):
+                cell = ws.cell(row, col)
+                cell.border = border
+                cell.fill = fill_amarillo if destacado else FILL_BLANCO
+                cell.font = Font(name="Arial", size=11, bold=destacado)
+                cell.alignment = Alignment(
+                    horizontal="left" if col == 1 and row != header_row else "center",
+                    vertical="center", wrap_text=True,
+                )
+                if row != header_row and col > 1:
+                    cell.number_format = "0.00%" if col == 5 else "#,##0"
+            ws.row_dimensions[row].height = (
+                48 if row == header_row else 34 if len(str(ws.cell(row, 1).value)) > 50 else 24
+            )
+
+        chart = BarChart()
+        chart.type = "bar"
+        chart.grouping = "clustered"
+        chart.overlap = 0
+        chart.title = filas_localidad[0].localidad
+        chart.x_axis.title = "Cantidad de contratos"
+        chart.y_axis.title = "Tipos de contrato"
+        chart.legend.position = "b"
+        chart.width = 27
+        chart.height = max(8, 4 + len(filas_localidad) * 0.65)
+        chart.add_data(
+            Reference(ws, min_col=2, max_col=3, min_row=header_row, max_row=total_row - 1),
+            titles_from_data=True,
+        )
+        chart.set_categories(Reference(ws, min_col=1, min_row=primera, max_row=total_row - 1))
+        for serie, color, titulo in zip(
+            chart.series, ("FFC000", "C00000"), ("Contratos iniciales", "Contratos depurados"),
+        ):
+            serie.tx = SeriesLabel(v=titulo)
+            serie.graphicalProperties.solidFill = color
+            serie.graphicalProperties.line.solidFill = color
+        ws.add_chart(chart, f"A{total_row + 2}")
+        filas_chart = int(chart.height * 28.35 / 24) + 2
+        for row in range(total_row + 2, total_row + 2 + filas_chart):
+            ws.row_dimensions[row].height = 24
+        inicio = total_row + 2 + filas_chart + 2
+
+    if not grupos:
+        ws.merge_cells("A1:E1")
+        ws["A1"] = "Sin datos de clasificación de contratos para este corte."
+        ws["A1"].font = Font(name="Arial", size=11)
+        ws["A1"].alignment = Alignment(vertical="center")
+        ws.row_dimensions[1].height = 24
+    ws.freeze_panes = "B3"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+
+def _crear_hoja_dism_antiguedad_ctos(
+    wb,
+    filas: Iterable[FilaDismAntiguedadCto | dict],
+    fecha_corte: datetime | date,
+) -> None:
+    ws = wb.create_sheet("DISM. ANTIGÜEDAD CTOS")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "C00000"
+    f = _fecha_datetime(fecha_corte) or datetime.now()
+    headers = [
+        "FECHA DE CELEBRACIÓN CTOS",
+        "CANTIDAD DE CTOS INICIAL",
+        "CTOS LIQUIDADOS/\nLIBERADOS/FENECIDOS\n"
+        f"A {f.day} DE {_nombre_mes_es(f)} DE {f.year}",
+        "CTOS PENDIENTES",
+    ]
+    grupos: dict[int, list[FilaDismAntiguedadCto]] = {}
+    for fila in ordenar_filas_dism_antiguedad_ctos(filas):
+        grupos.setdefault(fila.numero, []).append(fila)
+
+    borde = Side(style="thin", color="808080")
+    border = Border(left=borde, right=borde, top=borde, bottom=borde)
+    fill_rojo = PatternFill("solid", fgColor="C00000")
+    fill_amarillo = PatternFill("solid", fgColor="FFC000")
+    for columna, ancho in {"A": 36, "B": 22, "C": 42, "D": 24}.items():
+        ws.column_dimensions[columna].width = ancho
+
+    inicio = 1
+    for filas_localidad in grupos.values():
+        ws.merge_cells(start_row=inicio, start_column=1, end_row=inicio, end_column=4)
+        ws.cell(inicio, 1).value = filas_localidad[0].localidad
+        for col in range(1, 5):
+            cell = ws.cell(inicio, col)
+            cell.fill = fill_rojo
+            cell.font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[inicio].height = 24
+
+        header_row = inicio + 1
+        primera = inicio + 2
+        total_row = primera + len(filas_localidad)
+        for col, header in enumerate(headers, start=1):
+            ws.cell(header_row, col).value = header
+        for row, fila in enumerate(filas_localidad, start=primera):
+            ws.cell(row, 1).value = fila.vigencia if fila.vigencia is not None else "Sin información"
+            ws.cell(row, 2).value = fila.cantidad_inicial
+            ws.cell(row, 3).value = fila.depurados
+            ws.cell(row, 4).value = f"=B{row}-C{row}"
+
+        ws.cell(total_row, 1).value = "TOTAL"
+        for col in (2, 3):
+            letra = get_column_letter(col)
+            ws.cell(total_row, col).value = f"=SUM({letra}{primera}:{letra}{total_row - 1})"
+        ws.cell(total_row, 4).value = f"=B{total_row}-C{total_row}"
+
+        for row in range(header_row, total_row + 1):
+            destacado = row in (header_row, total_row)
+            for col in range(1, 5):
+                cell = ws.cell(row, col)
+                cell.border = border
+                cell.fill = fill_amarillo if destacado else FILL_BLANCO
+                cell.font = Font(name="Arial", size=11, bold=destacado)
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                if row != header_row and (col > 1 or isinstance(cell.value, int)):
+                    cell.number_format = "0" if col == 1 else "#,##0"
+            ws.row_dimensions[row].height = 64 if row == header_row else 24
+        inicio = total_row + 3
+
+    if not grupos:
+        ws.merge_cells("A1:D1")
+        ws["A1"] = "Sin datos de año de suscripción de contratos para este corte."
+        ws["A1"].font = Font(name="Arial", size=11)
+        ws["A1"].alignment = Alignment(vertical="center")
+        ws.row_dimensions[1].height = 24
+    ws.freeze_panes = "B3"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+
+def _crear_hoja_depurar_x_vigencia(wb, filas, localidades, fecha_corte) -> None:
+    ws = wb.create_sheet("DEPURAR X VIGENCIA")
+    ws.sheet_view.showGridLines = False
+    ws.sheet_properties.tabColor = "C00000"
+    f = _fecha_datetime(fecha_corte) or datetime.now()
+    grupos: dict[int, list[FilaDepurarXVigencia]] = {loc.numero: [] for loc in localidades}
+    nombres = {loc.numero: loc.localidad for loc in localidades}
+    for fila in filas:
+        grupos.setdefault(fila.numero, []).append(fila)
+        nombres[fila.numero] = fila.localidad
+    extras = {fila.estado for fila in filas if fila.estado not in ESTADOS_DEPURAR}
+    estados = ESTADOS_DEPURAR + sorted(extras, key=normalizar)
+    ultima_col = len(estados) + 2
+    ultima_letra = get_column_letter(ultima_col)
+    fill_rojo = PatternFill("solid", fgColor="C00000")
+    fill_amarillo = PatternFill("solid", fgColor="FFC000")
+    borde = Side(style="thin", color="808080")
+    border = Border(left=borde, right=borde, top=borde, bottom=borde)
+    ws.column_dimensions["A"].width = 14
+    for col in range(2, ultima_col + 1):
+        ws.column_dimensions[get_column_letter(col)].width = 26
+    altura_header = max(48, 14 * max((len(e) + 21) // 22 for e in estados) + 12)
+
+    def banda(row, texto):
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=ultima_col)
+        ws.cell(row, 1).value = texto
+        for col in range(1, ultima_col + 1):
+            cell = ws.cell(row, col)
+            cell.fill = fill_rojo
+            cell.font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[row].height = 24
+
+    def tabla(inicio, titulo, vigencias, celdas, es_saldo=False):
+        banda(inicio, titulo)
+        header_row = inicio + 1
+        primera = inicio + 2
+        total_row = primera + len(vigencias)
+        for col, header in enumerate(["Vigencia", *estados, "Total"], start=1):
+            ws.cell(header_row, col).value = header
+            ws.cell(header_row, col).data_type = "s"
+        for row, vigencia in enumerate(vigencias, start=primera):
+            ws.cell(row, 1).value = vigencia if vigencia is not None else "Sin información"
+            for col, estado in enumerate(estados, start=2):
+                cantidad, saldo = celdas.get((vigencia, estado), (0, 0))
+                ws.cell(row, col).value = saldo if es_saldo else cantidad
+            ws.cell(row, ultima_col).value = f"=SUM(B{row}:{get_column_letter(ultima_col - 1)}{row})"
+        ws.cell(total_row, 1).value = "Total"
+        for col in range(2, ultima_col + 1):
+            letra = get_column_letter(col)
+            ws.cell(total_row, col).value = (
+                f"=SUM({letra}{primera}:{letra}{total_row - 1})" if vigencias else 0
+            )
+        for row in range(header_row, total_row + 1):
+            destacado = row in (header_row, total_row)
+            for col in range(1, ultima_col + 1):
+                cell = ws.cell(row, col)
+                cell.fill = fill_amarillo if destacado else FILL_BLANCO
+                cell.font = Font(name="Arial", size=11, bold=destacado)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                if row != header_row:
+                    cell.number_format = FORMATO_PESOS if es_saldo and col > 1 else "#,##0" if col > 1 else "0"
+            ws.row_dimensions[row].height = altura_header if row == header_row else 24
+        return total_row
+
+    inicio = 1
+    for numero in sorted(grupos):
+        banda(inicio, nombres[numero])
+        vigencias = sorted({fila.vigencia for fila in grupos[numero]}, key=lambda v: (v is None, v or 0))
+        celdas = {}
+        for fila in grupos[numero]:
+            llave = (fila.vigencia, fila.estado)
+            cantidad, saldo = celdas.get(llave, (0, 0))
+            celdas[llave] = (cantidad + fila.cantidad, saldo + fila.saldo_final)
+        total_ctos = tabla(inicio + 2, "CONTRATOS POR DEPURAR POR VIGENCIAS", vigencias, celdas)
+        pct_row = total_ctos + 1
+        for col in range(2, ultima_col + 1):
+            letra = get_column_letter(col)
+            cell = ws.cell(pct_row, col)
+            cell.value = f"=IF(${ultima_letra}${total_ctos}=0,0,{letra}{total_ctos}/${ultima_letra}${total_ctos})"
+            cell.font = Font(name="Arial", size=11)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.number_format = "0.00%"
+        ws.row_dimensions[pct_row].height = 24
+        total_saldos = tabla(pct_row + 2, "SALDOS POR DEPURAR POR VIGENCIAS", vigencias, celdas, es_saldo=True)
+        ws.merge_cells(start_row=total_saldos + 2, start_column=1, end_row=total_saldos + 2, end_column=ultima_col)
+        ws.cell(total_saldos + 2, 1).value = f"CORTE: {f.day} DE {_nombre_mes_es(f)} DE {f.year}"
+        ws.cell(total_saldos + 2, 1).font = Font(name="Arial", size=10)
+        inicio = total_saldos + 5
+    if not grupos:
+        ws.merge_cells(f"A1:{ultima_letra}1")
+        ws["A1"] = "Sin datos de contratos por depurar para este corte."
+        ws["A1"].font = Font(name="Arial", size=11)
+    ws.freeze_panes = "B5"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
 
 
 def _crear_hoja_por_depurar_vigencia(
@@ -1050,7 +1583,9 @@ def _crear_hoja_por_depurar_vigencia(
     ws = wb.create_sheet("POR DEPURAR x VIGENCIA")
     f = _fecha_datetime(fecha_corte) or datetime.now()
     filas_ordenadas = ordenar_filas_por_depurar_vigencia(filas_por_depurar_vigencia)
-    vigencias = list(range(2011, f.year))
+    vigencias = sorted(set(range(2011, f.year)) | {
+        v for fila in filas_ordenadas for v in fila.conteos_por_vigencia if v is not None
+    })
 
     ws.merge_cells("A1:A2")
     ws.merge_cells("B1:B2")
@@ -1086,21 +1621,18 @@ def _crear_hoja_por_depurar_vigencia(
     for row_idx, fila in enumerate(filas_ordenadas, start=3):
         ws.cell(row_idx, 1).value = fila.numero
         ws.cell(row_idx, 2).value = fila.localidad
-        tiene_inicial = False
-        tiene_saldo = False
         for idx, vigencia in enumerate(vigencias):
             col_ini = 3 + (idx * 2)
             inicial, con_saldo = fila.conteos_por_vigencia.get(vigencia, (0, 0))
             ws.cell(row_idx, col_ini).value = inicial or None
             ws.cell(row_idx, col_ini + 1).value = con_saldo or None
-            tiene_inicial = tiene_inicial or inicial > 0
-            tiene_saldo = tiene_saldo or con_saldo > 0
         inicial_refs = [f"{get_column_letter(c)}{row_idx}" for c in columnas_inicial]
         saldo_refs = [f"{get_column_letter(c)}{row_idx}" for c in columnas_saldo]
-        if tiene_inicial:
-            ws.cell(row_idx, col_total).value = "=" + "+".join(inicial_refs)
-        if tiene_saldo:
-            ws.cell(row_idx, col_total + 1).value = "=" + "+".join(saldo_refs)
+        inicial_sin_info, saldo_sin_info = fila.conteos_por_vigencia.get(None, (0, 0))
+        ws.cell(row_idx, col_sin_info).value = inicial_sin_info or None
+        ws.cell(row_idx, col_sin_info + 1).value = saldo_sin_info or None
+        ws.cell(row_idx, col_total).value = "=" + "+".join(inicial_refs)
+        ws.cell(row_idx, col_total + 1).value = "=" + "+".join(saldo_refs)
 
     total_row = 3 + len(filas_ordenadas)
     ws.merge_cells(start_row=total_row, start_column=1, end_row=total_row, end_column=2)
@@ -1113,7 +1645,7 @@ def _crear_hoja_por_depurar_vigencia(
             not _es_celda_vacia(ws.cell(row_idx, col_idx).value)
             for row_idx in range(first_data, total_row)
         )
-        if filas_ordenadas and columna_tiene_datos:
+        if filas_ordenadas and (columna_tiene_datos or col_idx >= col_total):
             ws.cell(total_row, col_idx).value = (
                 f"=SUM({letter}{first_data}:{letter}{last_data})"
             )

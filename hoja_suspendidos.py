@@ -1032,10 +1032,11 @@ def _aplicar_tope_mes_anterior(
     valor_anterior: float | None,
 ) -> tuple[float | int, float | int]:
     """
-    Total en columna estado: no puede superar el reportado el mes anterior.
+    Total en columna estado: aplica el tope solo si el mes anterior es positivo.
     Devuelve (valor_a_mostrar, valor_real).
     """
-    if valor_anterior is None:
+    # Las plantillas nuevas pueden traer un cero sin un conteo anterior utilizable.
+    if valor_anterior is None or float(valor_anterior) <= 0:
         return valor_real, valor_real
     if float(valor_real) > float(valor_anterior):
         return valor_anterior, valor_real

@@ -95,6 +95,9 @@ CLAVES_LIMPIAR_AL_CAMBIAR_VERSION = {
     "tabla_resumen_depurados",
     "tabla_resumen_por_depurar_vigencia",
     "tabla_resumen_cps_pn",
+    "tabla_resumen_depura_tipos_ctos",
+    "tabla_resumen_dism_antiguedad_ctos",
+    "tabla_resumen_depurar_x_vigencia",
     "titulo_saldo_corte",
     "desempate_wizard_idx",
     "desempate_wizard_mapa",
@@ -1011,6 +1014,9 @@ def init_session_state():
         "tabla_resumen_depurados": [],
         "tabla_resumen_por_depurar_vigencia": [],
         "tabla_resumen_cps_pn": [],
+        "tabla_resumen_depura_tipos_ctos": [],
+        "tabla_resumen_dism_antiguedad_ctos": [],
+        "tabla_resumen_depurar_x_vigencia": [],
         "titulo_saldo_corte": "",
         "desempate_wizard_idx": 0,
         "desempate_wizard_mapa": {},
@@ -2613,6 +2619,9 @@ def _persistir_snapshot_consolidacion() -> None:
         "tabla_resumen_depurados": st.session_state.get("tabla_resumen_depurados") or [],
         "tabla_resumen_por_depurar_vigencia": st.session_state.get("tabla_resumen_por_depurar_vigencia") or [],
         "tabla_resumen_cps_pn": st.session_state.get("tabla_resumen_cps_pn") or [],
+        "tabla_resumen_depura_tipos_ctos": st.session_state.get("tabla_resumen_depura_tipos_ctos") or [],
+        "tabla_resumen_dism_antiguedad_ctos": st.session_state.get("tabla_resumen_dism_antiguedad_ctos") or [],
+        "tabla_resumen_depurar_x_vigencia": st.session_state.get("tabla_resumen_depurar_x_vigencia") or [],
         "fecha_analisis": st.session_state.get("fecha_analisis"),
         "last_processed_at": st.session_state.get("last_processed_at"),
         "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -2632,6 +2641,9 @@ def _persistir_snapshot_consolidacion() -> None:
     st.session_state.tabla_resumen_depurados = []
     st.session_state.tabla_resumen_por_depurar_vigencia = []
     st.session_state.tabla_resumen_cps_pn = []
+    st.session_state.tabla_resumen_depura_tipos_ctos = []
+    st.session_state.tabla_resumen_dism_antiguedad_ctos = []
+    st.session_state.tabla_resumen_depurar_x_vigencia = []
 
 
 @st.cache_data(show_spinner=False)
@@ -2654,6 +2666,9 @@ def _cargar_snapshot_consolidacion() -> dict:
             "tabla_resumen_depurados": st.session_state.get("tabla_resumen_depurados") or [],
             "tabla_resumen_por_depurar_vigencia": st.session_state.get("tabla_resumen_por_depurar_vigencia") or [],
             "tabla_resumen_cps_pn": st.session_state.get("tabla_resumen_cps_pn") or [],
+            "tabla_resumen_depura_tipos_ctos": st.session_state.get("tabla_resumen_depura_tipos_ctos") or [],
+            "tabla_resumen_dism_antiguedad_ctos": st.session_state.get("tabla_resumen_dism_antiguedad_ctos") or [],
+            "tabla_resumen_depurar_x_vigencia": st.session_state.get("tabla_resumen_depurar_x_vigencia") or [],
             "fecha_analisis": st.session_state.get("fecha_analisis"),
             "last_processed_at": st.session_state.get("last_processed_at"),
             "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -2673,6 +2688,9 @@ def _cargar_snapshot_consolidacion() -> dict:
         "tabla_resumen_depurados": [],
         "tabla_resumen_por_depurar_vigencia": [],
         "tabla_resumen_cps_pn": [],
+        "tabla_resumen_depura_tipos_ctos": [],
+        "tabla_resumen_dism_antiguedad_ctos": [],
+        "tabla_resumen_depurar_x_vigencia": [],
         "fecha_analisis": st.session_state.get("fecha_analisis"),
         "last_processed_at": st.session_state.get("last_processed_at"),
         "titulo_saldo_corte": st.session_state.get("titulo_saldo_corte", ""),
@@ -2750,6 +2768,27 @@ def _tabla_resumen_cps_pn_para_ui() -> list:
     if inline:
         return list(inline)
     return list(_cargar_snapshot_consolidacion().get("tabla_resumen_cps_pn") or [])
+
+
+def _tabla_resumen_depura_tipos_ctos_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_depura_tipos_ctos") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_depura_tipos_ctos") or [])
+
+
+def _tabla_resumen_dism_antiguedad_ctos_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_dism_antiguedad_ctos") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_dism_antiguedad_ctos") or [])
+
+
+def _tabla_resumen_depurar_x_vigencia_para_ui() -> list:
+    inline = st.session_state.get("tabla_resumen_depurar_x_vigencia") or []
+    if inline:
+        return list(inline)
+    return list(_cargar_snapshot_consolidacion().get("tabla_resumen_depurar_x_vigencia") or [])
 
 
 def _borrar_snapshot_consolidacion() -> None:
@@ -3366,6 +3405,9 @@ def aplicar_mapa_desempate(mapa: dict[str, float]) -> tuple[bool, list[str]]:
         "tabla_resumen_depurados",
         "tabla_resumen_por_depurar_vigencia",
         "tabla_resumen_cps_pn",
+        "tabla_resumen_depura_tipos_ctos",
+        "tabla_resumen_dism_antiguedad_ctos",
+        "tabla_resumen_depurar_x_vigencia",
     ):
         st.session_state[key] = list(
             snap.get(key) or st.session_state.get(key) or []
@@ -4287,6 +4329,9 @@ def construir_archivos_salida_global(
                     _tabla_resumen_por_depurar_vigencia_para_ui()
                 ),
                 filas_cps_pn=_tabla_resumen_cps_pn_para_ui(),
+                filas_depura_tipos_ctos=_tabla_resumen_depura_tipos_ctos_para_ui(),
+                filas_dism_antiguedad_ctos=_tabla_resumen_dism_antiguedad_ctos_para_ui(),
+                filas_depurar_x_vigencia=_tabla_resumen_depurar_x_vigencia_para_ui(),
             ),
         ),
     ]
@@ -4501,6 +4546,9 @@ def limpiar_resultado_consolidado():
     st.session_state.tabla_resumen_depurados = []
     st.session_state.tabla_resumen_por_depurar_vigencia = []
     st.session_state.tabla_resumen_cps_pn = []
+    st.session_state.tabla_resumen_depura_tipos_ctos = []
+    st.session_state.tabla_resumen_dism_antiguedad_ctos = []
+    st.session_state.tabla_resumen_depurar_x_vigencia = []
     st.session_state.titulo_saldo_corte = ""
     st.session_state.pop("consolidacion_work", None)
     st.session_state.pop("zip_descarga_contratos", None)
@@ -4691,6 +4739,9 @@ def _procesar_localidad_en_work(
     fila_depurados = None
     fila_por_depurar_vigencia = None
     fila_cps_pn = None
+    filas_depura_tipos_ctos = []
+    filas_dism_antiguedad_ctos = []
+    filas_depurar_x_vigencia = []
     filas_con_perdida = []
     filas_proximos_a_perder = []
     try:
@@ -4707,6 +4758,9 @@ def _procesar_localidad_en_work(
             df_matriz, localidad
         )
         fila_cps_pn = fila_cps_pn_desde_matriz(df_matriz, localidad)
+        filas_depura_tipos_ctos = filas_depura_tipos_ctos_desde_matriz(df_matriz, localidad)
+        filas_dism_antiguedad_ctos = filas_dism_antiguedad_ctos_desde_matriz(df_matriz, localidad)
+        filas_depurar_x_vigencia = filas_depurar_x_vigencia_desde_matriz(df_matriz, localidad)
         filas_con_perdida = filas_con_perdida_desde_matriz(
             df_matriz, localidad, ahora
         )
@@ -4817,6 +4871,37 @@ def _procesar_localidad_en_work(
             "cantidad_inicial": fila_cps_pn.cantidad_inicial,
             "depurados": fila_cps_pn.depurados,
         })
+    work.setdefault("tabla_resumen_depura_tipos_ctos", []).extend(
+        {
+            "numero": fila.numero,
+            "localidad": fila.localidad,
+            "tipo_contrato": fila.tipo_contrato,
+            "cantidad_inicial": fila.cantidad_inicial,
+            "depurados": fila.depurados,
+        }
+        for fila in filas_depura_tipos_ctos
+    )
+    work.setdefault("tabla_resumen_dism_antiguedad_ctos", []).extend(
+        {
+            "numero": fila.numero,
+            "localidad": fila.localidad,
+            "vigencia": fila.vigencia,
+            "cantidad_inicial": fila.cantidad_inicial,
+            "depurados": fila.depurados,
+        }
+        for fila in filas_dism_antiguedad_ctos
+    )
+    work.setdefault("tabla_resumen_depurar_x_vigencia", []).extend(
+        {
+            "numero": fila.numero,
+            "localidad": fila.localidad,
+            "vigencia": fila.vigencia,
+            "estado": fila.estado,
+            "cantidad": fila.cantidad,
+            "saldo_final": fila.saldo_final,
+        }
+        for fila in filas_depurar_x_vigencia
+    )
     if filas_con_perdida:
         work.setdefault("tabla_resumen_con_perdida", []).extend(
             {
@@ -4922,6 +5007,15 @@ def _aplicar_work_a_sesion(work: dict) -> bool:
     st.session_state.tabla_resumen_cps_pn = work.get(
         "tabla_resumen_cps_pn", []
     )
+    st.session_state.tabla_resumen_depura_tipos_ctos = work.get(
+        "tabla_resumen_depura_tipos_ctos", []
+    )
+    st.session_state.tabla_resumen_dism_antiguedad_ctos = work.get(
+        "tabla_resumen_dism_antiguedad_ctos", []
+    )
+    st.session_state.tabla_resumen_depurar_x_vigencia = work.get(
+        "tabla_resumen_depurar_x_vigencia", []
+    )
     st.session_state.file_stats = work["stats"]
     st.session_state.processed = True
     st.session_state.fecha_analisis = ahora
@@ -4956,6 +5050,9 @@ def ejecutar_consolidacion(
     tabla_resumen_depurados = []
     tabla_resumen_por_depurar_vigencia = []
     tabla_resumen_cps_pn = []
+    tabla_resumen_depura_tipos_ctos = []
+    tabla_resumen_dism_antiguedad_ctos = []
+    tabla_resumen_depurar_x_vigencia = []
     total = len(cola) or 1
     ahora = fecha_corte_para_consolidar()
     titulo_mes = titulo_saldo_corte(ahora)
@@ -4979,6 +5076,9 @@ def ejecutar_consolidacion(
         fila_depurados = None
         fila_por_depurar_vigencia = None
         fila_cps_pn = None
+        filas_depura_tipos_ctos = []
+        filas_dism_antiguedad_ctos = []
+        filas_depurar_x_vigencia = []
         filas_con_perdida = []
         filas_proximos_a_perder = []
         try:
@@ -4997,6 +5097,9 @@ def ejecutar_consolidacion(
                 df_matriz, localidad
             )
             fila_cps_pn = fila_cps_pn_desde_matriz(df_matriz, localidad)
+            filas_depura_tipos_ctos = filas_depura_tipos_ctos_desde_matriz(df_matriz, localidad)
+            filas_dism_antiguedad_ctos = filas_dism_antiguedad_ctos_desde_matriz(df_matriz, localidad)
+            filas_depurar_x_vigencia = filas_depurar_x_vigencia_desde_matriz(df_matriz, localidad)
             filas_con_perdida = filas_con_perdida_desde_matriz(
                 df_matriz, localidad, ahora
             )
@@ -5107,6 +5210,37 @@ def ejecutar_consolidacion(
                 "cantidad_inicial": fila_cps_pn.cantidad_inicial,
                 "depurados": fila_cps_pn.depurados,
             })
+        tabla_resumen_depura_tipos_ctos.extend(
+            {
+                "numero": fila.numero,
+                "localidad": fila.localidad,
+                "tipo_contrato": fila.tipo_contrato,
+                "cantidad_inicial": fila.cantidad_inicial,
+                "depurados": fila.depurados,
+            }
+            for fila in filas_depura_tipos_ctos
+        )
+        tabla_resumen_dism_antiguedad_ctos.extend(
+            {
+                "numero": fila.numero,
+                "localidad": fila.localidad,
+                "vigencia": fila.vigencia,
+                "cantidad_inicial": fila.cantidad_inicial,
+                "depurados": fila.depurados,
+            }
+            for fila in filas_dism_antiguedad_ctos
+        )
+        tabla_resumen_depurar_x_vigencia.extend(
+            {
+                "numero": fila.numero,
+                "localidad": fila.localidad,
+                "vigencia": fila.vigencia,
+                "estado": fila.estado,
+                "cantidad": fila.cantidad,
+                "saldo_final": fila.saldo_final,
+            }
+            for fila in filas_depurar_x_vigencia
+        )
         if filas_con_perdida:
             tabla_resumen_con_perdida.extend(
                 {
@@ -5190,6 +5324,9 @@ def ejecutar_consolidacion(
         tabla_resumen_por_depurar_vigencia
     )
     st.session_state.tabla_resumen_cps_pn = tabla_resumen_cps_pn
+    st.session_state.tabla_resumen_depura_tipos_ctos = tabla_resumen_depura_tipos_ctos
+    st.session_state.tabla_resumen_dism_antiguedad_ctos = tabla_resumen_dism_antiguedad_ctos
+    st.session_state.tabla_resumen_depurar_x_vigencia = tabla_resumen_depurar_x_vigencia
     st.session_state.file_stats = stats
     st.session_state.processed = True
     st.session_state.fecha_analisis = ahora
@@ -5338,6 +5475,9 @@ def procesar_consolidacion(
                 "tabla_resumen_depurados": [],
                 "tabla_resumen_por_depurar_vigencia": [],
                 "tabla_resumen_cps_pn": [],
+                "tabla_resumen_depura_tipos_ctos": [],
+                "tabla_resumen_dism_antiguedad_ctos": [],
+                "tabla_resumen_depurar_x_vigencia": [],
                 "errores": [],
                 "ahora": ahora,
                 "titulo_mes": titulo_saldo_corte(ahora),
@@ -5485,6 +5625,9 @@ def _dependencias_consolidacion():
         fila_lib_y_fen_desde_matriz,
         fila_por_depurar_vigencia_desde_matriz,
         filas_con_perdida_desde_matriz,
+        filas_depura_tipos_ctos_desde_matriz,
+        filas_dism_antiguedad_ctos_desde_matriz,
+        filas_depurar_x_vigencia_desde_matriz,
         filas_proximos_a_perder_desde_matriz,
     )
 
@@ -5507,6 +5650,9 @@ def _dependencias_consolidacion():
         "registrar_resultado_localidad": registrar_resultado_localidad,
         "fila_bogdata_matriz_desde_matriz": fila_bogdata_matriz_desde_matriz,
         "fila_cps_pn_desde_matriz": fila_cps_pn_desde_matriz,
+        "filas_depura_tipos_ctos_desde_matriz": filas_depura_tipos_ctos_desde_matriz,
+        "filas_dism_antiguedad_ctos_desde_matriz": filas_dism_antiguedad_ctos_desde_matriz,
+        "filas_depurar_x_vigencia_desde_matriz": filas_depurar_x_vigencia_desde_matriz,
         "fila_depurados_desde_matriz": fila_depurados_desde_matriz,
         "fila_lib_y_fen_desde_matriz": fila_lib_y_fen_desde_matriz,
         "fila_por_depurar_vigencia_desde_matriz": fila_por_depurar_vigencia_desde_matriz,
@@ -5537,6 +5683,9 @@ def _inicializar_dependencias_modulo() -> None:
     global registrar_resultado_localidad
     global fila_bogdata_matriz_desde_matriz
     global fila_cps_pn_desde_matriz
+    global filas_depura_tipos_ctos_desde_matriz
+    global filas_dism_antiguedad_ctos_desde_matriz
+    global filas_depurar_x_vigencia_desde_matriz
     global fila_depurados_desde_matriz
     global fila_lib_y_fen_desde_matriz
     global fila_por_depurar_vigencia_desde_matriz
@@ -5545,6 +5694,9 @@ def _inicializar_dependencias_modulo() -> None:
     deps_resumen = (
         "fila_bogdata_matriz_desde_matriz",
         "fila_cps_pn_desde_matriz",
+        "filas_depura_tipos_ctos_desde_matriz",
+        "filas_dism_antiguedad_ctos_desde_matriz",
+        "filas_depurar_x_vigencia_desde_matriz",
         "fila_depurados_desde_matriz",
         "fila_lib_y_fen_desde_matriz",
         "fila_por_depurar_vigencia_desde_matriz",
@@ -5574,6 +5726,9 @@ def _inicializar_dependencias_modulo() -> None:
     registrar_resultado_localidad = dep["registrar_resultado_localidad"]
     fila_bogdata_matriz_desde_matriz = dep["fila_bogdata_matriz_desde_matriz"]
     fila_cps_pn_desde_matriz = dep["fila_cps_pn_desde_matriz"]
+    filas_depura_tipos_ctos_desde_matriz = dep["filas_depura_tipos_ctos_desde_matriz"]
+    filas_dism_antiguedad_ctos_desde_matriz = dep["filas_dism_antiguedad_ctos_desde_matriz"]
+    filas_depurar_x_vigencia_desde_matriz = dep["filas_depurar_x_vigencia_desde_matriz"]
     fila_depurados_desde_matriz = dep["fila_depurados_desde_matriz"]
     fila_lib_y_fen_desde_matriz = dep["fila_lib_y_fen_desde_matriz"]
     fila_por_depurar_vigencia_desde_matriz = dep[
