@@ -154,6 +154,7 @@ class DepuraTiposContratosTest(unittest.TestCase):
         with TemporaryDirectory() as carpeta:
             contexto = {
                 "st": SimpleNamespace(session_state=sesion), "Path": Path, "pickle": pickle,
+                "APP_SESSION_VERSION": "build-prueba",
                 "_CLAVE_SNAPSHOT": "snapshot", "_CLAVE_RESUMEN_LIGERO": "resumen",
                 "_directorio_archivos_sesion": lambda: Path(carpeta),
                 "_resumen_ligero_desde_informe": lambda informe: {},

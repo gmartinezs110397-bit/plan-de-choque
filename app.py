@@ -51,20 +51,22 @@ def _calcular_version_sesion_app() -> str:
         "localidades.py",
         "reporte_ejecucion.py",
         "tabla_resumen_proyecto.py",
+        "requirements.txt",
+        "packages.txt",
+        ".streamlit/config.toml",
     ]
-    partes = []
+    digest = hashlib.sha256()
     for nombre in archivos_version:
         ruta = _APP_DIR / nombre
         if ruta.is_file():
-            stat = ruta.stat()
-            partes.append(f"{nombre}:{stat.st_size}:{stat.st_mtime_ns}")
+            digest.update(nombre.encode("utf-8") + b"\0")
+            digest.update(ruta.read_bytes() + b"\0")
     for patron in ("templates/**/*", "assets/**/*"):
         for ruta in sorted(_APP_DIR.glob(patron)):
             if ruta.is_file():
-                stat = ruta.stat()
-                partes.append(f"{ruta.relative_to(_APP_DIR).as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
-    digest = hashlib.sha256("|".join(partes).encode("utf-8")).hexdigest()[:16]
-    return f"build-{digest}"
+                digest.update(ruta.relative_to(_APP_DIR).as_posix().encode("utf-8") + b"\0")
+                digest.update(ruta.read_bytes() + b"\0")
+    return f"build-{digest.hexdigest()[:16]}"
 
 
 APP_SESSION_VERSION = _calcular_version_sesion_app()
@@ -103,11 +105,40 @@ CLAVES_LIMPIAR_AL_CAMBIAR_VERSION = {
     "desempate_wizard_mapa",
     "reporte_ejecucion",
     "_pc_mostrar_formulario_correccion",
+    "consolidacion_work",
+    "zip_descarga_contratos",
+    "zip_descarga_listo",
+    "_pc_cruce_detalle_ruta",
+    "_pc_reporte_ejecucion_ruta",
+    "_pc_snapshot_consolidacion_ruta",
+    "_pc_resumen_consolidado",
+    "mostrar_resultados_completos",
+    "_pc_scroll_resultados",
 }
 PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION = (
     "_pc_at_",
     "at_editor_",
+    "desempate_",
+    "_pc_validacion_entrada_",
 )
+
+
+@st.cache_resource(show_spinner=False, max_entries=1)
+def _recargar_modulos_locales(version_app: str) -> str:
+    """Renueva imports locales ya cargados una vez por version, sin adelantar imports pesados."""
+    import importlib
+
+    importlib.invalidate_caches()
+    for nombre in (
+        "constantes", "localidades", "cxp_cruce", "hoja_suspendidos",
+        "hoja_proximos_a_perder", "hoja_tramites_sectores",
+        "hoja_liquidados_con_saldo", "hoja_estrategias", "reporte_ejecucion",
+        "tabla_resumen_proyecto", "avance_plan_choque", "pdf_ocr", "asistencia_tecnica",
+    ):
+        modulo = sys.modules.get(nombre)
+        if modulo is not None:
+            importlib.reload(modulo)
+    return version_app
 
 
 def _cargar_icono_pagina():
@@ -971,20 +1002,28 @@ MESES_ES = (
 )
 
 
+def _invalidar_resultados_versionados() -> None:
+    for key in list(st.session_state.keys()):
+        if key in CLAVES_LIMPIAR_AL_CAMBIAR_VERSION or any(
+            str(key).startswith(prefijo)
+            for prefijo in PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION
+        ):
+            del st.session_state[key]
+    st.cache_data.clear()
+    st.session_state[CLAVE_AVISO_VERSION_REFRESCADA] = True
+
+
 def init_session_state():
     version_anterior = st.session_state.get(CLAVE_VERSION_SESION_APP)
-    if version_anterior and version_anterior != APP_SESSION_VERSION:
-        for key in list(st.session_state.keys()):
-            if key in CLAVES_LIMPIAR_AL_CAMBIAR_VERSION or any(
-                str(key).startswith(prefijo)
-                for prefijo in PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION
-            ):
-                del st.session_state[key]
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
-        st.session_state[CLAVE_AVISO_VERSION_REFRESCADA] = True
+    hay_resultados = any(
+        key in CLAVES_LIMPIAR_AL_CAMBIAR_VERSION or any(
+            str(key).startswith(prefijo)
+            for prefijo in PREFIJOS_LIMPIAR_AL_CAMBIAR_VERSION
+        )
+        for key in st.session_state.keys()
+    )
+    if version_anterior != APP_SESSION_VERSION and (version_anterior or hay_resultados):
+        _invalidar_resultados_versionados()
     st.session_state[CLAVE_VERSION_SESION_APP] = APP_SESSION_VERSION
 
     defaults = {
@@ -1856,10 +1895,11 @@ def render_seccion_asistencia_tecnica() -> None:
 
 
 init_session_state()
+_recargar_modulos_locales(APP_SESSION_VERSION)
 if st.session_state.pop(CLAVE_AVISO_VERSION_REFRESCADA, False):
     st.info(
-        "La app se actualizó y limpié las descargas preparadas de la sesión. "
-        "Vuelve a preparar el ZIP para asegurar que salga con la versión nueva."
+        "La app se actualizó. Vuelve a consolidar para generar las descargas "
+        "con la versión nueva."
     )
 
 
@@ -2609,6 +2649,7 @@ def _persistir_snapshot_consolidacion() -> None:
     if not informe and not st.session_state.get("processed"):
         return
     snapshot = {
+        "app_version": APP_SESSION_VERSION,
         "informe": informe,
         "file_stats": st.session_state.get("file_stats") or [],
         "cruce_resumen_global": st.session_state.get("cruce_resumen_global") or [],
@@ -2676,7 +2717,11 @@ def _cargar_snapshot_consolidacion() -> dict:
     ruta = st.session_state.get(_CLAVE_SNAPSHOT)
     if ruta and Path(ruta).is_file():
         p = Path(ruta)
-        return _cargar_snapshot_consolidacion_cache(str(p), p.stat().st_mtime)
+        snapshot = _cargar_snapshot_consolidacion_cache(str(p), p.stat().st_mtime)
+        if snapshot.get("app_version") == APP_SESSION_VERSION:
+            return snapshot
+        _invalidar_resultados_versionados()
+        init_session_state()
     return {
         "informe": [],
         "file_stats": [],
@@ -5591,16 +5636,14 @@ if _seccion_activa != SECCION_PLAN_CHOQUE:
     volver_a_menu_secciones()
     st.rerun()
 
-@st.cache_resource(show_spinner=False)
-def _dependencias_consolidacion():
-    """Una sola carga por proceso del servidor (no en cada F5)."""
-    import importlib
+@st.cache_resource(show_spinner=False, max_entries=1)
+def _dependencias_consolidacion(version_app: str):
+    """Una sola carga por version del servidor (no en cada F5)."""
     import msoffcrypto
     import msoffcrypto.exceptions as ms_exceptions
     import pandas as pd
 
     import cxp_cruce
-    cxp_cruce = importlib.reload(cxp_cruce)
 
     from cxp_cruce import (
         METODOS_LABEL,
@@ -5632,6 +5675,7 @@ def _dependencias_consolidacion():
     )
 
     return {
+        "app_version": version_app,
         "pd": pd,
         "msoffcrypto": msoffcrypto,
         "ms_exceptions": ms_exceptions,
@@ -5703,11 +5747,11 @@ def _inicializar_dependencias_modulo() -> None:
         "filas_con_perdida_desde_matriz",
         "filas_proximos_a_perder_desde_matriz",
     )
-    if globals().get("_DEPS_MODULO_LISTAS") and all(
+    if globals().get("_DEPS_MODULO_VERSION") == APP_SESSION_VERSION and all(
         globals().get(nombre) for nombre in deps_resumen
     ):
         return
-    dep = _dependencias_consolidacion()
+    dep = _dependencias_consolidacion(APP_SESSION_VERSION)
     pd = dep["pd"]
     msoffcrypto = dep["msoffcrypto"]
     ms_exceptions = dep["ms_exceptions"]
@@ -5738,7 +5782,7 @@ def _inicializar_dependencias_modulo() -> None:
     filas_proximos_a_perder_desde_matriz = dep[
         "filas_proximos_a_perder_desde_matriz"
     ]
-    globals()["_DEPS_MODULO_LISTAS"] = True
+    globals()["_DEPS_MODULO_VERSION"] = APP_SESSION_VERSION
 
 
 if _necesita_dependencias_pesadas():
