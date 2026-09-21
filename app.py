@@ -657,6 +657,29 @@ st.markdown(
             font-size: 1.75rem;
         }
     }
+    /* Encabezado institucional centrado */
+    .app-brand {
+        flex-direction: column;
+        gap: 0.9rem;
+        margin: 0 auto 0.75rem;
+    }
+    .app-brand-logo {
+        width: 48px;
+        height: 56px;
+    }
+    .app-brand .app-title {
+        max-width: 34ch;
+        font-size: clamp(1.5rem, 3.4vw, 1.875rem);
+        line-height: 1.25;
+        letter-spacing: -0.025em;
+        text-align: center;
+        text-wrap: balance;
+    }
+    @media (max-width: 640px) {
+        .app-brand { gap: 0.75rem; }
+        .app-brand-logo { width: 40px; height: 48px; }
+        .app-brand .app-title { font-size: 1.5rem; }
+    }
     /* Descarga final — verde para destacar la acción principal */
     .st-key-dl_zip_completo button {
         background: #16a34a !important;
