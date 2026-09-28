@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-17-revision-4-cps-v22"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-firmas-v26"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -186,6 +186,18 @@ def _extraer_duracion_prorroga_desde_texto(texto: str) -> str:
     return " y ".join(partes)
 
 
+def _normalizar_plazo(texto: str) -> str:
+    """Expresa la duración del documento como «8 meses», sin texto accesorio."""
+    valor = _limpiar_texto(_texto(texto))
+    palabras = {"un": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4,
+                "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9,
+                "diez": 10, "once": 11, "doce": 12}
+    for palabra, numero in palabras.items():
+        valor = re.sub(rf"\b{palabra}\s+(?=mes(?:es)?\b|d[ií]as?\b)",
+                       f"{numero} ", valor, flags=re.IGNORECASE)
+    return _extraer_duracion_prorroga_desde_texto(valor)
+
+
 def _mes_numero(nombre: str) -> int | None:
     norm = _normalizar(nombre)
     for idx, mes in enumerate(MESES_ES, 1):
@@ -291,7 +303,7 @@ def _extraer_entre_patrones(texto: str, etiquetas: Iterable[str], siguientes: It
 def _extraer_seccion(texto: str, inicio_patron: str, fin_patrones: Iterable[str]) -> str:
     inicio = re.search(inicio_patron, texto, flags=re.IGNORECASE | re.DOTALL)
     if not inicio:
-        return texto
+        return ""
     desde = inicio.end()
     fin = len(texto)
     for patron in fin_patrones:
@@ -828,7 +840,9 @@ def extraer_texto_pdf(nombre_archivo: str, contenido: bytes) -> tuple[str, list[
                     partes.append(texto_layout)
             except Exception:
                 pass
-            texto_pagina = "\n".join(partes)
+            # Una sola lectura por página: duplicarlas puede repetir un título de
+            # sección antes de los datos que continúan en la página siguiente.
+            texto_pagina = max(partes, key=lambda p: len(_limpiar_texto(p)), default="")
             paginas.append(texto_pagina)
             necesita_ocr = _texto_pdf_necesita_ocr(texto_pagina)
             if not necesita_ocr:
@@ -871,7 +885,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     texto_pdf_decodificado = _decodificar_fuente_pdf(texto_pdf)
     texto_decodificado = re.sub(r"\s+", " ", texto_pdf_decodificado.replace("\xa0", " "))
     if texto_pdf_decodificado and texto_pdf_decodificado != texto_pdf:
-        texto_pdf = f"{texto_pdf}\n{texto_pdf_decodificado}"
+        texto_pdf = texto_pdf_decodificado
     texto = re.sub(r"\s+", " ", texto_pdf.replace("\xa0", " "))
     siguientes_resumen_patrones = [
         r"Objeto",
@@ -889,14 +903,14 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     ]
     seccion_resumen = _extraer_seccion(
         texto,
-        r"\bI\.\s*RESUMEN\s+CONTRACTUAL\b",
-        [r"\bII\.\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b"],
+        r"\b(?:I|1)\s*[.\-:)]?\s*RESUMEN\s+CONTRACTUAL\b",
+        [r"\b(?:II|2)\s*[.\-:)]?\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b"],
     )
     seccion_modificacion = _extraer_seccion(
         texto,
-        r"\bII\.\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b",
+        r"\b(?:II|2)\s*[.\-:)]?\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b",
         [
-            r"\bIII\.\s*INFORMACI\S*N\s+DE\s+MODIFICACIONES\s+ANTERIORES\b",
+            r"\b(?:III|3)\s*[.\-:)]?\s*INFORMACI\S*N\b",
             r"\bESTADO\s+FINANCIERO\b",
         ],
     )
@@ -924,19 +938,20 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
             ],
             siguientes_resumen_patrones,
         ),
-        "objeto": _extraer_objeto_solicitud(seccion_resumen) or _extraer_objeto_solicitud(texto),
+        "objeto": _extraer_objeto_solicitud(seccion_resumen),
         "contratista": _extraer_entre(seccion_resumen, "Contratista", ["Interventor", "Supervisor"]),
-        "supervisor": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
+        "supervisor": "",
+        "supervisor_solicitud": _extraer_entre(seccion_resumen, "Supervisor", ["Valor Inicial"]),
         "valor_inicial_texto": _extraer_entre(
             seccion_resumen,
             "Valor Inicial",
-            ["Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
+            ["Apoyo a la supervisión", "Apoyo a la supervision", "Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
         ),
         "valor_inicial": _a_numero(
             _extraer_entre(
                 seccion_resumen,
                 "Valor Inicial",
-                ["Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
+                ["Apoyo a la supervisión", "Apoyo a la supervision", "Valor Adiciones", "Valor Total Actual", "Número del proceso", "Numero del proceso"],
             )
         ),
         "proceso_secop": _extraer_entre_patrones(
@@ -958,22 +973,21 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     if url:
         fila["link_secop"] = url.group(0).strip()
 
-    valor_adicion_texto, valor_adicion_numero = _extraer_valor_adicion_solicitada(seccion_modificacion, texto)
+    valor_adicion_texto, valor_adicion_numero = _extraer_valor_adicion_solicitada(seccion_modificacion)
     if valor_adicion_numero is not None:
         fila["valor_adicion_texto"] = valor_adicion_texto
         fila["valor_adicion"] = valor_adicion_numero
 
     fila["prorroga_solicitada"] = (
         _extraer_prorroga_solicitada(seccion_modificacion)
-        or _extraer_prorroga_solicitada(texto)
     )
     fila["fecha_terminacion_final"] = (
         _extraer_fecha_terminacion_final(seccion_modificacion)
-        or _extraer_fecha_terminacion_final(texto)
     )
 
     for campo in ("contrato", "objeto", "contratista", "supervisor", "plazo_inicial", "prorroga_solicitada"):
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
+    fila["plazo_inicial"] = _normalizar_plazo(fila["plazo_inicial"])
     fila["prorroga_solicitada"] = _limpiar_prorroga_solicitada(fila["prorroga_solicitada"])
     fila["contrato"] = fila["contrato"].replace(" ", "")
     fila["objeto"] = fila["objeto"].strip(' "“”')
@@ -982,6 +996,10 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         if fila.get(campo):
             fila[campo] = _formatear_fecha_tabla(fila[campo])
 
+    if not seccion_resumen:
+        errores.append(f"{nombre_archivo}: no se encontró el numeral 1, Resumen contractual; revise los datos iniciales.")
+    if not seccion_modificacion:
+        errores.append(f"{nombre_archivo}: no se encontró información del numeral 2; revise la modificación solicitada.")
     requeridos = ("localidad", "contrato", "contratista", "fecha_inicio", "plazo_inicial")
     faltantes = [campo for campo in requeridos if not fila.get(campo)]
     if faltantes:
@@ -1008,8 +1026,11 @@ def analizar_solicitudes(archivos: Iterable[tuple[str, bytes]]) -> tuple[list[di
     return filas, errores
 
 
-def extraer_radicados(contenido_pdf: bytes) -> tuple[dict[str, str], date | None, list[str]]:
+def extraer_radicados(contenido_pdf: bytes, supervisores: dict[str, list[str]] | None = None) -> tuple[dict[str, str], date | None, list[str]]:
     texto, errores = extraer_texto_pdf("Listado de radicado", contenido_pdf)
+    if supervisores is not None:
+        supervisores.clear()
+        supervisores.update(_supervisores_por_radicado(texto))
     numeros = re.findall(r"\b20\d{12}\b", texto)
     mapa = {
         localidad: numeros[idx]
@@ -1042,14 +1063,59 @@ def extraer_radicados(contenido_pdf: bytes) -> tuple[dict[str, str], date | None
     return mapa, fecha, errores
 
 
-def enriquecer_con_radicados(filas: list[dict], mapa: dict[str, str], fecha_salida: date | None) -> list[dict]:
+def _supervisores_por_radicado(texto: str) -> dict[str, list[str]]:
+    """Lee nombres rotulados dentro de cada radicado, sin cruzar sus límites."""
+    resultado: dict[str, list[str]] = {}
+    radicados = list(re.finditer(r"\b20\d{12}\b", texto))
+    for idx, match in enumerate(radicados):
+        fin = radicados[idx + 1].start() if idx + 1 < len(radicados) else len(texto)
+        bloque = texto[match.end():fin]
+        nombres = re.findall(
+            r"(?:Supervisor(?:a)?|Destinatario(?:a)?|Dirigido\s+a)\s*:\s*"
+            r"([^\n\r|;]+)", bloque, flags=re.IGNORECASE,
+        )
+        for nombre in nombres:
+            nombre = re.split(r"\s{2,}|\b(?:Cargo|Asunto|Fecha|Localidad)\s*:", nombre,
+                              maxsplit=1, flags=re.IGNORECASE)[0]
+            nombre = _limpiar_texto(nombre)
+            if len(nombre.split()) >= 2 and not re.search(r"\d", nombre):
+                lista = resultado.setdefault(match.group(), [])
+                if nombre not in lista:
+                    lista.append(nombre)
+    return resultado
+
+
+def _coincide_nombre_parcial(referencia: str, candidato: str) -> bool:
+    def partes(nombre):
+        return set(re.findall(r"[a-z]+", _normalizar(nombre))) - {
+            "de", "del", "la", "las", "los", "y", "dr", "dra", "doctor", "doctora",
+        }
+    a, b = partes(referencia), partes(candidato)
+    comunes = a & b
+    # Dos componentes coincidentes y al menos dos tercios del nombre más corto.
+    return len(comunes) >= 2 and len(comunes) / max(1, min(len(a), len(b))) >= 2 / 3
+
+
+def enriquecer_con_radicados(
+    filas: list[dict], mapa: dict[str, str], fecha_salida: date | None,
+    supervisores: dict[str, list[str]] | None = None, errores: list[str] | None = None,
+) -> list[dict]:
     resultado: list[dict] = []
     for fila in filas:
         copia = dict(fila)
         localidad = _canon_localidad(copia.get("localidad", ""))
         copia["localidad"] = localidad
-        copia["radicado_salida"] = _texto(copia.get("radicado_salida")) or mapa.get(localidad, "")
+        radicado = _texto(copia.get("radicado_salida")) or mapa.get(localidad, "")
+        copia["radicado_salida"] = radicado
         copia["fecha_salida"] = _texto(copia.get("fecha_salida")) or formato_fecha_corta(fecha_salida)
+        candidatos = list(dict.fromkeys((supervisores or {}).get(radicado, [])))
+        if len(candidatos) > 1:
+            referencia = copia.get("supervisor_solicitud", "")
+            candidatos = [n for n in candidatos if _coincide_nombre_parcial(referencia, n)]
+        copia["supervisor"] = candidatos[0] if len(candidatos) == 1 else ""
+        if not copia["supervisor"] and errores is not None:
+            errores.append(f"{copia.get('archivo', localidad)}: revise el supervisor en el documento de radicados; "
+                           "no se identificó un único nombre para este radicado.")
         resultado.append(copia)
     return resultado
 
@@ -2035,7 +2101,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
         3: _limpiar_contratista(fila.get("contratista")).upper(),
         4: _limpiar_objeto_solicitud(fila.get("objeto")).upper(),
         5: _formatear_fecha_tabla(fila.get("fecha_inicio")).lower(),
-        6: _texto(fila.get("plazo_inicial")).lower(),
+        6: _normalizar_plazo(fila.get("plazo_inicial")),
         7: (_texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))).lower(),
         8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")).lower(),
         9: prorroga_solicitada.lower(),
@@ -2149,6 +2215,31 @@ def _texto_observacion_vigencia(fila: dict, validacion: dict | None = None) -> s
     )
 
 
+def _insertar_firma_profesional(parrafo, nombre: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.shared import Emu
+
+    firmas = {
+        "ingrith khaterine martinez sanchez": ("ingrith_martinez.png", 452755, 344170, None),
+        "andres gonzalez": ("andres_gonzalez.jpeg", 400050, 274320,
+                           {"l": "5185", "t": "24011", "r": "5556", "b": "29379"}),
+    }
+    firma = firmas.get(_normalizar(nombre))
+    if firma is None:
+        return
+    archivo, ancho, alto, recorte = firma
+    ruta = Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "firmas" / archivo
+    parrafo.add_run("  ")
+    imagen = parrafo.add_run().add_picture(str(ruta), width=Emu(ancho), height=Emu(alto))
+    imagen._inline.docPr.set("descr", f"Firma de {nombre}")
+    if recorte:
+        relleno = imagen._inline.xpath(".//pic:blipFill")[0]
+        rect = OxmlElement("a:srcRect")
+        for lado, valor in recorte.items():
+            rect.set(lado, valor)
+        relleno.insert(1, rect)
+
+
 def generar_documento_localidad(
     filas: list[dict],
     plantilla_docx: Path,
@@ -2187,7 +2278,9 @@ def generar_documento_localidad(
 
     for p in doc.paragraphs:
         texto = p.text.strip()
-        if texto.startswith("Bogotá D.C."):
+        if _normalizar(texto).startswith("las proyecciones para adelantar adiciones y prorrogas"):
+            _aplicar_fuente_parrafo(p, negrilla=True, subrayado=True)
+        elif texto.startswith("Bogotá D.C."):
             _set_paragraph_text(p, f"Bogotá D.C., {formato_fecha_larga(fecha_respuesta)}")
         elif texto.startswith("PARA:"):
             _set_paragraph_runs(
@@ -2246,6 +2339,10 @@ def generar_documento_localidad(
                 )
         elif texto.startswith("Proyectó:"):
             _set_paragraph_text(p, f"Proyectó: {profesional} - Profesional DGDL")
+            _insertar_firma_profesional(p, profesional)
+        elif _normalizar(texto).startswith("reviso:"):
+            nombre_revisor = texto.split(":", 1)[1].split(" - ", 1)[0].strip()
+            _insertar_firma_profesional(p, nombre_revisor)
 
     body = doc.element.body
     borrar = False
@@ -2273,6 +2370,23 @@ def generar_documento_localidad(
         observacion_vigencia = _texto_observacion_vigencia(fila, validacion)
         if observacion_vigencia:
             observaciones.append(observacion_vigencia)
+        if not observaciones:
+            datos_completos = (
+                all(_texto(fila.get(campo)).strip() for campo in ("contrato", "contratista", "objeto"))
+                and parsear_fecha(fila.get("fecha_inicio"))
+                and parsear_fecha(fila.get("fecha_terminacion_inicial"))
+                and validacion.get("fecha_fin_calculada")
+                and (_a_numero(fila.get("valor_inicial_texto")) is not None
+                     or _a_numero(fila.get("valor_inicial")) is not None)
+            )
+            if _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada")):
+                datos_completos = (datos_completos
+                                   and parsear_fecha(fila.get("fecha_terminacion_final"))
+                                   and validacion.get("fecha_final_ajustada"))
+            observaciones.append(
+                "Sin observaciones" if datos_completos
+                else "Pendiente de revisión: faltan datos para completar la validación."
+            )
         for observacion in observaciones:
             _insertar_vineta_observacion(anchor, sample_normal, observacion)
             _insertar_blanco(anchor, sample_blank)
