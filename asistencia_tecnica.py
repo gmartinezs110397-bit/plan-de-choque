@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-adicion-numeral-2-v27"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-sin-observaciones-v28"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -2301,6 +2301,22 @@ def generar_documento_localidad(
         observacion_vigencia = _texto_observacion_vigencia(fila, validacion)
         if observacion_vigencia:
             observaciones.append(observacion_vigencia)
+        if not observaciones:
+            datos_completos = all(
+                _texto(fila.get(campo)).strip()
+                for campo in ("contrato", "contratista", "objeto", "plazo_inicial")
+            ) and parsear_fecha(fila.get("fecha_inicio")) is not None
+            validacion_completa = datos_completos and all(
+                validacion.get(campo) is True
+                for campo in (
+                    "se_ajusta_fecha_fin", "se_ajusta_prorroga",
+                    "se_ajusta_fecha_final", "se_ajusta_adicion",
+                )
+            )
+            observaciones.append(
+                "Sin observaciones" if validacion_completa
+                else "Pendiente de revisión: faltan datos para completar la validación."
+            )
         for observacion in observaciones:
             _insertar_vineta_observacion(anchor, sample_normal, observacion)
             _insertar_blanco(anchor, sample_blank)
