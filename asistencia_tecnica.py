@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-plazo-numerico-v31"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-suba-tabla-v32"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -510,25 +510,31 @@ def _extraer_valor_adicion_solicitada(*fuentes: str) -> tuple[str, int | None]:
     return "", None
 
 
-def _extraer_adicion_numeral_dos(texto: str) -> tuple[str, int | None]:
-    """Busca la adición solo en el numeral II, incluso si continúa en otra página.
+def _fragmentos_numeral_dos(texto: str) -> Iterable[str]:
+    """Delimita las lecturas del numeral II, aunque SOLICITADA cambie de línea.
 
-    La lectura existente puede repetir cada página en formato lineal y visual.
-    Un nuevo resumen contractual cierra el fragmento: su valor inicial nunca
-    debe convertirse en la adición de un encabezado anterior sin datos.
+    En tablas, pypdf puede leer SOLICITADA antes de DE LA MODIFICACIÓN,
+    o intercalar el número de modificación antes de SOLICITADA.
     """
-    inicio = r"\b(?:II|2)\s*[.\-:)]?\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b"
+    inicio = (
+        r"\b(?:II|2)\s*[.\-:)]?\s*INFORMACI\S*N\s+"
+        r"(?:SOLICITADA\s+)?DE\s+LA\s+MODIFICACI\S*N\b"
+    )
     limite = (
         r"\b(?:I|1)\s*[.\-:)]?\s*RESUMEN\s+CONTRACTUAL\b|"
         + inicio +
         r"|\b(?:III|3)\s*[.\-:)]?\s*INFORMACI\S*N\b|\bESTADO\s+FINANCIERO\b"
     )
-    valores: dict[int, str] = {}
     for match in re.finditer(inicio, texto, flags=re.IGNORECASE):
         fragmento = texto[match.end():]
         fin = re.search(limite, fragmento, flags=re.IGNORECASE)
-        if fin:
-            fragmento = fragmento[:fin.start()]
+        yield fragmento[:fin.start()] if fin else fragmento
+
+
+def _extraer_adicion_numeral_dos(texto: str) -> tuple[str, int | None]:
+    """Busca la adición solo en el numeral II, incluso entre páginas."""
+    valores: dict[int, str] = {}
+    for fragmento in _fragmentos_numeral_dos(texto):
         valor, numero = _extraer_valor_adicion_solicitada(fragmento)
         if numero is not None:
             valores[numero] = valor
@@ -536,6 +542,21 @@ def _extraer_adicion_numeral_dos(texto: str) -> tuple[str, int | None]:
         numero, valor = next(iter(valores.items()))
         return valor, numero
     return "", None
+
+
+def _extraer_prorroga_numeral_dos(texto: str) -> str:
+    """Lee Tiempo hasta Fecha final sin cortar por texto de la columna vecina."""
+    valores: set[str] = set()
+    for fragmento in _fragmentos_numeral_dos(texto):
+        for match in re.finditer(
+            r"\bTiempo\s*:\s*(.*?)(?=Fecha\s+(?:de\s+)?Terminaci\S+n\s+"
+            r"(?:Final|con\s+la\s+Pr[oó�]rroga)|$)",
+            fragmento, flags=re.IGNORECASE | re.DOTALL,
+        ):
+            valor = _extraer_duracion_prorroga_desde_texto(match.group(1))
+            if valor:
+                valores.add(valor)
+    return next(iter(valores)) if len(valores) == 1 else ""
 
 
 def _duracion_desde_texto(texto: str) -> tuple[int, int]:
@@ -1024,7 +1045,8 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
         fila["valor_adicion"] = valor_adicion_numero
 
     fila["prorroga_solicitada"] = (
-        _extraer_prorroga_solicitada(seccion_modificacion)
+        _extraer_prorroga_numeral_dos(texto_decodificado)
+        or _extraer_prorroga_solicitada(seccion_modificacion)
         or _extraer_prorroga_solicitada(texto)
     )
     fila["fecha_terminacion_final"] = (
