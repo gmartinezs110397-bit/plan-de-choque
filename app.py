@@ -1704,13 +1704,16 @@ def render_seccion_asistencia_tecnica() -> None:
         with st.spinner("Leyendo solicitudes…"):
             filas, errores = analizar_solicitudes(archivos)
             mapa_radicados = {}
+            supervisores_radicados = {}
             fecha_salida = None
             if archivo_general is not None:
                 mapa_radicados, fecha_salida, errores_radicados = extraer_radicados(
-                    archivo_general.getvalue()
+                    archivo_general.getvalue(), supervisores=supervisores_radicados
                 )
                 errores.extend(errores_radicados)
-            filas = enriquecer_con_radicados(filas, mapa_radicados, fecha_salida)
+            filas = enriquecer_con_radicados(
+                filas, mapa_radicados, fecha_salida, supervisores_radicados, errores
+            )
         st.session_state["_pc_at_filas"] = filas
         st.session_state["_pc_at_errores"] = errores
         st.session_state["_pc_at_zip"] = None
@@ -1828,6 +1831,7 @@ def render_seccion_asistencia_tecnica() -> None:
         ("localidad", "Localidad"),
         ("contrato", "Contrato"),
         ("contratista", "Contratista"),
+        ("supervisor", "Supervisor"),
         ("objeto", "Objeto"),
         ("fecha_inicio", "Fecha inicio"),
         ("plazo_inicial", "Plazo inicial"),

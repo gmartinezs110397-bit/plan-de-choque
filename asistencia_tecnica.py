@@ -53,7 +53,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-objeto-fechas-v34"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-supervisor-radicado-v35"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -1099,19 +1099,53 @@ def analizar_solicitudes(archivos: Iterable[tuple[str, bytes]]) -> tuple[list[di
     return filas, errores
 
 
-def extraer_radicados(contenido_pdf: bytes) -> tuple[dict[str, str], date | None, list[str]]:
+def _filas_tabla_radicados(texto: str) -> list[tuple[int | None, str, str]]:
+    """Lee las columnas #, Radicado y Nombre sin incorporar la dirección."""
+    filas = []
+    patron = (
+        r"^[ \t]*(?:(\d{1,2})[ \t]+)?(20\d{12})[ \t]+"
+        r"([^\d]{3,180}?)\s+Despacho\s+Alcald[ií]a\s+Local\b"
+    )
+    for match in re.finditer(patron, texto, re.IGNORECASE | re.MULTILINE):
+        numero, radicado, nombre = match.groups()
+        filas.append((int(numero) if numero else None, radicado, _limpiar_texto(nombre)))
+    return filas
+
+
+def extraer_radicados(
+    contenido_pdf: bytes, supervisores: dict[str, list[str]] | None = None,
+) -> tuple[dict[str, str], date | None, list[str]]:
     texto, errores = extraer_texto_pdf("Listado de radicado", contenido_pdf)
-    numeros = re.findall(r"\b20\d{12}\b", texto)
-    mapa = {
-        localidad: numeros[idx]
-        for idx, localidad in enumerate(LOCALIDADES_RADICADO)
-        if idx < len(numeros)
-    }
-    if mapa and len(numeros) < len(LOCALIDADES_RADICADO) and any("(OCR)" in aviso for aviso in errores):
+    # Las lecturas lineal y visual pueden repetir la misma tabla.
+    numeros = list(dict.fromkeys(re.findall(r"\b20\d{12}\b", texto)))
+    filas = _filas_tabla_radicados(texto)
+    por_numero: dict[int, set[str]] = {}
+    if supervisores is not None:
+        supervisores.clear()
+    for numero, radicado, nombre in filas:
+        if numero is not None:
+            por_numero.setdefault(numero, set()).add(radicado)
+        if supervisores is not None:
+            nombres = supervisores.setdefault(radicado, [])
+            if _normalizar(nombre) not in {_normalizar(n) for n in nombres}:
+                nombres.append(nombre)
+    # El formato masivo usa las veinte localidades en su orden oficial.
+    # El número de fila evita desplazar nombres si el PDF cambia el orden de lectura.
+    tabla_completa = (
+        set(por_numero) == set(range(1, 21))
+        and all(len(v) == 1 for v in por_numero.values())
+        and len({next(iter(v)) for v in por_numero.values()}) == 20
+    )
+    if tabla_completa:
+        mapa = {localidad: next(iter(por_numero[i]))
+                for i, localidad in enumerate(LOCALIDADES_RADICADO, 1)}
+    elif not filas and len(numeros) == 20:
+        mapa = dict(zip(LOCALIDADES_RADICADO, numeros))
+    else:
         mapa = {}
         errores.append(
-            "El listado escaneado no permitió reconocer los 20 radicados. "
-            "Complete los radicados en Datos detectados para evitar asignarlos a otra localidad."
+            "No se pudieron asociar los 20 radicados con seguridad. "
+            "Revise el listado o complete los radicados en Datos detectados."
         )
 
     fecha = None
@@ -1133,14 +1167,26 @@ def extraer_radicados(contenido_pdf: bytes) -> tuple[dict[str, str], date | None
     return mapa, fecha, errores
 
 
-def enriquecer_con_radicados(filas: list[dict], mapa: dict[str, str], fecha_salida: date | None) -> list[dict]:
+def enriquecer_con_radicados(
+    filas: list[dict], mapa: dict[str, str], fecha_salida: date | None,
+    supervisores: dict[str, list[str]] | None = None, errores: list[str] | None = None,
+) -> list[dict]:
     resultado: list[dict] = []
     for fila in filas:
         copia = dict(fila)
         localidad = _canon_localidad(copia.get("localidad", ""))
         copia["localidad"] = localidad
-        copia["radicado_salida"] = _texto(copia.get("radicado_salida")) or mapa.get(localidad, "")
+        radicado = _texto(copia.get("radicado_salida")) or mapa.get(localidad, "")
+        copia["radicado_salida"] = radicado
         copia["fecha_salida"] = _texto(copia.get("fecha_salida")) or formato_fecha_corta(fecha_salida)
+        # El nombre del radicado es la fuente autoritativa. No exigir igualdad
+        # con el de la solicitud: puede omitir nombres, apellidos o tildes.
+        nombres = (supervisores or {}).get(radicado, [])
+        copia["supervisor"] = nombres[0] if len(nombres) == 1 else ""
+        if not copia["supervisor"] and errores is not None:
+            motivo = ("hay varios nombres para ese radicado" if len(nombres) > 1
+                      else "no se encontró su nombre en el listado de radicados")
+            errores.append(f"{_texto(copia.get('sipse')) or localidad}: revise Supervisor; {motivo}.")
         resultado.append(copia)
     return resultado
 
