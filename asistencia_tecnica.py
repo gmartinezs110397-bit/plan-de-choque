@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-firmas-puntual-v30"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-plazo-numerico-v31"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -557,6 +557,38 @@ def _duracion_desde_texto(texto: str) -> tuple[int, int]:
     return meses, dias
 
 
+def _normalizar_plazo(texto: str) -> str:
+    """Simplifica cantidades de meses/días sin descartar texto no reconocido."""
+    valor = _limpiar_texto(_texto(texto)).lower()
+    palabras = {
+        "un": 1, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4,
+        "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9,
+        "diez": 10, "once": 11, "doce": 12, "trece": 13, "catorce": 14,
+        "quince": 15, "dieciseis": 16, "dieciséis": 16, "diecisiete": 17,
+        "dieciocho": 18, "diecinueve": 19, "veinte": 20,
+        "veintiuno": 21, "veintiun": 21, "veintiún": 21, "veintidos": 22,
+        "veintidós": 22, "veintitres": 23, "veintitrés": 23, "veinticuatro": 24,
+        "veinticinco": 25, "veintiseis": 26, "veintiséis": 26,
+        "veintisiete": 27, "veintiocho": 28, "veintinueve": 29,
+        "treinta y uno": 31, "treinta y un": 31, "treinta": 30,
+    }
+    numeros = "|".join(sorted(palabras, key=len, reverse=True))
+    unidades = r"(mes(?:es)?|d[ií]as?)\b"
+    valor = re.sub(
+        rf"(?<!\w)(?:(?:{numeros})\s*)?\(\s*(\d+)\s*\)\s*{unidades}",
+        lambda m: f"{int(m[1])} {m[2]}", valor,
+    )
+    valor = re.sub(
+        rf"\b({numeros})\s+{unidades}",
+        lambda m: f"{palabras[m[1]]} {m[2]}", valor,
+    )
+    def cantidad(match):
+        numero = int(match[1])
+        unidad = "mes" if match[2].startswith("mes") else "día"
+        return f"{numero} {unidad}" + ("es" if unidad == "mes" else "s") * (numero != 1)
+    return re.sub(rf"\b(\d+)\s*{unidades}", cantidad, valor)
+
+
 def _formato_duracion(meses: int, dias: int) -> str:
     partes: list[str] = []
     if meses:
@@ -1002,6 +1034,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
 
     for campo in ("contrato", "objeto", "contratista", "supervisor", "plazo_inicial", "prorroga_solicitada"):
         fila[campo] = _limpiar_texto(fila.get(campo, ""))
+    fila["plazo_inicial"] = _normalizar_plazo(fila["plazo_inicial"])
     fila["prorroga_solicitada"] = _limpiar_prorroga_solicitada(fila["prorroga_solicitada"])
     fila["contrato"] = fila["contrato"].replace(" ", "")
     fila["objeto"] = fila["objeto"].strip(' "“”')
@@ -1318,7 +1351,7 @@ def _agregar_ficha_contrato(wb, fila: dict, consecutivo: int, profesional: str) 
                 ("Supervisor(a)", _texto(fila.get("supervisor"))),
                 ("Objeto", _texto(fila.get("objeto"))),
                 ("Fecha de inicio", _texto(fila.get("fecha_inicio"))),
-                ("Plazo inicial", _texto(fila.get("plazo_inicial"))),
+                ("Plazo inicial", _normalizar_plazo(fila.get("plazo_inicial"))),
                 ("Valor inicial", _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))),
                 ("Fecha terminación inicial", _texto(fila.get("fecha_terminacion_inicial"))),
             ],
@@ -1494,7 +1527,7 @@ def generar_excel_asistencia(filas: Iterable[dict], profesional: str = "") -> by
             _numero_contrato_corto(_texto(fila.get("contrato"))),
             _texto(fila.get("objeto")).upper(),
             _texto(fila.get("contratista")),
-            _texto(fila.get("plazo_inicial")),
+            _normalizar_plazo(fila.get("plazo_inicial")),
             _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
             _texto(fila.get("prorroga_solicitada")),
             _texto(fila.get("valor_adicion_texto")) or formato_moneda(fila.get("valor_adicion")),
@@ -2063,7 +2096,7 @@ def _llenar_tabla_solicitud(table, fila: dict) -> None:
         3: _limpiar_contratista(fila.get("contratista")).upper(),
         4: _limpiar_objeto_solicitud(fila.get("objeto")).upper(),
         5: _formatear_fecha_tabla(fila.get("fecha_inicio")).lower(),
-        6: _texto(fila.get("plazo_inicial")).lower(),
+        6: _normalizar_plazo(fila.get("plazo_inicial")),
         7: (_texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial"))).lower(),
         8: _formatear_fecha_tabla(fila.get("fecha_terminacion_inicial")).lower(),
         9: prorroga_solicitada.lower(),
