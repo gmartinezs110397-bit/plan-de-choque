@@ -27,7 +27,6 @@ def pdf_con_paginas(textos):
                 NameObject("/Type"): NameObject("/Font"),
                 NameObject("/Subtype"): NameObject("/Type1"),
                 NameObject("/BaseFont"): NameObject("/Helvetica"),
-                NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
             })
             pagina[NameObject("/Resources")] = DictionaryObject({
                 NameObject("/Font"): DictionaryObject({NameObject("/F1"): fuente})

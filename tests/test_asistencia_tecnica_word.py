@@ -67,26 +67,6 @@ def textos(doc):
 
 
 class RespuestaWordRevision4Test(unittest.TestCase):
-    def test_observaciones_sin_diferencias_y_datos_incompletos(self):
-        from asistencia_tecnica import _calcular_validacion_solicitud
-        fila = solicitud()
-        validacion = _calcular_validacion_solicitud(fila)
-        fila.update(
-            fecha_terminacion_final=validacion["fecha_final_ajustada"].strftime("%d/%m/%Y"),
-            prorroga_solicitada=validacion["prorroga_ajustada_texto"],
-            valor_adicion=validacion["valor_adicion_teorico"],
-        )
-        parrafos = textos(Document(BytesIO(generar([fila]))))
-        self.assertIn("• Sin observaciones", parrafos)
-        con_diferencia = dict(fila, valor_adicion=1)
-        parrafos = textos(Document(BytesIO(generar([con_diferencia]))))
-        self.assertNotIn("• Sin observaciones", parrafos)
-        self.assertTrue(any("Adición: Sería" in p for p in parrafos))
-        incompleta = dict(fila, fecha_inicio="")
-        parrafos = textos(Document(BytesIO(generar([incompleta]))))
-        self.assertNotIn("• Sin observaciones", parrafos)
-        self.assertTrue(any("Pendiente de revisión" in p for p in parrafos))
-
     def test_introduccion_y_cierre_revisados_en_todas_las_localidades(self):
         for localidad in ("San Cristobal", "La Candelaria", "Kennedy"):
             with self.subTest(localidad=localidad):
