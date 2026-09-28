@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-17-revision-4-cps-v22"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-adicion-numeral-2-v27"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -510,6 +510,34 @@ def _extraer_valor_adicion_solicitada(*fuentes: str) -> tuple[str, int | None]:
     return "", None
 
 
+def _extraer_adicion_numeral_dos(texto: str) -> tuple[str, int | None]:
+    """Busca la adición solo en el numeral II, incluso si continúa en otra página.
+
+    La lectura existente puede repetir cada página en formato lineal y visual.
+    Un nuevo resumen contractual cierra el fragmento: su valor inicial nunca
+    debe convertirse en la adición de un encabezado anterior sin datos.
+    """
+    inicio = r"\b(?:II|2)\s*[.\-:)]?\s*INFORMACI\S*N\s+DE\s+LA\s+MODIFICACI\S*N\s+SOLICITADA\b"
+    limite = (
+        r"\b(?:I|1)\s*[.\-:)]?\s*RESUMEN\s+CONTRACTUAL\b|"
+        + inicio +
+        r"|\b(?:III|3)\s*[.\-:)]?\s*INFORMACI\S*N\b|\bESTADO\s+FINANCIERO\b"
+    )
+    valores: dict[int, str] = {}
+    for match in re.finditer(inicio, texto, flags=re.IGNORECASE):
+        fragmento = texto[match.end():]
+        fin = re.search(limite, fragmento, flags=re.IGNORECASE)
+        if fin:
+            fragmento = fragmento[:fin.start()]
+        valor, numero = _extraer_valor_adicion_solicitada(fragmento)
+        if numero is not None:
+            valores[numero] = valor
+    if len(valores) == 1:
+        numero, valor = next(iter(valores.items()))
+        return valor, numero
+    return "", None
+
+
 def _duracion_desde_texto(texto: str) -> tuple[int, int]:
     if _es_no_aplica_texto(texto):
         return 0, 0
@@ -958,7 +986,7 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     if url:
         fila["link_secop"] = url.group(0).strip()
 
-    valor_adicion_texto, valor_adicion_numero = _extraer_valor_adicion_solicitada(seccion_modificacion, texto)
+    valor_adicion_texto, valor_adicion_numero = _extraer_adicion_numeral_dos(texto)
     if valor_adicion_numero is not None:
         fila["valor_adicion_texto"] = valor_adicion_texto
         fila["valor_adicion"] = valor_adicion_numero
