@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-sin-observaciones-v28"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-formato-proyecciones-v29"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -2272,6 +2272,10 @@ def generar_documento_localidad(
                         "seguridad técnica y jurídica a los Fondos de Desarrollo Local."
                     ),
                 )
+        elif texto.startswith("Las proyecciones para adelantar adiciones y prórrogas"):
+            for run in p.runs:
+                run.bold = True
+                run.underline = True
         elif texto.startswith("Proyectó:"):
             _set_paragraph_text(p, f"Proyectó: {profesional} - Profesional DGDL")
 
