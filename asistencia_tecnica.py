@@ -52,7 +52,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-formato-proyecciones-v29"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-firmas-puntual-v30"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -2177,6 +2177,31 @@ def _texto_observacion_vigencia(fila: dict, validacion: dict | None = None) -> s
     )
 
 
+def _insertar_firma_profesional(parrafo, nombre: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.shared import Emu
+
+    firmas = {
+        "ingrith khaterine martinez sanchez": ("ingrith_martinez.png", 452755, 344170, None),
+        "andres gonzalez": ("andres_gonzalez.jpeg", 400050, 274320,
+                           {"l": "5185", "t": "24011", "r": "5556", "b": "29379"}),
+    }
+    firma = firmas.get(_normalizar(nombre))
+    if firma is None:
+        return
+    archivo, ancho, alto, recorte = firma
+    ruta = Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "firmas" / archivo
+    parrafo.add_run("  ")
+    imagen = parrafo.add_run().add_picture(str(ruta), width=Emu(ancho), height=Emu(alto))
+    imagen._inline.docPr.set("descr", f"Firma de {nombre}")
+    if recorte:
+        relleno = imagen._inline.xpath(".//pic:blipFill")[0]
+        rect = OxmlElement("a:srcRect")
+        for lado, valor in recorte.items():
+            rect.set(lado, valor)
+        relleno.insert(1, rect)
+
+
 def generar_documento_localidad(
     filas: list[dict],
     plantilla_docx: Path,
@@ -2278,6 +2303,10 @@ def generar_documento_localidad(
                 run.underline = True
         elif texto.startswith("Proyectó:"):
             _set_paragraph_text(p, f"Proyectó: {profesional} - Profesional DGDL")
+            _insertar_firma_profesional(p, profesional)
+        elif _normalizar(texto).startswith("reviso:"):
+            _set_paragraph_text(p, "Revisó: Andres González - Profesional DGDL")
+            _insertar_firma_profesional(p, "Andres González")
 
     body = doc.element.body
     borrar = False
