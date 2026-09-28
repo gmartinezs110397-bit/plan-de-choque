@@ -8,6 +8,7 @@ import unicodedata
 import zipfile
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
 from typing import Iterable
@@ -52,7 +53,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-suba-tabla-v32"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-moneda-decimal-v33"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -261,13 +262,20 @@ def _a_numero(valor) -> int | None:
     texto = str(valor)
     if not texto.strip():
         return None
-    texto = texto.replace("$", "").replace(".", "").replace(",", "")
-    texto = re.sub(r"[^\d-]", "", texto)
+    # Conserva los centavos antes de retirar separadores de miles. Tanto
+    # 37.136.000,00 como 37,136,000.00 representan 37.136.000 pesos.
+    texto = re.sub(r"[^\d.,-]", "", texto)
+    decimales = re.search(r"[.,](\d{1,2})$", texto)
+    if decimales:
+        entero = re.sub(r"[.,]", "", texto[:decimales.start()])
+        texto = entero + "." + decimales.group(1)
+    else:
+        texto = re.sub(r"[.,]", "", texto)
     if not texto:
         return None
     try:
-        return int(texto)
-    except ValueError:
+        return int(round(Decimal(texto)))
+    except (InvalidOperation, ValueError):
         return None
 
 
