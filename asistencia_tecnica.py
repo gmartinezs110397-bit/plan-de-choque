@@ -53,7 +53,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-moneda-decimal-v33"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-objeto-fechas-v34"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -204,7 +204,7 @@ def parsear_fecha(texto: str | date | datetime | None) -> date | None:
     if not valor or valor.upper() in {"N/A", "NA"}:
         return None
 
-    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", valor)
+    match = re.search(r"\b(\d{1,2})\s*[/-]\s*(\d{1,2})\s*[/-]\s*(\d{2,4})\b", valor)
     if match:
         dia, mes, anio = [int(x) for x in match.groups()]
         if anio < 100:
@@ -374,7 +374,7 @@ def _limpiar_objeto_solicitud(texto: str) -> str:
         r"\bVersi[oó]n\s*:",
         r"\bVigencia\s*:",
         r"\bCaso\s+HOLA\b",
-        r"\bP[aá]gina\b",
+        r"\bP[aá]gina\s+\d+\s+de\s+\d+\b",
     )
     posiciones = []
     for patron in cortes:
