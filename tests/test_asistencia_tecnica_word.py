@@ -164,7 +164,7 @@ class RespuestaWordRevision4Test(unittest.TestCase):
         with ZipFile(BytesIO(contenido)) as zip_final:
             archivos_word = [n for n in zip_final.namelist() if n.endswith(".docx")]
             self.assertEqual(len(archivos_word), 2)
-            self.assertEqual(len([n for n in zip_final.namelist() if n.endswith(".xlsx")]), 1)
+            self.assertEqual(len([n for n in zip_final.namelist() if n.endswith(".xlsx")]), 2)
             for nombre in archivos_word:
                 parrafos = textos(Document(BytesIO(zip_final.read(nombre))))
                 self.assertIn(INTRODUCCION, parrafos)
