@@ -53,7 +53,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-28-supervisor-radicado-v35"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-29-enlaces-contratos-v36"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -2491,6 +2491,8 @@ def generar_zip_asistencia(
     fecha_respuesta: date,
     profesional: str,
 ) -> tuple[bytes, str, list[dict]]:
+    from enlaces_asistencia import NOMBRE_EXCEL_ENLACES, generar_excel_enlaces
+
     filas_ordenadas = ordenar_filas(filas)
     if not filas_ordenadas:
         raise ValueError("No hay solicitudes para generar.")
@@ -2512,6 +2514,7 @@ def generar_zip_asistencia(
 
         excel = generar_excel_asistencia(filas_ordenadas, profesional=profesional)
         zf.writestr(_nombre_excel_asistencia(filas_ordenadas), excel)
+        zf.writestr(NOMBRE_EXCEL_ENLACES, generar_excel_enlaces(filas_ordenadas))
 
     localidades_txt = ",".join(_canon_localidad(f.get("localidad", "")) for f in filas_ordenadas)
     nombre_zip = f"Asistencia tecnica CPS {fecha_respuesta.year} ({_nombre_archivo_seguro(localidades_txt)[:80]}).zip"

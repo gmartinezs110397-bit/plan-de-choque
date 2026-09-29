@@ -39,6 +39,7 @@ def _calcular_version_sesion_app() -> str:
     archivos_version = [
         "app.py",
         "asistencia_tecnica.py",
+        "enlaces_asistencia.py",
         "pdf_ocr.py",
         "avance_plan_choque.py",
         "constantes.py",
@@ -133,7 +134,7 @@ def _recargar_modulos_locales(version_app: str) -> str:
         "constantes", "localidades", "cxp_cruce", "hoja_suspendidos",
         "hoja_proximos_a_perder", "hoja_tramites_sectores",
         "hoja_liquidados_con_saldo", "hoja_estrategias", "reporte_ejecucion",
-        "tabla_resumen_proyecto", "avance_plan_choque", "pdf_ocr", "asistencia_tecnica",
+        "tabla_resumen_proyecto", "avance_plan_choque", "pdf_ocr", "asistencia_tecnica", "enlaces_asistencia",
     ):
         modulo = sys.modules.get(nombre)
         if modulo is not None:
@@ -1618,7 +1619,14 @@ def render_barra_seccion_actual(nombre: str) -> None:
             st.rerun()
 
 
+@st.cache_data(show_spinner=False, max_entries=2)
+def _leer_base_enlaces_asistencia(contenido: bytes, version: str):
+    from enlaces_asistencia import leer_base_enlaces
+    return leer_base_enlaces(contenido)
+
+
 def render_seccion_asistencia_tecnica() -> None:
+    from enlaces_asistencia import cruzar_enlaces, NOMBRE_EXCEL_ENLACES
     from asistencia_tecnica import (
         ASISTENCIA_TECNICA_GENERADOR_VERSION,
         ESTADOS_ASISTENCIA,
@@ -1648,7 +1656,7 @@ def render_seccion_asistencia_tecnica() -> None:
                 <span class="support-pill">Salida</span>
                 <p class="support-card-title">ZIP final</p>
                 <p class="support-card-copy">
-                    Respuestas Word y matriz Excel con fichas por contrato.
+                    Respuestas Word, matriz Excel y enlaces a los contratos en el orden del Word.
                 </p>
             </div>
         </div>
@@ -1685,6 +1693,12 @@ def render_seccion_asistencia_tecnica() -> None:
             type=["pdf"],
             accept_multiple_files=True,
             key="at_solicitudes_pdf",
+        )
+        archivo_enlaces = st.file_uploader(
+            "Base de enlaces a contratos CPS",
+            type=["xlsx"],
+            key="at_base_enlaces",
+            help="Cargue ENLACES A CONTRATOS CPS.xlsx. Se cruza por localidad y número de contrato.",
         )
         profesional = st.text_input(
             "Profesional que proyecta",
@@ -1819,6 +1833,25 @@ def render_seccion_asistencia_tecnica() -> None:
         datos_editados.drop(columns=["numero"], errors="ignore").fillna("")
     )
     filas_generar = datos_para_generar.to_dict("records")
+    indice_enlaces = None
+    if archivo_enlaces is not None:
+        try:
+            with st.spinner("Cruzando enlaces de los contratos..."):
+                indice_enlaces = _leer_base_enlaces_asistencia(
+                    archivo_enlaces.getvalue(), APP_SESSION_VERSION
+                )
+        except Exception as exc:
+            st.error(f"No se pudo leer la base de enlaces: {exc}")
+            return
+    filas_generar = cruzar_enlaces(filas_generar, indice_enlaces)
+    pendientes_enlaces = [f for f in filas_generar if not f.get("link_secop")]
+    if pendientes_enlaces:
+        st.warning(
+            f"{len(pendientes_enlaces)} contrato(s) sin enlace confirmado. "
+            "El Excel de enlaces indicará cuáles requieren revisión."
+        )
+        if archivo_enlaces is None:
+            st.caption("Cargue la base de enlaces a contratos CPS para completar este Excel.")
 
     def _campo_asistencia_vacio(valor) -> bool:
         texto = str(valor or "").strip()
@@ -1910,6 +1943,7 @@ def render_seccion_asistencia_tecnica() -> None:
                 "- Excel consolidado con fichas por contrato · "
                 "`Matriz asistencia tecnica CPS.xlsx`"
             )
+            st.markdown(f"- Enlaces en el orden de los Word · `{NOMBRE_EXCEL_ENLACES}`")
         st.download_button(
             "Descargar ZIP de Asistencia Técnica",
             data=zip_bytes,
