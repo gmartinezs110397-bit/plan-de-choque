@@ -54,7 +54,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-10-07-lotes-nombres-cortos-v38"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-10-07-nombres-primer-ultimo-v39"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -1274,18 +1274,13 @@ def _numeros_proceso_nombre(filas: Iterable[dict]) -> str:
 
 def _nombre_descarga_solicitudes(prefijo: str, filas: Iterable[dict], extension: str) -> str:
     filas = list(filas)
-    numeros = _numeros_proceso_nombre(filas)
-    nombre = _limpiar_nombre_descarga(f"{prefijo} - {numeros}" if numeros else prefijo)
     # ZIP admite nombres que el sistema de archivos no puede extraer.
     # Contar bytes también contempla los acentos de las localidades.
     limite_bytes = 180
-    if len(f"{nombre}{extension}".encode("utf-8")) <= limite_bytes:
-        return f"{nombre}{extension}"
-
     primero = _numeros_proceso_nombre(filas[:1])
     ultimo = _numeros_proceso_nombre(filas[-1:])
     extremos = "-".join(dict.fromkeys(n for n in (primero, ultimo) if n))
-    cantidad = f"{len(filas)} solicitudes"
+    cantidad = f"{len(filas)} solicitud" + ("es" if len(filas) != 1 else "")
     partes = [prefijo, extremos, cantidad] if extremos else [prefijo, cantidad]
     nombre = _limpiar_nombre_descarga(" - ".join(partes))
     if len(f"{nombre}{extension}".encode("utf-8")) > limite_bytes:
