@@ -54,7 +54,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-10-07-nombres-primer-ultimo-v39"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-10-07-prorroga-celdas-vecinas-v40"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -174,6 +174,17 @@ def _extraer_duracion_prorroga_desde_texto(texto: str) -> str:
     valor = re.sub(r"^Tiempo\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
     valor = re.sub(r"^Pr[oó�]rroga\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
     valor = _limpiar_prorroga_solicitada(valor)
+    # Las tablas pueden intercalar otra celda después de «Tiempo: 84».
+    # Admitir el número sin unidad solo si lo sigue una etiqueta de otro
+    # campo; una fecha, un importe o un segundo número no son una duración.
+    cantidad_sola = re.match(
+        r"^([0-9]+)\s*(?:N[uú�]mero\b|No\.?\s|N[°º]\.?|"
+        r"Adici\S+n\b|Valor\b|Fecha\b|Modificaci\S+n\b|Tipo\b|"
+        r"Solicitud\b|C[oó�]digo\b|Versi\S+n\b|Vigencia\b|P[aá�]gina\b)",
+        valor, flags=re.IGNORECASE,
+    )
+    if cantidad_sola:
+        return _limpiar_prorroga_solicitada(cantidad_sola.group(1))
     meses = 0
     dias = 0
     match_meses = re.search(r"(?:\((\d+)\)|\b(\d+))\s*mes(?:es)?\b", valor, flags=re.IGNORECASE)
