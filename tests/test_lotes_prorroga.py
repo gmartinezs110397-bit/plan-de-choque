@@ -51,6 +51,51 @@ class ProrrogaSinUnidadTest(unittest.TestCase):
             fila, _ = analizar_solicitud_pdf("164717.pdf", b"pdf")
         self.assertEqual(fila["prorroga_solicitada"], "84 días")
 
+    def test_tiempo_sin_unidad_separado_de_celdas_vecinas(self):
+        for vecino in ("Número de modificación: 1", "No. de modificación: 1",
+                       "N° de modificación: 1", "Adición Valor: $8.459.667",
+                       "Modificación o aclaración otras cláusulas",
+                       "Tipo de modificación: Adición y prórroga",
+                       "Código: GCO-GCI-F017", "Valor: $8.459.667"):
+            fuente = (
+                "II. INFORMACIÓN DE LA MODIFICACIÓN SOLICITADA "
+                "Prórroga Tiempo: 84 " + vecino +
+                " Fecha Terminación Final: 31-12-2026"
+            )
+            with self.subTest(vecino=vecino):
+                self.assertEqual(_extraer_prorroga_numeral_dos(fuente), "84 días")
+                with patch("asistencia_tecnica.extraer_texto_pdf", return_value=(fuente, [])):
+                    fila, errores = analizar_solicitud_pdf("165422.pdf", b"pdf")
+                self.assertEqual(fila["prorroga_solicitada"], "84 días")
+                self.assertFalse(any("complete prórroga" in e for e in errores))
+
+    def test_celda_vecina_no_convierte_fechas_importes_ni_modifica_unidades(self):
+        for contenido, esperado in (("31/12/2026", ""), ("$84", ""),
+                                    ("84.000", ""), ("84,5", ""),
+                                    ("31 12 2026", ""), ("3 meses", "3 meses"),
+                                    ("3 meses y 4 días", "3 meses y 4 días")):
+            fuente = (
+                "II. INFORMACIÓN DE LA MODIFICACIÓN SOLICITADA Prórroga Tiempo: "
+                + contenido + " Número de modificación: 1 Fecha Terminación Final: 31-12-2026"
+            )
+            self.assertEqual(_extraer_prorroga_numeral_dos(fuente), esperado)
+
+    def test_orden_de_celdas_del_pdf_reportado_con_numero_y_texto_vecino(self):
+        # Orden real de lectura de la tabla; importe ficticio para que la
+        # prueba no publique datos del documento adjunto.
+        texto = (
+            "II. INFORMACIÓN DE LA MODIFICACIÓN SOLICITADA\nMODIFICACIÓN No.\n1\n"
+            "Adición Valor Prórroga Tiempo: 84 Modificación o aclaración\notras cláusulas\n"
+            "$100.000\nFecha Terminación Final:\n31-12-2026\n"
+            "III. INFORMACIÓN DE MODIFICACIONES ANTERIORES\nPrórroga Tiempo: 3 meses"
+        )
+        with patch("asistencia_tecnica.extraer_texto_pdf", return_value=(texto, [])):
+            fila, errores = analizar_solicitud_pdf("solicitud-prueba.pdf", b"pdf")
+        self.assertEqual(fila["prorroga_solicitada"], "84 días")
+        self.assertEqual(fila["valor_adicion"], 100000)
+        self.assertEqual(fila["fecha_terminacion_final"], "31/12/2026")
+        self.assertFalse(any("complete prórroga" in e for e in errores))
+
 
 class LoteSolicitudesTest(unittest.TestCase):
     def test_lote_de_35_sin_limite_y_fallo_aislado(self):
