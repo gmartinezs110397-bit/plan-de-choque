@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import calendar
 import copy
+import hashlib
 import math
 import re
 import unicodedata
@@ -11,7 +12,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from io import BytesIO
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 LOCALIDADES_RADICADO = [
@@ -53,7 +54,7 @@ MESES_ES = (
 )
 
 CIERRE_VIGENCIA_FISCAL_2026 = date(2026, 12, 31)
-ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-09-29-enlaces-contratos-v36"
+ASISTENCIA_TECNICA_GENERADOR_VERSION = "2026-10-07-lotes-nombres-cortos-v38"
 PLANTILLA_CALCULADORA_PATH = (
     Path(__file__).resolve().parent / "templates" / "asistencia_tecnica" / "CALCULADORA_CPS.xlsx"
 )
@@ -159,7 +160,10 @@ def _es_no_aplica_texto(texto: str) -> bool:
 
 
 def _limpiar_prorroga_solicitada(texto: str) -> str:
-    valor = _limpiar_texto(texto)
+    valor = _limpiar_texto(_texto(texto))
+    if re.fullmatch(r"[0-9]+", valor):
+        cantidad = int(valor)
+        return f"{cantidad} día" + ("s" if cantidad != 1 else "")
     return "" if _es_no_aplica_texto(valor) else valor
 
 
@@ -169,6 +173,7 @@ def _extraer_duracion_prorroga_desde_texto(texto: str) -> str:
         return ""
     valor = re.sub(r"^Tiempo\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
     valor = re.sub(r"^Pr[oó�]rroga\s*:?\s*", "", valor, flags=re.IGNORECASE).strip()
+    valor = _limpiar_prorroga_solicitada(valor)
     meses = 0
     dias = 0
     match_meses = re.search(r"(?:\((\d+)\)|\b(\d+))\s*mes(?:es)?\b", valor, flags=re.IGNORECASE)
@@ -557,7 +562,7 @@ def _extraer_prorroga_numeral_dos(texto: str) -> str:
     valores: set[str] = set()
     for fragmento in _fragmentos_numeral_dos(texto):
         for match in re.finditer(
-            r"\bTiempo\s*:\s*(.*?)(?=Fecha\s+(?:de\s+)?Terminaci\S+n\s+"
+            r"\bTiempo\b\s*:?\s*(.*?)(?=Fecha\s+(?:de\s+)?Terminaci\S+n\s+"
             r"(?:Final|con\s+la\s+Pr[oó�]rroga)|$)",
             fragmento, flags=re.IGNORECASE | re.DOTALL,
         ):
@@ -629,7 +634,8 @@ def _formato_duracion(meses: int, dias: int) -> str:
 
 def _datos_calculadora(fila: dict) -> dict:
     plazo_meses, plazo_dias = _duracion_desde_texto(_texto(fila.get("plazo_inicial")))
-    prorroga_meses, prorroga_dias = _duracion_desde_texto(_texto(fila.get("prorroga_solicitada")))
+    prorroga_texto = _limpiar_prorroga_solicitada(fila.get("prorroga_solicitada"))
+    prorroga_meses, prorroga_dias = _duracion_desde_texto(prorroga_texto)
     return {
         "fecha_inicio": parsear_fecha(fila.get("fecha_inicio")) or _texto(fila.get("fecha_inicio")),
         "plazo_meses": plazo_meses,
@@ -638,7 +644,7 @@ def _datos_calculadora(fila: dict) -> dict:
         "prorroga_meses": prorroga_meses,
         "prorroga_dias": prorroga_dias,
         "texto_plazo": _texto(fila.get("plazo_inicial")),
-        "texto_prorroga": _texto(fila.get("prorroga_solicitada")),
+        "texto_prorroga": prorroga_texto,
         "texto_valor": _texto(fila.get("valor_inicial_texto")) or formato_moneda(fila.get("valor_inicial")),
     }
 
@@ -664,7 +670,7 @@ def calcular_fecha_fin_inicial(fecha_inicio: date | None, plazo_texto: str) -> d
 def calcular_fecha_fin_prorroga(fecha_fin_inicial: date | None, prorroga_texto: str) -> date | None:
     if not fecha_fin_inicial:
         return None
-    meses, dias = _duracion_desde_texto(prorroga_texto)
+    meses, dias = _duracion_desde_texto(_limpiar_prorroga_solicitada(prorroga_texto))
     if meses == 0 and dias == 0:
         return None
     fin = _sumar_meses(fecha_fin_inicial, meses)
@@ -1089,13 +1095,34 @@ def analizar_solicitud_pdf(nombre_archivo: str, contenido: bytes) -> tuple[dict,
     return fila, errores
 
 
-def analizar_solicitudes(archivos: Iterable[tuple[str, bytes]]) -> tuple[list[dict], list[str]]:
+def analizar_solicitudes(
+    archivos: Iterable[tuple[str, bytes]],
+    resultados_parciales: dict | None = None,
+    progreso: Callable[[int, str], None] | None = None,
+) -> tuple[list[dict], list[str]]:
+    """Lee secuencialmente, sin límite de cantidad ni copias de todos los PDF.
+
+    El punto de recuperación guarda solo datos extraídos, nunca los PDF.
+    La interfaz puede conservarlo en la sesión si se interrumpe la lectura.
+    """
     filas: list[dict] = []
     errores: list[str] = []
-    for nombre, contenido in archivos:
-        fila, err = analizar_solicitud_pdf(nombre, contenido)
-        filas.append(fila)
+    cache = resultados_parciales if resultados_parciales is not None else {}
+    for numero, (nombre, contenido) in enumerate(archivos, 1):
+        clave = (nombre, hashlib.sha256(contenido).hexdigest())
+        if progreso:
+            progreso(numero - 1, nombre)
+        try:
+            if clave not in cache:
+                cache[clave] = analizar_solicitud_pdf(nombre, contenido)
+            fila, err = cache[clave]
+        except Exception as exc:
+            fila = {"archivo": nombre, "sipse": _extraer_sipse(nombre, "")}
+            err = [f"{nombre}: no se pudo analizar esta solicitud ({exc}). Revise el archivo."]
+        filas.append(dict(fila))
         errores.extend(err)
+        if progreso:
+            progreso(numero, nombre)
     return filas, errores
 
 
@@ -1208,7 +1235,7 @@ def _clave_sipse_desc(fila: dict) -> tuple[int, int, str]:
 
 def ordenar_filas(filas: Iterable[dict]) -> list[dict]:
     return sorted(
-        (dict(f) for f in filas),
+        ({**f, "prorroga_solicitada": _limpiar_prorroga_solicitada(f.get("prorroga_solicitada"))} for f in filas),
         key=lambda f: (
             _orden_localidad(f.get("localidad", "")),
             _clave_sipse_desc(f),
@@ -1245,21 +1272,39 @@ def _numeros_proceso_nombre(filas: Iterable[dict]) -> str:
     return "-".join(numeros)
 
 
-def _nombre_word_localidad(localidad: str, filas: Iterable[dict]) -> str:
-    alcaldia = f"Alcaldía Local de {_canon_localidad(localidad)}"
+def _nombre_descarga_solicitudes(prefijo: str, filas: Iterable[dict], extension: str) -> str:
+    filas = list(filas)
     numeros = _numeros_proceso_nombre(filas)
-    partes = [alcaldia, "SIPSE"]
-    if numeros:
-        partes.append(numeros)
-    return f"{_limpiar_nombre_descarga(' - '.join(partes))}.docx"
+    nombre = _limpiar_nombre_descarga(f"{prefijo} - {numeros}" if numeros else prefijo)
+    # ZIP admite nombres que el sistema de archivos no puede extraer.
+    # Contar bytes también contempla los acentos de las localidades.
+    limite_bytes = 180
+    if len(f"{nombre}{extension}".encode("utf-8")) <= limite_bytes:
+        return f"{nombre}{extension}"
+
+    primero = _numeros_proceso_nombre(filas[:1])
+    ultimo = _numeros_proceso_nombre(filas[-1:])
+    extremos = "-".join(dict.fromkeys(n for n in (primero, ultimo) if n))
+    cantidad = f"{len(filas)} solicitudes"
+    partes = [prefijo, extremos, cantidad] if extremos else [prefijo, cantidad]
+    nombre = _limpiar_nombre_descarga(" - ".join(partes))
+    if len(f"{nombre}{extension}".encode("utf-8")) > limite_bytes:
+        # Si un identificador excepcionalmente largo no cabe, conservar
+        # la localidad y cantidad; los identificadores siguen en el documento.
+        sufijo = f" - {cantidad}{extension}"
+        presupuesto = limite_bytes - len(sufijo.encode("utf-8"))
+        inicio = _limpiar_nombre_descarga(prefijo).encode("utf-8")[:presupuesto].decode("utf-8", errors="ignore")
+        return inicio.rstrip(" .-") + sufijo
+    return f"{nombre}{extension}"
+
+
+def _nombre_word_localidad(localidad: str, filas: Iterable[dict]) -> str:
+    prefijo = f"Alcaldía Local de {_canon_localidad(localidad)} - SIPSE"
+    return _nombre_descarga_solicitudes(prefijo, filas, ".docx")
 
 
 def _nombre_excel_asistencia(filas: Iterable[dict]) -> str:
-    numeros = _numeros_proceso_nombre(filas)
-    partes = ["Matriz asistencia técnica CPS"]
-    if numeros:
-        partes.append(numeros)
-    return f"{_limpiar_nombre_descarga(' - '.join(partes))}.xlsx"
+    return _nombre_descarga_solicitudes("Matriz asistencia técnica CPS", filas, ".xlsx")
 
 
 def _descripcion_solicitud(fila: dict) -> str:

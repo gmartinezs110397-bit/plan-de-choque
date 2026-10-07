@@ -1714,9 +1714,30 @@ def render_seccion_asistencia_tecnica() -> None:
         )
 
     if analizar:
-        archivos = [(archivo.name, archivo.getvalue()) for archivo in solicitudes or []]
+        archivos = ((archivo.name, archivo.getvalue()) for archivo in solicitudes or [])
+        total_solicitudes = len(solicitudes or [])
+        barra_lectura = st.progress(0, text=f"Preparando {total_solicitudes} solicitudes…")
+        parciales = st.session_state.setdefault("_pc_at_resultados_parciales", {})
+        nombres_actuales = {archivo.name for archivo in solicitudes or []}
+        for clave in list(parciales):
+            if clave[0] not in nombres_actuales:
+                del parciales[clave]
+        # Invalidar la descarga anterior antes de comenzar otro lote.
+        st.session_state["_pc_at_zip"] = None
+        st.session_state["_pc_at_zip_signature"] = ""
+        st.session_state["_pc_at_filas"] = []
+        st.session_state["_pc_at_errores"] = []
+
+        def mostrar_progreso(completadas, nombre):
+            barra_lectura.progress(
+                completadas / total_solicitudes,
+                text=f"{completadas} de {total_solicitudes} solicitudes leídas · {nombre}",
+            )
+
         with st.spinner("Leyendo solicitudes…"):
-            filas, errores = analizar_solicitudes(archivos)
+            filas, errores = analizar_solicitudes(
+                archivos, resultados_parciales=parciales, progreso=mostrar_progreso
+            )
             mapa_radicados = {}
             supervisores_radicados = {}
             fecha_salida = None
@@ -1735,6 +1756,8 @@ def render_seccion_asistencia_tecnica() -> None:
         st.session_state["_pc_at_resumen"] = []
         st.session_state["_pc_at_zip_signature"] = ""
         st.session_state["_pc_at_editor_version"] = str(uuid.uuid4())
+        st.session_state.pop("_pc_at_resultados_parciales", None)
+        barra_lectura.empty()
         if filas:
             st.success(f"Se analizaron {len(filas)} solicitud(es).")
 

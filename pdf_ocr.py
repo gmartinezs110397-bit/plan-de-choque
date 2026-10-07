@@ -11,7 +11,7 @@ from typing import Iterable
 # PDFium comparte estado nativo entre las sesiones de Streamlit.
 _PDFIUM_LOCK = Lock()
 _OCR_MAX_PIXELES = 12_000_000
-_OCR_TIMEOUT_SEGUNDOS = 45
+_OCR_TIMEOUT_SEGUNDOS = 120
 
 
 def _leer_imagen_en_orden(imagen, pytesseract, idioma: str) -> str:
